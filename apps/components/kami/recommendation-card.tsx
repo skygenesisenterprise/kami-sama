@@ -1,4 +1,3 @@
-import Image from 'next/image'
 import Link from 'next/link'
 import { Sparkles } from 'lucide-react'
 import { RatingBadge } from './rating-badge'
@@ -11,12 +10,10 @@ export function RecommendationCard({ rec }: { rec: Recommendation }) {
       className="group flex h-full flex-col overflow-hidden rounded-xl border border-border/60 bg-card outline-none transition-transform hover:-translate-y-1 focus-visible:ring-2 focus-visible:ring-ring"
     >
       <div className="relative aspect-video overflow-hidden">
-        <Image
+        <img
           src={rec.anime.banner || '/placeholder.svg'}
           alt={rec.anime.title}
-          fill
-          sizes="(max-width: 768px) 80vw, 320px"
-          className="object-cover transition-transform duration-500 group-hover:scale-105"
+          className="absolute inset-0 size-full object-cover transition-transform duration-500 group-hover:scale-105"
         />
         <div className="absolute inset-0 bg-gradient-to-t from-card via-card/40 to-transparent" />
         <div className="absolute right-2 top-2">

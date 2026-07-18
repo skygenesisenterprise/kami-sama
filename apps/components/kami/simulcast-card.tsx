@@ -1,4 +1,3 @@
-import Image from 'next/image'
 import Link from 'next/link'
 import { Clock, Play } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -17,17 +16,15 @@ export function SimulcastCard({
     <Link
       href={`/anime/${anime.slug}`}
       className={cn(
-        'group relative block overflow-hidden rounded-xl bg-card outline-none transition-transform duration-300 hover:-translate-y-1 focus-visible:ring-2 focus-visible:ring-ring',
+        'group relative block w-37.5 shrink-0 overflow-hidden rounded-xl bg-card outline-none transition-transform duration-300 hover:-translate-y-1 focus-visible:ring-2 focus-visible:ring-ring sm:w-42.5 lg:w-46.25',
         className,
       )}
     >
       <div className="relative aspect-2/3 overflow-hidden">
-        <Image
+        <img
           src={anime.cover || '/placeholder.svg'}
           alt={anime.title}
-          fill
-          sizes="(max-width: 768px) 40vw, 200px"
-          className="object-cover transition-transform duration-500 group-hover:scale-105"
+          className="absolute inset-0 size-full object-cover transition-transform duration-500 group-hover:scale-105"
         />
         <div className="absolute inset-0 bg-linear-to-t from-background via-background/20 to-transparent" />
 

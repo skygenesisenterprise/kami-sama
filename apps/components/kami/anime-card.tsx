@@ -1,4 +1,3 @@
-import Image from 'next/image'
 import Link from 'next/link'
 import { Play } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -23,12 +22,10 @@ export function AnimeCard({ anime, badge, className, showMeta = true }: AnimeCar
       )}
     >
       <div className="relative aspect-[2/3] overflow-hidden">
-        <Image
+        <img
           src={anime.cover || '/placeholder.svg'}
           alt={anime.title}
-          fill
-          sizes="(max-width: 768px) 40vw, 200px"
-          className="object-cover transition-transform duration-500 group-hover:scale-105"
+          className="absolute inset-0 size-full object-cover transition-transform duration-500 group-hover:scale-105"
         />
         <div className="absolute inset-0 bg-gradient-to-t from-background via-background/10 to-transparent opacity-90" />
 

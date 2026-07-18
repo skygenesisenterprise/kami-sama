@@ -259,6 +259,158 @@ export const ANIME: Anime[] = [
     seasons: [{ number: 1, title: 'Season 1', episodeCount: 12, year: 2022 }],
     totalEpisodes: 12,
   },
+  {
+    id: 'starfall-academy',
+    slug: 'starfall-academy',
+    title: 'Starfall Academy',
+    japaneseTitle: 'スターフォール学園',
+    synopsis:
+      'At a prestigious academy orbiting Earth, gifted cadets train to defend the solar system. When a first-year student discovers she can interface with ancient alien technology, she becomes the target of both corporate agents and a shadowy military faction.',
+    cover: '/covers/neon-orbit.png',
+    banner: '/banners/neon-orbit-banner.png',
+    genres: [g('sci-fi'), g('action'), g('mystery')],
+    studio: { id: 'helix', name: 'Helix Works' },
+    year: 2025,
+    status: 'airing',
+    rating: 8.3,
+    ratingCount: 11240,
+    ageRating: 'PG-13',
+    seasons: [{ number: 1, title: 'Season 1', episodeCount: 12, year: 2025 }],
+    totalEpisodes: 12,
+  },
+  {
+    id: 'blade-of-the-fallen',
+    slug: 'blade-of-the-fallen',
+    title: 'Blade of the Fallen',
+    japaneseTitle: '堕ちた者の刃',
+    synopsis:
+      'A disgraced knight is resurrected by a vengeful spirit with one condition: wield the cursed blade until the one who betrayed him falls. But the sword hungers for more than just revenge — it feeds on the wielder\'s memories.',
+    cover: '/covers/crimson-blade.png',
+    banner: '/banners/crimson-blade-banner.png',
+    genres: [g('fantasy'), g('action'), g('supernatural')],
+    studio: { id: 'kaze', name: 'Kaze Animation' },
+    year: 2025,
+    status: 'airing',
+    rating: 8.7,
+    ratingCount: 15890,
+    ageRating: 'R',
+    seasons: [{ number: 1, title: 'Season 1', episodeCount: 13, year: 2025 }],
+    totalEpisodes: 13,
+  },
+  {
+    id: 'moonlit-path',
+    slug: 'moonlit-path',
+    title: 'Moonlit Path',
+    japaneseTitle: '月明かりの道',
+    synopsis:
+      'Every full moon, a narrow alley in old Kyoto opens a door to the spirit world. A teenage fox spirit and a human girl with no memory of her past walk this path together, uncovering a centuries-old pact that binds their fates.',
+    cover: '/covers/spirit-veil.png',
+    banner: '/banners/eternal-frost-banner.png',
+    genres: [g('supernatural'), g('mystery'), g('romance')],
+    studio: { id: 'aurora', name: 'Studio Aurora' },
+    year: 2025,
+    status: 'airing',
+    rating: 8.9,
+    ratingCount: 20130,
+    ageRating: 'PG-13',
+    seasons: [{ number: 1, title: 'Season 1', episodeCount: 12, year: 2025 }],
+    totalEpisodes: 12,
+  },
+  {
+    id: 'oceans-whisper',
+    slug: 'oceans-whisper',
+    title: "Ocean's Whisper",
+    japaneseTitle: '海の囁き',
+    synopsis:
+      'A marine biologist returns to her coastal hometown and reunites with the childhood friend who once promised to show her every secret the ocean held. As they explore tide pools and shipwrecks, old feelings resurface alongside something ancient stirring in the deep.',
+    cover: '/covers/letter-to-spring.png',
+    banner: '/banners/eternal-frost-banner.png',
+    genres: [g('romance'), g('slice-of-life'), g('drama')],
+    studio: { id: 'lumine', name: 'Lumine Studio' },
+    year: 2025,
+    status: 'airing',
+    rating: 8.6,
+    ratingCount: 16780,
+    ageRating: 'PG',
+    seasons: [{ number: 1, title: 'Season 1', episodeCount: 12, year: 2025 }],
+    totalEpisodes: 12,
+  },
+  {
+    id: 'thunder-league',
+    slug: 'thunder-league',
+    title: 'Thunder League',
+    japaneseTitle: 'サンダーリーグ',
+    synopsis:
+      'In a world where soccer matches are decided by both skill and elemental power, a boy with no affinity for magic joins a underdog team. His only weapon: relentless training and a tactical mind that can outwit any storm.',
+    cover: '/covers/last-serve.png',
+    banner: '/banners/neon-orbit-banner.png',
+    genres: [g('sports'), g('action'), g('adventure')],
+    studio: { id: 'kaze', name: 'Kaze Animation' },
+    year: 2025,
+    status: 'airing',
+    rating: 8.1,
+    ratingCount: 9870,
+    ageRating: 'PG',
+    seasons: [{ number: 1, title: 'Season 1', episodeCount: 24, year: 2025 }],
+    totalEpisodes: 24,
+  },
+  {
+    id: 'crimson-vow',
+    slug: 'crimson-vow',
+    title: 'Crimson Vow',
+    japaneseTitle: '紅の誓い',
+    synopsis:
+      'A vampire countess breaks her ancient blood oath to protect a human scholar she has loved across centuries. Hunted by her own kind, she must choose between immortality and the one person who made eternity worth living.',
+    cover: '/covers/eternal-frost.png',
+    banner: '/banners/crimson-blade-banner.png',
+    genres: [g('romance'), g('supernatural'), g('drama')],
+    studio: { id: 'aurora', name: 'Studio Aurora' },
+    year: 2024,
+    status: 'completed',
+    rating: 9.0,
+    ratingCount: 31200,
+    ageRating: 'PG-13',
+    seasons: [{ number: 1, title: 'Season 1', episodeCount: 12, year: 2024 }],
+    totalEpisodes: 12,
+  },
+  {
+    id: 'neon-samurai',
+    slug: 'neon-samurai',
+    title: 'Neon Samurai',
+    japaneseTitle: 'ネオン侍',
+    synopsis:
+      'In rain-soaked Neo-Kyoto 2187, a ronin without a clan takes mercenary jobs while searching for the AI that murdered his master. Every circuit he follows leads deeper into a conspiracy linking the city\'s founding families to a weapon that could end consciousness itself.',
+    cover: '/covers/neon-orbit.png',
+    banner: '/banners/neon-orbit-banner.png',
+    genres: [g('sci-fi'), g('action'), g('mystery')],
+    studio: { id: 'helix', name: 'Helix Works' },
+    year: 2024,
+    status: 'completed',
+    rating: 9.1,
+    ratingCount: 42350,
+    ageRating: 'R',
+    seasons: [{ number: 1, title: 'Season 1', episodeCount: 12, year: 2024 }],
+    totalEpisodes: 12,
+  },
+  {
+    id: 'ember-crown',
+    slug: 'ember-crown',
+    title: 'Ember Crown',
+    japaneseTitle: '炎の王冠',
+    synopsis:
+      'When the fire god chooses a peasant girl as the new Flame Sovereign, the five noble houses unite against her. Guided by a disgraced general and a trickster spirit, she must master her power before the kingdom tears itself apart.',
+    cover: '/covers/hollow-kingdom.png',
+    banner: '/banners/crimson-blade-banner.png',
+    genres: [g('fantasy'), g('adventure'), g('drama')],
+    studio: { id: 'kaze', name: 'Kaze Animation' },
+    year: 2025,
+    status: 'upcoming',
+    rating: 8.8,
+    ratingCount: 12450,
+    ageRating: 'PG-13',
+    seasons: [{ number: 1, title: 'Season 1', episodeCount: 24, year: 2025 }],
+    totalEpisodes: 24,
+  },
 ]
 
 const EPISODE_CACHE: Record<string, Episode[]> = Object.fromEntries(
@@ -293,16 +445,19 @@ export function getEpisode(animeId: string, episodeId: string): Episode | undefi
 }
 
 export function getContinueWatching(): ContinueWatchingItem[] {
-  const picks: [string, number][] = [
-    ['eternal-frost', 62],
-    ['neon-orbit', 25],
-    ['crimson-blade', 88],
-    ['spirit-veil', 40],
-    ['last-serve', 10],
+  const picks: [string, number, number][] = [
+    ['eternal-frost', 62, 7],
+    ['neon-orbit', 25, 3],
+    ['crimson-blade', 88, 11],
+    ['spirit-veil', 40, 5],
+    ['moonlit-path', 15, 2],
+    ['blade-of-the-fallen', 73, 9],
+    ['last-serve', 10, 1],
   ]
-  return picks.map(([id, percent]) => {
+  return picks.map(([id, percent, epIndex]) => {
     const anime = getAnime(id)!
-    const episode = getEpisodes(id)[Math.min(2, getEpisodes(id).length - 1)]
+    const episodes = getEpisodes(id)
+    const episode = episodes[Math.min(epIndex, episodes.length - 1)]
     const remaining = Math.round((episode.duration * (100 - percent)) / 100 / 60)
     return {
       anime,
@@ -316,21 +471,32 @@ export function getContinueWatching(): ContinueWatchingItem[] {
 export function getTrending(): TrendingItem[] {
   return [
     { anime: getAnime('crimson-blade')!, rank: 1, trend: 2 },
-    { anime: getAnime('eternal-frost')!, rank: 2, trend: 0 },
-    { anime: getAnime('neon-orbit')!, rank: 3, trend: 1 },
-    { anime: getAnime('spirit-veil')!, rank: 4, trend: -1 },
-    { anime: getAnime('last-serve')!, rank: 5, trend: 3 },
-    { anime: getAnime('hollow-kingdom')!, rank: 6, trend: 2 },
+    { anime: getAnime('neon-samurai')!, rank: 2, trend: 4 },
+    { anime: getAnime('eternal-frost')!, rank: 3, trend: 0 },
+    { anime: getAnime('moonlit-path')!, rank: 4, trend: 3 },
+    { anime: getAnime('neon-orbit')!, rank: 5, trend: 1 },
+    { anime: getAnime('crimson-vow')!, rank: 6, trend: -1 },
+    { anime: getAnime('spirit-veil')!, rank: 7, trend: -2 },
+    { anime: getAnime('blade-of-the-fallen')!, rank: 8, trend: 5 },
+    { anime: getAnime('last-serve')!, rank: 9, trend: 3 },
+    { anime: getAnime('hollow-kingdom')!, rank: 10, trend: 2 },
   ]
 }
 
 export function getRecentlyAdded(): RecentlyAddedItem[] {
-  return ['neon-orbit', 'eternal-frost', 'spirit-veil', 'last-serve', 'crimson-blade'].map(
-    (id) => {
-      const eps = getEpisodes(id)
-      return { anime: getAnime(id)!, episode: eps[eps.length - 1] }
-    },
-  )
+  return [
+    'moonlit-path',
+    'blade-of-the-fallen',
+    'starfall-academy',
+    'oceans-whisper',
+    'thunder-league',
+    'neon-orbit',
+    'eternal-frost',
+    'spirit-veil',
+  ].map((id) => {
+    const eps = getEpisodes(id)
+    return { anime: getAnime(id)!, episode: eps[eps.length - 1] }
+  })
 }
 
 export function getCommunityPicks(): CommunityPick[] {
@@ -346,24 +512,44 @@ export function getCommunityPicks(): CommunityPick[] {
 export function getRecommendations(): Recommendation[] {
   return [
     {
-      anime: getAnime('spirit-veil')!,
-      reason: 'Because you watched Eternal Frost',
-      detail: 'Similar quiet, atmospheric fantasy',
+      anime: getAnime('moonlit-path')!,
+      reason: 'Because you watched Spirit Veil',
+      detail: 'Same studio, atmospheric supernatural',
     },
     {
-      anime: getAnime('hollow-kingdom')!,
+      anime: getAnime('blade-of-the-fallen')!,
       reason: 'Because you like dark fantasy',
       detail: 'Same studio as Crimson Blade',
     },
     {
-      anime: getAnime('letter-to-spring')!,
+      anime: getAnime('oceans-whisper')!,
       reason: 'Because you watched After School Skies',
-      detail: 'Same studio, gentle slice-of-life mood',
+      detail: 'Same studio, gentle romance vibe',
     },
     {
-      anime: getAnime('neon-orbit')!,
+      anime: getAnime('neon-samurai')!,
       reason: 'Trending in Sci-Fi',
-      detail: 'Highly rated by viewers like you',
+      detail: 'Highest rated cyberpunk this year',
+    },
+    {
+      anime: getAnime('crimson-vow')!,
+      reason: 'Because you like supernatural romance',
+      detail: 'Dark, atmospheric, and emotionally rich',
+    },
+    {
+      anime: getAnime('ember-crown')!,
+      reason: 'Most anticipated upcoming fantasy',
+      detail: 'From the studio behind Hollow Kingdom',
+    },
+    {
+      anime: getAnime('starfall-academy')!,
+      reason: 'Because you watched Neon Orbit',
+      detail: 'Similar sci-fi setting, new perspective',
+    },
+    {
+      anime: getAnime('thunder-league')!,
+      reason: 'Popular in Sports',
+      detail: 'Action-packed with a tactical twist',
     },
   ]
 }
@@ -492,29 +678,50 @@ export function searchAnime(query: string): Anime[] {
 }
 
 export function getSimulcasts(): SimulcastItem[] {
-  const eps = getEpisodes('eternal-frost')
+  function lastEp(id: string) {
+    const eps = getEpisodes(id)
+    return eps[eps.length - 1]
+  }
   return [
     {
-      anime: getAnime('eternal-frost')!,
-      nextEpisode: eps[eps.length - 1],
-      airDay: 'Saturday',
-      nextAirDate: '2025-07-19',
+      anime: getAnime('moonlit-path')!,
+      nextEpisode: lastEp('moonlit-path'),
+      airDay: 'Monday',
+      nextAirDate: '2025-07-14',
     },
     {
-      anime: getAnime('neon-orbit')!,
-      nextEpisode: getEpisodes('neon-orbit')[getEpisodes('neon-orbit').length - 1],
-      airDay: 'Thursday',
-      nextAirDate: '2025-07-17',
+      anime: getAnime('blade-of-the-fallen')!,
+      nextEpisode: lastEp('blade-of-the-fallen'),
+      airDay: 'Tuesday',
+      nextAirDate: '2025-07-15',
     },
     {
       anime: getAnime('spirit-veil')!,
-      nextEpisode: getEpisodes('spirit-veil')[getEpisodes('spirit-veil').length - 1],
+      nextEpisode: lastEp('spirit-veil'),
       airDay: 'Wednesday',
       nextAirDate: '2025-07-16',
     },
     {
+      anime: getAnime('neon-orbit')!,
+      nextEpisode: lastEp('neon-orbit'),
+      airDay: 'Thursday',
+      nextAirDate: '2025-07-17',
+    },
+    {
+      anime: getAnime('starfall-academy')!,
+      nextEpisode: lastEp('starfall-academy'),
+      airDay: 'Friday',
+      nextAirDate: '2025-07-18',
+    },
+    {
+      anime: getAnime('eternal-frost')!,
+      nextEpisode: lastEp('eternal-frost'),
+      airDay: 'Saturday',
+      nextAirDate: '2025-07-19',
+    },
+    {
       anime: getAnime('last-serve')!,
-      nextEpisode: getEpisodes('last-serve')[getEpisodes('last-serve').length - 1],
+      nextEpisode: lastEp('last-serve'),
       airDay: 'Sunday',
       nextAirDate: '2025-07-20',
     },
@@ -523,24 +730,40 @@ export function getSimulcasts(): SimulcastItem[] {
 
 export function getSeasonalPicks(): SeasonalPick[] {
   return [
-    { anime: getAnime('eternal-frost')!, label: 'Summer 2025 Hit' },
-    { anime: getAnime('neon-orbit')!, label: 'Sci-Fi Gem' },
-    { anime: getAnime('hollow-kingdom')!, label: 'Most Anticipated' },
-    { anime: getAnime('spirit-veil')!, label: 'Supernatural Standout' },
-    { anime: getAnime('crimson-blade')!, label: 'Action Classic' },
-    { anime: getAnime('last-serve')!, label: 'Sports Pick' },
-    { anime: getAnime('letter-to-spring')!, label: 'Hidden Gem' },
-    { anime: getAnime('after-school-skies')!, label: 'Slice of Life Hit' },
+    { anime: getAnime('moonlit-path')!, label: 'Summer 2025 Hit' },
+    { anime: getAnime('blade-of-the-fallen')!, label: 'Dark Fantasy Pick' },
+    { anime: getAnime('starfall-academy')!, label: 'Sci-Fi Gem' },
+    { anime: getAnime('oceans-whisper')!, label: 'Romance Standout' },
+    { anime: getAnime('eternal-frost')!, label: 'Fan Favorite' },
+    { anime: getAnime('thunder-league')!, label: 'Sports Surprise' },
+    { anime: getAnime('neon-orbit')!, label: 'Action Classic' },
+    { anime: getAnime('spirit-veil')!, label: 'Supernatural Gem' },
   ]
 }
 
-export function getTopPicks(): Anime[] {
+/** Newest anime by year and status — used for "Derniers ajouts". */
+export function getLatestAdditions(): Anime[] {
+  return [...ANIME]
+    .filter((a) => a.year >= 2025)
+    .sort((a, b) => {
+      const statusOrder = { airing: 0, upcoming: 1, hiatus: 2, completed: 3 }
+      const sa = statusOrder[a.status]
+      const sb = statusOrder[b.status]
+      return sa !== sb ? sa - sb : b.year - a.year
+    })
+    .slice(0, 8)
+}
+
+/** Curated editorial picks — used for "Sélection du moment". */
+export function getEditorialPicks(): Anime[] {
   return [
+    getAnime('neon-samurai')!,
+    getAnime('crimson-vow')!,
+    getAnime('moonlit-path')!,
     getAnime('eternal-frost')!,
     getAnime('crimson-blade')!,
+    getAnime('blade-of-the-fallen')!,
     getAnime('spirit-veil')!,
-    getAnime('neon-orbit')!,
-    getAnime('hollow-kingdom')!,
-    getAnime('last-serve')!,
+    getAnime('oceans-whisper')!,
   ]
 }

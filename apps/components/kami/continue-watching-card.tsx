@@ -1,4 +1,3 @@
-import Image from 'next/image'
 import Link from 'next/link'
 import { Play } from 'lucide-react'
 import { Progress } from '@/components/ui/progress'
@@ -9,15 +8,13 @@ export function ContinueWatchingCard({ item }: { item: ContinueWatchingItem }) {
   return (
     <Link
       href={`/watch/${anime.slug}?ep=${episode.id}`}
-      className="group block overflow-hidden rounded-xl border border-border/60 bg-card outline-none transition-transform hover:-translate-y-0.5 focus-visible:ring-2 focus-visible:ring-ring"
+      className="group block w-64 shrink-0 overflow-hidden rounded-xl border border-border/60 bg-card outline-none transition-transform hover:-translate-y-0.5 focus-visible:ring-2 focus-visible:ring-ring"
     >
       <div className="relative aspect-video overflow-hidden">
-        <Image
+        <img
           src={anime.cover || '/placeholder.svg'}
           alt={anime.title}
-          fill
-          sizes="(max-width: 768px) 80vw, 300px"
-          className="object-cover transition-transform duration-500 group-hover:scale-105"
+          className="absolute inset-0 size-full object-cover transition-transform duration-500 group-hover:scale-105"
         />
         <div className="absolute inset-0 bg-gradient-to-t from-background via-background/30 to-transparent" />
         <div className="absolute inset-0 flex items-center justify-center opacity-0 transition-opacity group-hover:opacity-100">
