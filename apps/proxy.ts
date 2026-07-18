@@ -6,7 +6,7 @@ import {
   isAuthRoute,
 } from "@/lib/routes";
 
-const REFRESH_COOKIE_NAME = process.env.AUTH_REFRESH_COOKIE_NAME ?? "aether_mailer_refresh";
+const REFRESH_COOKIE_NAME = process.env.AUTH_REFRESH_COOKIE_NAME ?? "kami_refresh";
 
 function hasSessionCookie(request: NextRequest): boolean {
   return Boolean(request.cookies.get(REFRESH_COOKIE_NAME)?.value);

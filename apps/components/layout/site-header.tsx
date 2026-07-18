@@ -65,11 +65,11 @@ export function SiteHeader() {
       className={cn(
         'sticky top-0 z-50 w-full transition-all duration-300',
         scrolled
-          ? 'border-b border-border/60 bg-background/90 shadow-lg shadow-black/20 backdrop-blur-xl'
+          ? 'bg-background/90 shadow-lg shadow-black/20 backdrop-blur-xl'
           : 'bg-background/70 backdrop-blur-md',
       )}
     >
-      <div className="mx-auto flex h-14 max-w-[1440px] items-center gap-2 px-4 md:px-6">
+      <div className="flex h-14 items-center gap-2 px-4 md:px-6">
         {/* Mobile hamburger */}
         <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
           <SheetTrigger asChild>

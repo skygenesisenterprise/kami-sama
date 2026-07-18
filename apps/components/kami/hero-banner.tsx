@@ -25,7 +25,7 @@ export function HeroBanner({ items }: { items: Anime[] }) {
   const anime = items[active]
 
   return (
-    <section className="relative h-[80vh] min-h-[560px] w-full overflow-hidden">
+    <section className="relative h-[70vh] min-h-[480px] w-full overflow-hidden">
       {items.map((item, i) => (
         <div
           key={item.id}
@@ -46,10 +46,9 @@ export function HeroBanner({ items }: { items: Anime[] }) {
         </div>
       ))}
 
-      {/* Cinematic gradient overlays — multi-layer for depth */}
+      {/* Cinematic gradient overlays */}
       <div className="absolute inset-0 bg-linear-to-r from-background via-background/80 to-transparent" />
-      <div className="absolute inset-0 bg-linear-to-t from-background via-background/30 to-transparent" />
-      <div className="absolute inset-0 bg-linear-to-b from-background/40 via-transparent to-transparent" />
+      <div className="absolute inset-0 bg-linear-to-t from-background via-background/20 to-transparent" />
 
       {/* Content */}
       <div className="relative z-10 flex h-full items-end pb-16 md:items-center md:pb-0">
