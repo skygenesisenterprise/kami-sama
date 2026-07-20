@@ -3,6 +3,7 @@
 import * as React from 'react'
 import Link from 'next/link'
 import { Bookmark, ChevronLeft, ChevronRight } from 'lucide-react'
+import { useTranslations } from 'next-intl'
 import { Button } from '@/components/ui/button'
 import { HeroBanner } from '@/components/kami/hero-banner'
 import {
@@ -14,6 +15,7 @@ import {
   getSeasonalPicks,
   getTrending,
 } from '@/lib/mock-data'
+import { useAuth } from '@/context/AuthContext'
 import type { Anime, ContinueWatchingItem } from '@/types/anime'
 
 interface DiscoverRailProps {
@@ -111,6 +113,7 @@ interface DiscoverAnimeTileProps {
 }
 
 function DiscoverAnimeTile({ anime, availability = 'Sous-titrage | Doublage' }: DiscoverAnimeTileProps) {
+  const { isAuthenticated } = useAuth()
   return (
     <Link
       href={`/anime/${anime.slug}`}
@@ -122,7 +125,11 @@ function DiscoverAnimeTile({ anime, availability = 'Sous-titrage | Doublage' }: 
           alt={anime.title}
           className="size-full object-cover transition-transform duration-300 group-hover:scale-[1.03] motion-reduce:transition-none"
         />
-        <Bookmark className="absolute right-1 top-1 size-4 fill-primary text-primary drop-shadow-sm" aria-hidden="true" />
+        {isAuthenticated && (
+          <span className="absolute right-2 top-2 flex size-7 items-center justify-center rounded-full bg-black/50 text-white/80 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100">
+            <Bookmark className="size-3.5" aria-hidden="true" />
+          </span>
+        )}
       </div>
       <h3 className="mt-3 line-clamp-2 text-sm font-bold leading-5 text-ink transition-colors group-hover:text-primary">
         {anime.title}
@@ -169,6 +176,8 @@ function ContinueWatchingTile({ item }: { item: ContinueWatchingItem }) {
 }
 
 export default function DiscoverPage() {
+  const { isAuthenticated } = useAuth()
+  const t = useTranslations('Public.discover')
   const featured = ['neon-samurai', 'crimson-vow', 'moonlit-path', 'ember-crown', 'starfall-academy', 'spirit-veil'].map((id) => getAnime(id)!)
   const continueWatching = getContinueWatching()
   const continueWatchingAnimes = continueWatching.map((item) => item.anime)
@@ -184,29 +193,35 @@ export default function DiscoverPage() {
     subtitle?: string
     ctaLabel?: string
   }> = [
-    { title: 'Tendance en France', href: '/catalog?sort=trending', animes: trending },
-    { title: 'VF disponibles sur Kami-Sama', href: '/catalog?language=dubbed', animes: latestAdditions },
-    { title: 'Notre sélection pour vous', href: '/catalog?sort=recommended', animes: recommendations },
-    { title: 'Reprendre', href: '/library', animes: [] },
-    { title: 'En quête d\u2019anime familial ?', href: '/catalog?genre=family', animes: seasonalPicks },
-    { title: 'Quand la science rencontre la fiction', href: '/catalog?genre=sci-fi', animes: latestAdditions },
-    { title: 'Nouveaux épisodes de la saison actuelle', href: '/catalog?sort=new', animes: recentlyAdded },
-    { title: 'Inspirés par vous', href: '/catalog?sort=recommended', animes: recommendations },
-    { title: 'Des oreilles… particulières', href: '/catalog?collection=animal-companions', animes: seasonalPicks },
-    {
-      title: 'En voyage',
-      href: '/catalog?genre=adventure',
-      subtitle: 'Faites vos baluchons, on part à l\u2019aventure !',
-      animes: recentlyAdded,
-    },
-    {
-      title: 'Votre Watchlist',
+    { title: t('sectionTrending'), href: '/catalog?sort=trending', animes: trending, subtitle: t('sectionTrendingSub') },
+    { title: t('sectionVF'), href: '/catalog?language=dubbed', animes: latestAdditions, subtitle: t('sectionVFSub') },
+    { title: t('sectionPicks'), href: '/catalog?sort=recommended', animes: recommendations, subtitle: t('sectionPicksSub') },
+    ...(isAuthenticated ? [{ title: t('sectionResume'), href: '/library', animes: [] as Anime[], subtitle: t('sectionResumeSub') }] : []),
+    { title: t('sectionFamily'), href: '/catalog?genre=family', animes: seasonalPicks, subtitle: t('sectionFamilySub') },
+    { title: t('sectionSciFi'), href: '/catalog?genre=sci-fi', animes: latestAdditions, subtitle: t('sectionSciFiSub') },
+    { title: t('sectionNewEps'), href: '/catalog?sort=new', animes: recentlyAdded, subtitle: t('sectionNewEpsSub') },
+    { title: t('sectionInspired'), href: '/catalog?sort=recommended', animes: recommendations, subtitle: t('sectionInspiredSub') },
+    { title: t('sectionEars'), href: '/catalog?collection=animal-companions', animes: seasonalPicks, subtitle: t('sectionEarsSub') },
+    { title: t('sectionVoyage'), href: '/catalog?genre=adventure', animes: recentlyAdded, subtitle: t('sectionVoyageSub') },
+    ...(isAuthenticated ? [{
+      title: t('sectionWatchlist'),
       href: '/library',
-      ctaLabel: 'Voir la Watchlist',
+      ctaLabel: t('sectionWatchlistCta'),
       animes: continueWatchingAnimes,
-    },
-    { title: 'Légendes du foot', href: '/catalog?genre=sports', animes: trending },
-    { title: 'La folie des Mecha', href: '/catalog?genre=mecha', animes: latestAdditions },
+      subtitle: t('sectionWatchlistSub'),
+    }] : []),
+    { title: t('sectionFoot'), href: '/catalog?genre=sports', animes: trending, subtitle: t('sectionFootSub') },
+    { title: t('sectionMecha'), href: '/catalog?genre=mecha', animes: latestAdditions, subtitle: t('sectionMechaSub') },
+    { title: t('sectionFinishLine'), href: '/catalog?genre=sports', animes: trending, subtitle: t('sectionFinishLineSub') },
+    { title: t('sectionShort'), href: '/catalog?format=short', animes: recentlyAdded, subtitle: t('sectionShortSub') },
+    { title: t('sectionFanfiction'), href: '/catalog?collection=fanfiction', animes: recommendations, subtitle: t('sectionFanfictionSub') },
+    { title: t('sectionStrategy'), href: '/catalog?genre=strategy', animes: seasonalPicks, subtitle: t('sectionStrategySub') },
+    { title: t('sectionComedy'), href: '/catalog?genre=comedy', animes: latestAdditions, subtitle: t('sectionComedySub') },
+    { title: t('sectionPopularFR'), href: '/catalog?country=france&sort=popular', animes: trending, subtitle: t('sectionPopularFRSub') },
+    { title: t('sectionCardGame'), href: '/catalog?collection=card-game', animes: recentlyAdded, subtitle: t('sectionCardGameSub') },
+    { title: t('sectionVampire'), href: '/catalog?genre=vampire', animes: getEditorialPicks().slice(0, 6), subtitle: t('sectionVampireSub') },
+    { title: t('sectionGlobe'), href: '/catalog?genre=travel', animes: seasonalPicks, subtitle: t('sectionGlobeSub') },
+    { title: t('sectionFemaleLeads'), href: '/catalog?collection=female-leads', animes: getSeasonalPicks().slice(0, 6).map((p) => p.anime), subtitle: t('sectionFemaleLeadsSub') },
   ]
 
   return (
@@ -216,7 +231,7 @@ export default function DiscoverPage() {
       <main id="main-content" className="relative z-10 -mt-32 pb-12">
         {sections.map((section) =>
           section.title === 'Reprendre' ? (
-            <DiscoverRail key={section.title} title={section.title} href={section.href}>
+            <DiscoverRail key={section.title} title={section.title} href={section.href} subtitle={section.subtitle}>
               {continueWatching.map((item) => (
                 <ContinueWatchingTile key={`reprendre-${item.anime.id}`} item={item} />
               ))}

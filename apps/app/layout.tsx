@@ -21,6 +21,9 @@ export const metadata: Metadata = {
   description:
     'Discover, track, and watch anime on Kami-Sama. A next-generation, community-driven, open-source anime and Japanese culture platform.',
   keywords: ['anime', 'streaming', 'Japanese culture', 'community', 'Kami-Sama'],
+  icons: {
+    icon: '/icons/kami-sama-icon.png',
+  },
 }
 
 export const viewport: Viewport = {

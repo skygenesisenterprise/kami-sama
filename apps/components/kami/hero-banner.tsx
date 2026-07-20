@@ -5,6 +5,7 @@ import Image from 'next/image'
 import Link from 'next/link'
 import { Bookmark, ChevronLeft, ChevronRight, Play } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { useAuth } from '@/context/AuthContext'
 import { cn } from '@/lib/utils'
 import type { Anime } from '@/types/anime'
 
@@ -15,6 +16,7 @@ interface HeroBannerProps {
 const SLIDE_DURATION = 8000
 
 export function HeroBanner({ items }: HeroBannerProps) {
+  const { isAuthenticated } = useAuth()
   const [activeIndex, setActiveIndex] = React.useState(0)
   const [isPaused, setIsPaused] = React.useState(false)
 
@@ -115,15 +117,17 @@ export function HeroBanner({ items }: HeroBannerProps) {
                 Lecture E1
               </Link>
             </Button>
-            <Button
-              type="button"
-              variant="outline"
-              size="icon"
-              className="size-10 rounded-none border-2 border-primary bg-transparent text-primary transition-colors duration-200 hover:bg-primary hover:text-primary-foreground focus-visible:ring-2 focus-visible:ring-ink focus-visible:ring-offset-2 focus-visible:ring-offset-paper"
-              aria-label={`Ajouter ${anime.title} à votre Watchlist`}
-            >
-              <Bookmark className="size-4" aria-hidden="true" />
-            </Button>
+            {isAuthenticated && (
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                className="size-10 rounded-none border-2 border-primary bg-transparent text-primary transition-colors duration-200 hover:bg-primary hover:text-primary-foreground focus-visible:ring-2 focus-visible:ring-ink focus-visible:ring-offset-2 focus-visible:ring-offset-paper"
+                aria-label={`Ajouter ${anime.title} à votre Watchlist`}
+              >
+                <Bookmark className="size-4" aria-hidden="true" />
+              </Button>
+            )}
           </div>
         </div>
       </div>

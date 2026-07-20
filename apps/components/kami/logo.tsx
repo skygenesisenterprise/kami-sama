@@ -12,7 +12,7 @@ export function Logo({ className, href = '/' }: { className?: string; href?: str
         <span className="font-display text-lg font-bold leading-none">神</span>
       </span>
       <span className="flex items-baseline font-display text-lg font-semibold leading-none tracking-tight">
-        Kami<span className="text-primary">-</span>Sama
+        Kami<span className="text-primary">-</span>Sama<span className="text-muted-foreground text-sm font-normal">.tv</span>
       </span>
     </Link>
   )

@@ -203,13 +203,6 @@ export async function Footer({ locale: initialLocale }: FooterProps) {
     { name: t("statusPage"), href: "https://status.kami-sama.tv", external: true },
   ];
 
-  const securityLinks: FooterLink[] = [
-    { name: t("securityApproach"), href: `${prefix}/security` },
-    { name: t("securityPrivacy"), href: `${prefix}/security/privacy` },
-    { name: t("trustTransparency"), href: `${prefix}/security/trust` },
-    { name: t("customerSecurity"), href: `${prefix}/security/customers` },
-  ];
-
   const resourcesLinks: FooterLink[] = [
     { name: t("blog"), href: `${prefix}/blog` },
     { name: t("caseStudies"), href: `${prefix}/resources/case-studies` },
@@ -220,7 +213,7 @@ export async function Footer({ locale: initialLocale }: FooterProps) {
 
   const companyLinks: FooterLink[] = [
     { name: t("about"), href: `${prefix}/company/about` },
-    { name: t("careers"), href: `${prefix}/company/careers` },
+    { name: t("careers"), href: "https://jobs.skygenesisenterprise.com", external: true },
     { name: t("press"), href: `${prefix}/company/press` },
     { name: t("partners"), href: `${prefix}/company/partners` },
     { name: t("contact"), href: `${prefix}/company/contact` },
@@ -240,7 +233,6 @@ export async function Footer({ locale: initialLocale }: FooterProps) {
     { name: t("cookiePolicy"), href: `${prefix}/legal/cookies` },
     { name: "GDPR", href: `${prefix}/legal/gdpr` },
     { name: t("security"), href: `${prefix}/legal/security` },
-    { name: "licence", href: `${prefix}/legal/licence` },
   ];
 
   const otherLinks: FooterLink[] = [
@@ -249,13 +241,11 @@ export async function Footer({ locale: initialLocale }: FooterProps) {
     { name: t("liveStreams"), href: "https://twitch.tv/kami-sama-tv", external: true },
     { name: t("podcast"), href: `${prefix}/podcast` },
     { name: t("rss"), href: `${prefix}/rss.xml` },
-    { name: t("constitution"), href: `${prefix}/constitution` },
   ];
 
   const footerSections = [
     { title: t("platformApi"), links: platformApiLinks },
     { title: t("developers"), links: developerLinks },
-    { title: t("security"), links: securityLinks },
     { title: t("resources"), links: resourcesLinks },
     { title: t("company"), links: companyLinks },
     { title: t("support"), links: supportLinks },

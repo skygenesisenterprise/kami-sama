@@ -36,11 +36,13 @@ import { UserAvatar } from '@/components/kami/user-avatar'
 import { SearchBar } from '@/components/kami/search-bar'
 import { Logo } from '@/components/kami/logo'
 import { USERS } from '@/lib/mock-data'
+import { useAuth } from '@/context/AuthContext'
 import { cn } from '@/lib/utils'
 
 export function SiteHeader() {
   const t = useTranslations('Public.header')
   const pathname = usePathname()
+  const { isAuthenticated } = useAuth()
   const [scrolled, setScrolled] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
   const [mobileOpen, setMobileOpen] = useState(false)
@@ -312,91 +314,99 @@ export function SiteHeader() {
           <NotificationsMenu />
 
           {/* Watchlist */}
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-9"
-            asChild
-          >
-            <Link href={`/${locale}/watchlist`} aria-label={t('watchlist')}>
-              <Bookmark className="size-5" />
-            </Link>
-          </Button>
+          {isAuthenticated && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-9"
+              asChild
+            >
+              <Link href={`/${locale}/watchlist`} aria-label={t('watchlist')}>
+                <Bookmark className="size-5" />
+              </Link>
+            </Button>
+          )}
 
           {/* Profile */}
-          <DropdownMenu open={profileOpen} onOpenChange={setProfileOpen}>
-            <DropdownMenuTrigger asChild>
-              <button
-                type="button"
-                aria-label={t('profileMenu')}
-                className="ml-1 rounded-full outline-none transition-opacity hover:opacity-80 focus-visible:ring-2 focus-visible:ring-ring"
-              >
-                <UserAvatar user={USERS.me} className="size-8" />
-              </button>
-            </DropdownMenuTrigger>
-            <AnimatedDropdownContent open={profileOpen} align="end" className="w-64 border-white/10 bg-black p-0 text-ink shadow-xl">
-              <div className="flex items-center gap-3 border-b border-white/10 px-4 py-3">
-                <UserAvatar user={USERS.me} className="size-10" />
-                <div className="flex flex-col">
-                  <span className="text-sm font-semibold">{USERS.me.displayName}</span>
-                  <span className="text-xs text-white/50">
-                    @{USERS.me.username}
-                  </span>
-                </div>
-              </div>
-              <div className="py-1.5">
-                <DropdownMenuItem asChild className="gap-3 px-4 py-2.5 focus:bg-white/10">
-                  <Link href={`/${locale}/profile`}>
-                    <Users className="size-4" />
-                    {t('switchProfile')}
-                  </Link>
-                </DropdownMenuItem>
-                <DropdownMenuItem asChild className="gap-3 px-4 py-2.5 focus:bg-white/10">
-                  <Link href={`/${locale}/settings`}>
-                    <Settings className="size-4" />
-                    {t('settings')}
-                  </Link>
-                </DropdownMenuItem>
-              </div>
-              <div className="mx-3 h-px bg-white/10" />
-              <div className="py-1.5">
-                <DropdownMenuItem asChild className="gap-3 px-4 py-2.5 focus:bg-white/10">
-                  <Link href={`/${locale}/watchlist`}>
-                    <Bookmark className="size-4" />
-                    {t('watchlist')}
-                  </Link>
-                </DropdownMenuItem>
-                <DropdownMenuItem asChild className="gap-3 px-4 py-2.5 focus:bg-white/10">
-                  <Link href={`/${locale}/crunchylists`}>
-                    <CreditCard className="size-4" />
-                    {t('crunchylists')}
-                  </Link>
-                </DropdownMenuItem>
-                <DropdownMenuItem asChild className="gap-3 px-4 py-2.5 focus:bg-white/10">
-                  <Link href={`/${locale}/history`}>
-                    <History className="size-4" />
-                    {t('history')}
-                  </Link>
-                </DropdownMenuItem>
-                <DropdownMenuItem asChild className="gap-3 px-4 py-2.5 focus:bg-white/10">
-                  <Link href={`/${locale}/notifications`}>
-                    <Bell className="size-4" />
-                    {t('notifications')}
-                    <span className="ml-auto flex size-5 items-center justify-center rounded-full bg-primary text-[10px] font-bold text-primary-foreground">
-                      1
+          {isAuthenticated ? (
+            <DropdownMenu open={profileOpen} onOpenChange={setProfileOpen}>
+              <DropdownMenuTrigger asChild>
+                <button
+                  type="button"
+                  aria-label={t('profileMenu')}
+                  className="ml-1 rounded-full outline-none transition-opacity hover:opacity-80 focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  <UserAvatar user={USERS.me} className="size-8" />
+                </button>
+              </DropdownMenuTrigger>
+              <AnimatedDropdownContent open={profileOpen} align="end" className="w-64 border-white/10 bg-black p-0 text-ink shadow-xl">
+                <div className="flex items-center gap-3 border-b border-white/10 px-4 py-3">
+                  <UserAvatar user={USERS.me} className="size-10" />
+                  <div className="flex flex-col">
+                    <span className="text-sm font-semibold">{USERS.me.displayName}</span>
+                    <span className="text-xs text-white/50">
+                      @{USERS.me.username}
                     </span>
-                  </Link>
-                </DropdownMenuItem>
-              </div>
-              <div className="mx-3 h-px bg-white/10" />
-              <div className="border-t border-white/10 py-1.5">
-                <DropdownMenuItem className="gap-3 px-4 py-2.5 text-red-400 focus:bg-white/10 focus:text-red-300">
-                  <LogOut className="size-4" />
-                  {t('signOut')}
-                </DropdownMenuItem>
-              </div>
-            </AnimatedDropdownContent>
-          </DropdownMenu>
+                  </div>
+                </div>
+                <div className="py-1.5">
+                  <DropdownMenuItem asChild className="gap-3 px-4 py-2.5 focus:bg-white/10">
+                    <Link href={`/${locale}/profile`}>
+                      <Users className="size-4" />
+                      {t('switchProfile')}
+                    </Link>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem asChild className="gap-3 px-4 py-2.5 focus:bg-white/10">
+                    <Link href={`/${locale}/settings`}>
+                      <Settings className="size-4" />
+                      {t('settings')}
+                    </Link>
+                  </DropdownMenuItem>
+                </div>
+                <div className="mx-3 h-px bg-white/10" />
+                <div className="py-1.5">
+                  <DropdownMenuItem asChild className="gap-3 px-4 py-2.5 focus:bg-white/10">
+                    <Link href={`/${locale}/watchlist`}>
+                      <Bookmark className="size-4" />
+                      {t('watchlist')}
+                    </Link>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem asChild className="gap-3 px-4 py-2.5 focus:bg-white/10">
+                    <Link href={`/${locale}/crunchylists`}>
+                      <CreditCard className="size-4" />
+                      {t('crunchylists')}
+                    </Link>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem asChild className="gap-3 px-4 py-2.5 focus:bg-white/10">
+                    <Link href={`/${locale}/history`}>
+                      <History className="size-4" />
+                      {t('history')}
+                    </Link>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem asChild className="gap-3 px-4 py-2.5 focus:bg-white/10">
+                    <Link href={`/${locale}/notifications`}>
+                      <Bell className="size-4" />
+                      {t('notifications')}
+                      <span className="ml-auto flex size-5 items-center justify-center rounded-full bg-primary text-[10px] font-bold text-primary-foreground">
+                        1
+                      </span>
+                    </Link>
+                  </DropdownMenuItem>
+                </div>
+                <div className="mx-3 h-px bg-white/10" />
+                <div className="border-t border-white/10 py-1.5">
+                  <DropdownMenuItem className="gap-3 px-4 py-2.5 text-red-400 focus:bg-white/10 focus:text-red-300">
+                    <LogOut className="size-4" />
+                    {t('signOut')}
+                  </DropdownMenuItem>
+                </div>
+              </AnimatedDropdownContent>
+            </DropdownMenu>
+          ) : (
+            <Button asChild variant="ghost" size="sm" className="ml-1 rounded-lg bg-white/10 px-4 py-2 text-sm font-semibold text-white hover:bg-white/20">
+              <Link href="/login">{t('login')}</Link>
+            </Button>
+          )}
         </div>
       </div>
 
