@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
+import { useTranslations } from 'next-intl'
 import {
   Bell,
   Bookmark,
@@ -35,19 +36,20 @@ import { Logo } from '@/components/kami/logo'
 import { USERS } from '@/lib/mock-data'
 import { cn } from '@/lib/utils'
 
-const NAV_LINKS = [
-  { href: '/', label: 'Home', icon: Home },
-  { href: '/catalog', label: 'Browse', icon: Film },
-  { href: '/calendar', label: 'Calendar', icon: Calendar },
-  { href: '/community', label: 'Community', icon: Sparkles },
-  { href: '/library', label: 'My Library', icon: Library },
-]
-
 export function SiteHeader() {
+  const t = useTranslations('Public.header')
   const pathname = usePathname()
   const [scrolled, setScrolled] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
   const [mobileOpen, setMobileOpen] = useState(false)
+
+  const NAV_LINKS = [
+    { href: '/', label: t('navHome'), icon: Home },
+    { href: '/catalog', label: t('navBrowse'), icon: Film },
+    { href: '/calendar', label: t('navCalendar'), icon: Calendar },
+    { href: '/community', label: t('navCommunity'), icon: Sparkles },
+    { href: '/library', label: t('navLibrary'), icon: Library },
+  ]
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 12)
@@ -77,13 +79,13 @@ export function SiteHeader() {
               variant="ghost"
               size="icon"
               className="size-9 md:hidden"
-              aria-label="Open menu"
+              aria-label={t('openMenu')}
             >
               <Menu className="size-5" />
             </Button>
           </SheetTrigger>
           <SheetContent side="left" className="w-72 border-border/40 p-0">
-            <SheetTitle className="sr-only">Navigation</SheetTitle>
+            <SheetTitle className="sr-only">{t('navigation')}</SheetTitle>
             {/* Mobile header */}
             <div className="flex h-14 items-center border-b border-border/40 px-4">
               <Logo />
@@ -166,7 +168,7 @@ export function SiteHeader() {
                 <SearchBar
                   autoFocus
                   className="w-64 [&_input]:h-9"
-                  placeholder="Search…"
+                  placeholder={t('searchPlaceholder')}
                 />
                 <Button
                   variant="ghost"
@@ -183,7 +185,7 @@ export function SiteHeader() {
                 size="icon"
                 className="size-9"
                 onClick={() => setSearchOpen(true)}
-                aria-label="Search"
+                aria-label={t('search')}
               >
                 <Search className="size-5" />
               </Button>
@@ -195,7 +197,7 @@ export function SiteHeader() {
             variant="ghost"
             size="icon"
             className="size-9 lg:hidden"
-            aria-label="Search"
+            aria-label={t('search')}
             onClick={() => setSearchOpen((v) => !v)}
           >
             <Search className="size-5" />
@@ -209,7 +211,7 @@ export function SiteHeader() {
             <DropdownMenuTrigger asChild>
               <button
                 type="button"
-                aria-label="Profile menu"
+                aria-label={t('profileMenu')}
                 className="ml-1 rounded-full outline-none transition-opacity hover:opacity-80 focus-visible:ring-2 focus-visible:ring-ring"
               >
                 <UserAvatar user={USERS.me} className="size-8" />
@@ -231,24 +233,24 @@ export function SiteHeader() {
                 <DropdownMenuItem asChild>
                   <Link href="/library">
                     <User className="size-4" />
-                    Profile
+                    {t('profile')}
                   </Link>
                 </DropdownMenuItem>
                 <DropdownMenuItem asChild>
                   <Link href="/library">
                     <Bookmark className="size-4" />
-                    My Library
+                    {t('navLibrary')}
                   </Link>
                 </DropdownMenuItem>
                 <DropdownMenuItem>
                   <Settings className="size-4" />
-                  Settings
+                  {t('settings')}
                 </DropdownMenuItem>
               </DropdownMenuGroup>
               <DropdownMenuSeparator />
               <DropdownMenuItem>
                 <LogOut className="size-4" />
-                Sign out
+                {t('signOut')}
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
@@ -258,7 +260,7 @@ export function SiteHeader() {
       {/* Mobile expandable search */}
       {searchOpen && (
         <div className="border-t border-border/40 bg-background/95 px-4 py-3 backdrop-blur-xl lg:hidden">
-          <SearchBar autoFocus placeholder="Search anime…" />
+          <SearchBar autoFocus placeholder={t('searchAnimePlaceholder')} />
         </div>
       )}
     </header>
@@ -266,6 +268,8 @@ export function SiteHeader() {
 }
 
 function NotificationsMenu() {
+  const t = useTranslations('Public.header')
+
   const items = [
     {
       title: 'New episode of Eternal Frost',
@@ -287,7 +291,7 @@ function NotificationsMenu() {
         <Button
           variant="ghost"
           size="icon"
-          aria-label="Notifications"
+          aria-label={t('notificationsLabel')}
           className="relative size-9"
         >
           <Bell className="size-5" />
@@ -295,7 +299,7 @@ function NotificationsMenu() {
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-80">
-        <DropdownMenuLabel>Notifications</DropdownMenuLabel>
+        <DropdownMenuLabel>{t('notifications')}</DropdownMenuLabel>
         <DropdownMenuSeparator />
         <DropdownMenuGroup>
           {items.map((item) => (

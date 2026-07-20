@@ -238,12 +238,92 @@
 @layer utilities {
   .text-balance { text-wrap: balance; }
 
+  /* Film grain / noise overlay — apply to fixed pointer-events-none element */
+  .grain-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+    pointer-events: none;
+    opacity: 0.03;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
+    background-repeat: repeat;
+    background-size: 128px 128px;
+  }
+
+  /* Radial mesh gradient background — fixed orbs for ambient depth */
+  .mesh-gradient-bg {
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    overflow: hidden;
+  }
+  .mesh-gradient-bg::before,
+  .mesh-gradient-bg::after {
+    content: "";
+    position: absolute;
+    border-radius: 50%;
+    filter: blur(120px);
+  }
+  .mesh-gradient-bg::before {
+    width: 600px;
+    height: 600px;
+    top: -10%;
+    right: -5%;
+    background: radial-gradient(circle, rgba(244, 117, 33, 0.08) 0%, transparent 70%);
+  }
+  .mesh-gradient-bg::after {
+    width: 500px;
+    height: 500px;
+    bottom: 10%;
+    left: -8%;
+    background: radial-gradient(circle, rgba(59, 130, 246, 0.05) 0%, transparent 70%);
+  }
+
+  /* Scroll-reveal base state — elements start hidden, revealed via JS */
+  .scroll-reveal {
+    opacity: 0;
+    transform: translateY(3rem) blur(2px);
+    transition: opacity 800ms cubic-bezier(0.32, 0.72, 0, 1),
+                transform 800ms cubic-bezier(0.32, 0.72, 0, 1),
+                filter 800ms cubic-bezier(0.32, 0.72, 0, 1);
+  }
+  .scroll-reveal.is-visible {
+    opacity: 1;
+    transform: translateY(0) blur(0);
+  }
+
+  /* Glass card — double-bezel outer shell */
+  .glass-card {
+    background: rgba(20, 20, 20, 0.6);
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 1.5rem;
+  }
+  .glass-card-inner {
+    background: rgba(26, 26, 26, 0.8);
+    border: 1px solid rgba(255, 255, 255, 0.04);
+    border-radius: calc(1.5rem - 6px);
+    box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.06);
+  }
+
+  /* Custom easing — spring-like deceleration */
+  .ease-spring {
+    transition-timing-function: cubic-bezier(0.32, 0.72, 0, 1);
+  }
+
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after {
       animation-duration: 0.01ms !important;
       animation-iteration-count: 1 !important;
       transition-duration: 0.01ms !important;
       scroll-behavior: auto !important;
+    }
+    .scroll-reveal {
+      opacity: 1;
+      transform: none;
+      filter: none;
     }
   }
 }

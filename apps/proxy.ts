@@ -1,24 +1,95 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
+import { routing } from "./i18n/routing";
 
-import {
-  DEFAULT_PLATFORM_ROUTE,
-  isAuthRoute,
-} from "@/lib/routes";
+type Locale = (typeof routing.locales)[number];
 
-const REFRESH_COOKIE_NAME = process.env.AUTH_REFRESH_COOKIE_NAME ?? "kami_refresh";
+const countryToLocale: Record<string, Locale> = {
+  FR: "fr",
+  EN: "en",
+};
 
-function hasSessionCookie(request: NextRequest): boolean {
-  return Boolean(request.cookies.get(REFRESH_COOKIE_NAME)?.value);
+function getCountryFromRequest(request: NextRequest): string | null {
+  const cloudflareCountry = request.headers.get("cf-ipcountry");
+  const vercelCountry = request.headers.get("x-vercel-ip-country");
+  const fastlyCountry = request.headers.get("x-fastly-geo-country");
+  return cloudflareCountry || vercelCountry || fastlyCountry || null;
+}
+
+function getLocaleFromCountry(country: string | null): Locale {
+  if (country && country in countryToLocale) {
+    return countryToLocale[country];
+  }
+  return routing.defaultLocale;
+}
+
+function isValidLocale(locale: string): locale is Locale {
+  return routing.locales.includes(locale as Locale);
+}
+
+const AUTH_PATHS = ["/login", "/register"];
+const PROTECTED_PATHS = ["/dash", "/profile"];
+const NO_LOCALE_PATHS = ["/discord", "/dash", "/profile", "/login", "/register", "/api"];
+
+function isValidJWT(token: string | undefined): boolean {
+  if (!token) return false;
+  const parts = token.split(".");
+  return parts.length === 3;
 }
 
 export default function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
+  const segments = pathname.split("/").filter(Boolean);
+  const firstSegment = segments[0];
 
-  if (isAuthRoute(pathname)) {
-    if (hasSessionCookie(request)) {
-      return NextResponse.redirect(new URL(DEFAULT_PLATFORM_ROUTE, request.url));
+  if (pathname === "/" || pathname === "") {
+    const country = getCountryFromRequest(request);
+    const locale = getLocaleFromCountry(country);
+    return NextResponse.redirect(new URL(`/${locale}/discover`, request.url));
+  }
+
+  const isAuthPath = AUTH_PATHS.some((p) => pathname === p || pathname === `/${firstSegment}${p}`);
+  if (isAuthPath) {
+    const cleanPath = AUTH_PATHS.find((p) => pathname.endsWith(p));
+    if (pathname !== cleanPath) {
+      return NextResponse.redirect(new URL(cleanPath!, request.url));
     }
+    return NextResponse.next();
+  }
+
+  const isProtectedPath = PROTECTED_PATHS.some((p) => pathname.startsWith(p));
+  if (isProtectedPath) {
+    const authCookie = request.cookies.get("auth_token");
+    const isValid = isValidJWT(authCookie?.value);
+    if (!isValid) {
+      const loginUrl = new URL("/login", request.url);
+      loginUrl.searchParams.set("redirect", pathname);
+      return NextResponse.redirect(loginUrl);
+    }
+  }
+
+  if (firstSegment && isValidLocale(firstSegment)) {
+    const localePath = `/${firstSegment}`;
+    const isNoLocalePath = NO_LOCALE_PATHS.some(
+      (p) => pathname.startsWith(localePath + p) || pathname === localePath + p
+    );
+    if (isNoLocalePath) {
+      const cleanPath = pathname.replace(localePath, "");
+      return NextResponse.redirect(new URL(cleanPath || "/", request.url));
+    }
+    return NextResponse.next();
+  }
+
+  if (firstSegment && !isValidLocale(firstSegment)) {
+    const isNoLocalePath = NO_LOCALE_PATHS.some(
+      (p) => pathname === p || pathname.startsWith(p + "/")
+    );
+    if (isNoLocalePath) {
+      return NextResponse.next();
+    }
+    const country = getCountryFromRequest(request);
+    const locale = getLocaleFromCountry(country);
+    return NextResponse.redirect(new URL(`/${locale}${pathname}`, request.url));
   }
 
   return NextResponse.next();

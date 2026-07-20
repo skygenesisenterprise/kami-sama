@@ -1,22 +1,12 @@
-import path from "node:path";
 import type { NextConfig } from "next";
+import createNextIntlPlugin from "next-intl/plugin";
 
+const withNextIntl = createNextIntlPlugin("./i18n/request.ts");
 const isProduction = process.env.NODE_ENV === "production";
 const isStaticWebBuild = process.env.BUILD_WEB_STATIC === "true";
-const apiProxyTarget = (process.env.API_INTERNAL_URL || "http://localhost:8080/api/v1").replace(/\/$/, "");
 
 const nextConfig: NextConfig = {
-  allowedDevOrigins: [
-    "mailer.skygenesisenterprise.com",
-    "mailer.skygenesisenterprise.localhost",
-    "api.mailer.skygenesisenterprise.localhost",
-    "mailer.skygenesisenterprise.lan",
-    "api.mailer.skygenesisenterprise.lan",
-    "192.168.1.3",
-  ],
-  turbopack: {
-    root: path.resolve(__dirname, ".."),
-  },
+  allowedDevOrigins: ["kami-sama.fr", "192.168.1.3"],
   outputFileTracingExcludes: {
     "*": ["test/**"],
   },
@@ -31,7 +21,7 @@ const nextConfig: NextConfig = {
         images: {
           unoptimized: true,
           remotePatterns: [
-            { protocol: "https", hostname: "mailer.skygenesisenterprise.com", pathname: "/**" },
+            { protocol: "https", hostname: "kami-sama.fr", pathname: "/**" },
             { protocol: "https", hostname: "api.dicebear.com", pathname: "/**" },
             { protocol: "https", hostname: "avatars.githubusercontent.com", pathname: "/**" },
             { protocol: "https", hostname: "images.unsplash.com", pathname: "/**" },
@@ -52,7 +42,7 @@ const nextConfig: NextConfig = {
   ...(!isStaticWebBuild && {
     images: {
       remotePatterns: [
-        { protocol: "https", hostname: "mailer.skygenesisenterprise.com", pathname: "/**" },
+        { protocol: "https", hostname: "kami-sama.fr", pathname: "/**" },
         { protocol: "https", hostname: "api.dicebear.com", pathname: "/**" },
         { protocol: "https", hostname: "avatars.githubusercontent.com", pathname: "/**" },
         { protocol: "https", hostname: "images.unsplash.com", pathname: "/**" },
@@ -79,12 +69,14 @@ const nextConfig: NextConfig = {
     async rewrites() {
       return [
         {
-          source: "/api/v1/:path*",
-          destination: `${apiProxyTarget}/:path*`,
+          source: "/api/:path*",
+          destination: "http://localhost:8080/api/:path*",
         },
       ];
     },
   }),
 };
 
-export default nextConfig;
+let configWithPlugins: NextConfig = nextConfig;
+
+export default withNextIntl(configWithPlugins);
