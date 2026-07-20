@@ -1,6 +1,7 @@
 import { Analytics } from '@vercel/analytics/next'
 import type { Metadata, Viewport } from 'next'
 import { Inter, Sora } from 'next/font/google'
+import { Providers } from '@/context/Providers'
 import "@/styles/globals.css"
 
 const inter = Inter({
@@ -33,9 +34,11 @@ export default function RootLayout({
   children: React.ReactNode
 }>) {
   return (
-    <html lang="en" className={`${inter.variable} ${sora.variable} bg-background`}>
+      <html lang="en" className={`${inter.variable} ${sora.variable} bg-background`} suppressHydrationWarning>
       <body className="font-sans antialiased">
-        {children}
+        <Providers>
+          {children}
+        </Providers>
         {process.env.NODE_ENV === 'production' && <Analytics />}
       </body>
     </html>

@@ -68,6 +68,7 @@ export function HeroBanner({ items }: HeroBannerProps) {
             alt={item.title}
             fill
             priority={index === 0}
+            loading={index === 0 ? 'eager' : undefined}
             sizes="100vw"
             className="object-cover object-[63%_center] md:object-center"
           />
@@ -75,9 +76,9 @@ export function HeroBanner({ items }: HeroBannerProps) {
       ))}
 
       <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(90deg,rgba(13,13,13,0.98)_0%,rgba(13,13,13,0.9)_24%,rgba(13,13,13,0.58)_43%,rgba(13,13,13,0.12)_67%,rgba(13,13,13,0)_86%)]" />
-      <div className="pointer-events-none absolute inset-x-0 bottom-0 h-[46%] bg-gradient-to-t from-paper via-paper/55 to-transparent" />
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 h-[46%] bg-linear-to-t from-paper via-paper/55 to-transparent" />
 
-      <div className="relative z-10 flex min-h-[min(57rem,calc(100dvh-3rem))] items-center px-5 pb-64 pt-24 sm:px-8 lg:px-12 xl:px-20">
+      <div className="relative z-10 flex min-h-[min(57rem,calc(100dvh-3rem))] items-center px-5 pb-15 pt-20 sm:px-8 lg:px-12 xl:px-20">
         <div key={anime.id} className="max-w-xl animate-[hero-copy-in_450ms_ease-out] motion-reduce:animate-none">
           <h1 className="font-display text-5xl font-extrabold leading-[0.9] tracking-[-0.045em] text-ink drop-shadow-[0_3px_18px_rgba(0,0,0,0.55)] sm:text-6xl lg:text-7xl">
             {anime.title}

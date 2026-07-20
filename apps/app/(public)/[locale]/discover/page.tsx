@@ -1,6 +1,9 @@
+'use client'
+
 import * as React from 'react'
 import Link from 'next/link'
-import { Bookmark, ChevronRight } from 'lucide-react'
+import { Bookmark, ChevronLeft, ChevronRight } from 'lucide-react'
+import { Button } from '@/components/ui/button'
 import { HeroBanner } from '@/components/kami/hero-banner'
 import {
   getAnime,
@@ -11,7 +14,7 @@ import {
   getSeasonalPicks,
   getTrending,
 } from '@/lib/mock-data'
-import type { Anime } from '@/types/anime'
+import type { Anime, ContinueWatchingItem } from '@/types/anime'
 
 interface DiscoverRailProps {
   title: string
@@ -22,8 +25,39 @@ interface DiscoverRailProps {
 }
 
 function DiscoverRail({ title, href, subtitle, ctaLabel, children }: DiscoverRailProps) {
+  const scrollRef = React.useRef<HTMLDivElement>(null)
+  const [canScrollRight, setCanScrollRight] = React.useState(false)
+  const [canScrollLeft, setCanScrollLeft] = React.useState(false)
+
+  React.useEffect(() => {
+    const el = scrollRef.current
+    if (!el) return
+
+    const check = () => {
+      setCanScrollLeft(el.scrollLeft > 1)
+      setCanScrollRight(el.scrollLeft + el.clientWidth < el.scrollWidth - 1)
+    }
+    check()
+
+    el.addEventListener('scroll', check, { passive: true })
+    const ro = new ResizeObserver(check)
+    ro.observe(el)
+    return () => {
+      el.removeEventListener('scroll', check)
+      ro.disconnect()
+    }
+  }, [])
+
+  const scrollLeft = () => {
+    scrollRef.current?.scrollBy({ left: -320, behavior: 'smooth' })
+  }
+
+  const scrollRight = () => {
+    scrollRef.current?.scrollBy({ left: 320, behavior: 'smooth' })
+  }
+
   return (
-    <section className="py-7 md:py-10">
+    <section className="relative py-7 md:py-10">
       <div className="mb-5 flex items-end justify-between gap-4 px-4 md:px-8 xl:px-20">
         <div>
           <h2 className="font-body text-2xl font-bold tracking-tight text-ink md:text-3xl">{title}</h2>
@@ -39,8 +73,33 @@ function DiscoverRail({ title, href, subtitle, ctaLabel, children }: DiscoverRai
           </Link>
         )}
       </div>
-      <div className="scrollbar-hide flex snap-x snap-mandatory gap-4 overflow-x-auto px-4 pb-2 scroll-pl-4 md:gap-6 md:px-8 md:scroll-pl-8 xl:px-20 xl:scroll-pl-20">
-        {children}
+      <div className="relative">
+        {canScrollLeft && (
+          <button
+            type="button"
+            onClick={scrollLeft}
+            className="absolute left-1 top-1/2 z-10 flex size-10 -translate-y-1/2 items-center justify-center rounded-full bg-ink/80 text-paper shadow-lg backdrop-blur-sm transition-colors hover:bg-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary md:left-2"
+            aria-label="Reculer"
+          >
+            <ChevronLeft className="size-5" strokeWidth={2.5} />
+          </button>
+        )}
+        <div
+          ref={scrollRef}
+          className="scrollbar-hide flex snap-x snap-mandatory gap-4 overflow-x-auto px-4 pb-2 scroll-pl-4 md:gap-6 md:px-8 md:scroll-pl-8 xl:px-20 xl:scroll-pl-20"
+        >
+          {children}
+        </div>
+        {canScrollRight && (
+          <button
+            type="button"
+            onClick={scrollRight}
+            className="absolute right-1 top-1/2 z-10 flex size-10 -translate-y-1/2 items-center justify-center rounded-full bg-ink/80 text-paper shadow-lg backdrop-blur-sm transition-colors hover:bg-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary md:right-2"
+            aria-label="Voir plus"
+          >
+            <ChevronRight className="size-5" strokeWidth={2.5} />
+          </button>
+        )}
       </div>
     </section>
   )
@@ -73,9 +132,46 @@ function DiscoverAnimeTile({ anime, availability = 'Sous-titrage | Doublage' }: 
   )
 }
 
+function ContinueWatchingTile({ item }: { item: ContinueWatchingItem }) {
+  const { anime, episode, progressPercent, remainingLabel } = item
+  return (
+    <Link
+      href={`/watch/${anime.slug}`}
+      className="group flex w-72 shrink-0 snap-start flex-col overflow-hidden rounded-md bg-paper-raised shadow-sm transition-shadow hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary sm:w-80"
+    >
+      <div className="relative aspect-video overflow-hidden">
+        <img
+          src={anime.banner || anime.cover || '/placeholder.jpg'}
+          alt={anime.title}
+          className="size-full object-cover transition-transform duration-300 group-hover:scale-[1.03] motion-reduce:transition-none"
+        />
+        <div className="absolute inset-0 bg-linear-to-t from-black/60 to-transparent" />
+        <div className="absolute bottom-2 left-3 right-3">
+          <span className="text-xs font-bold text-white/80">Ép. {episode.number}</span>
+        </div>
+      </div>
+      <div className="flex flex-1 flex-col gap-1.5 px-3 py-3">
+        <h3 className="line-clamp-1 text-sm font-bold text-ink transition-colors group-hover:text-primary">
+          {anime.title}
+        </h3>
+        <p className="line-clamp-1 text-xs text-ink-soft">{remainingLabel}</p>
+        <div className="mt-auto">
+          <div className="h-1 w-full overflow-hidden rounded-full bg-ink/10">
+            <div
+              className="h-full rounded-full bg-primary transition-[width] duration-300"
+              style={{ width: `${progressPercent}%` }}
+            />
+          </div>
+        </div>
+      </div>
+    </Link>
+  )
+}
+
 export default function DiscoverPage() {
-  const featured = ['neon-samurai', 'crimson-vow', 'moonlit-path'].map((id) => getAnime(id)!)
-  const continueWatching = getContinueWatching().map((item) => item.anime)
+  const featured = ['neon-samurai', 'crimson-vow', 'moonlit-path', 'ember-crown', 'starfall-academy', 'spirit-veil'].map((id) => getAnime(id)!)
+  const continueWatching = getContinueWatching()
+  const continueWatchingAnimes = continueWatching.map((item) => item.anime)
   const seasonalPicks = getSeasonalPicks().map((pick) => pick.anime)
   const recentlyAdded = getRecentlyAdded().map((item) => item.anime)
   const latestAdditions = getLatestAdditions()
@@ -88,29 +184,29 @@ export default function DiscoverPage() {
     subtitle?: string
     ctaLabel?: string
   }> = [
-    { title: 'Tendance en France', href: '/browse?sort=trending', animes: trending },
-    { title: 'VF disponibles sur Kami-Sama', href: '/browse?language=dubbed', animes: latestAdditions },
-    { title: 'Notre sélection pour vous', href: '/browse?sort=recommended', animes: recommendations },
-    { title: 'Reprendre', href: '/library', animes: continueWatching },
-    { title: 'En quête d’anime familial ?', href: '/browse?genre=family', animes: seasonalPicks },
-    { title: 'Quand la science rencontre la fiction', href: '/browse?genre=sci-fi', animes: latestAdditions },
-    { title: 'Nouveaux épisodes de la saison actuelle', href: '/browse?sort=new', animes: recentlyAdded },
-    { title: 'Inspirés par vous', href: '/browse?sort=recommended', animes: recommendations },
-    { title: 'Des oreilles… particulières', href: '/browse?collection=animal-companions', animes: seasonalPicks },
+    { title: 'Tendance en France', href: '/catalog?sort=trending', animes: trending },
+    { title: 'VF disponibles sur Kami-Sama', href: '/catalog?language=dubbed', animes: latestAdditions },
+    { title: 'Notre sélection pour vous', href: '/catalog?sort=recommended', animes: recommendations },
+    { title: 'Reprendre', href: '/library', animes: [] },
+    { title: 'En quête d\u2019anime familial ?', href: '/catalog?genre=family', animes: seasonalPicks },
+    { title: 'Quand la science rencontre la fiction', href: '/catalog?genre=sci-fi', animes: latestAdditions },
+    { title: 'Nouveaux épisodes de la saison actuelle', href: '/catalog?sort=new', animes: recentlyAdded },
+    { title: 'Inspirés par vous', href: '/catalog?sort=recommended', animes: recommendations },
+    { title: 'Des oreilles… particulières', href: '/catalog?collection=animal-companions', animes: seasonalPicks },
     {
       title: 'En voyage',
-      href: '/browse?genre=adventure',
-      subtitle: 'Faites vos baluchons, on part à l’aventure !',
+      href: '/catalog?genre=adventure',
+      subtitle: 'Faites vos baluchons, on part à l\u2019aventure !',
       animes: recentlyAdded,
     },
     {
       title: 'Votre Watchlist',
       href: '/library',
       ctaLabel: 'Voir la Watchlist',
-      animes: continueWatching,
+      animes: continueWatchingAnimes,
     },
-    { title: 'Légendes du foot', href: '/browse?genre=sports', animes: trending },
-    { title: 'La folie des Mecha', href: '/browse?genre=mecha', animes: latestAdditions },
+    { title: 'Légendes du foot', href: '/catalog?genre=sports', animes: trending },
+    { title: 'La folie des Mecha', href: '/catalog?genre=mecha', animes: latestAdditions },
   ]
 
   return (
@@ -118,20 +214,41 @@ export default function DiscoverPage() {
       <HeroBanner items={featured} />
 
       <main id="main-content" className="relative z-10 -mt-32 pb-12">
-        {sections.map((section) => (
-          <DiscoverRail
-            key={section.title}
-            title={section.title}
-            href={section.href}
-            subtitle={section.subtitle}
-            ctaLabel={section.ctaLabel}
-          >
-            {section.animes.map((anime) => (
-              <DiscoverAnimeTile key={`${section.title}-${anime.id}`} anime={anime} />
-            ))}
-          </DiscoverRail>
-        ))}
+        {sections.map((section) =>
+          section.title === 'Reprendre' ? (
+            <DiscoverRail key={section.title} title={section.title} href={section.href}>
+              {continueWatching.map((item) => (
+                <ContinueWatchingTile key={`reprendre-${item.anime.id}`} item={item} />
+              ))}
+            </DiscoverRail>
+          ) : (
+            <DiscoverRail
+              key={section.title}
+              title={section.title}
+              href={section.href}
+              subtitle={section.subtitle}
+              ctaLabel={section.ctaLabel}
+            >
+              {section.animes.map((anime) => (
+                <DiscoverAnimeTile key={`${section.title}-${anime.id}`} anime={anime} />
+              ))}
+            </DiscoverRail>
+          ),
+        )}
       </main>
+
+      <section className="flex flex-col items-center gap-5 px-4 py-16 text-center md:px-8">
+        <p className="max-w-md font-display text-xl font-bold leading-snug tracking-tight text-ink sm:text-2xl">
+          Vous cherchez encore quelque chose à regarder ?<br />
+          Découvrez notre bibliothèque complète
+        </p>
+        <Button
+          asChild
+          className="h-10 rounded-none bg-primary px-5 text-xs font-bold uppercase text-primary-foreground transition-colors duration-200 hover:bg-stamp-dim focus-visible:ring-2 focus-visible:ring-ink focus-visible:ring-offset-2 focus-visible:ring-offset-paper"
+        >
+          <Link href="/catalog">Voir tout</Link>
+        </Button>
+      </section>
     </div>
   )
 }

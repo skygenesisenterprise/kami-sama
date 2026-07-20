@@ -200,7 +200,7 @@ export async function Footer({ locale: initialLocale }: FooterProps) {
     { name: t("apiReference"), href: `${prefix}/developers/api` },
     { name: t("sdks"), href: `${prefix}/developers/sdks` },
     { name: t("quickstarts"), href: `${prefix}/developers/quickstarts` },
-    { name: t("statusPage"), href: "https://status.skygenesisenterprise.com", external: true },
+    { name: t("statusPage"), href: "https://status.kami-sama.tv", external: true },
   ];
 
   const securityLinks: FooterLink[] = [
@@ -229,7 +229,7 @@ export async function Footer({ locale: initialLocale }: FooterProps) {
   const supportLinks: FooterLink[] = [
     { name: t("helpCenter"), href: "https://support.skygenesisenterprise.com", external: true },
     { name: t("contact"), href: `${prefix}/company/contact` },
-    { name: t("serviceStatus"), href: "https://status.skygenesisenterprise.com", external: true },
+    { name: t("serviceStatus"), href: "https://status.kami-sama.tv", external: true },
     { name: t("reportIssue"), href: `${prefix}/support/report` },
     { name: t("developerSupport"), href: "https://developer.skygenesisenterprise.com", external: true },
   ];
@@ -246,7 +246,7 @@ export async function Footer({ locale: initialLocale }: FooterProps) {
   const otherLinks: FooterLink[] = [
     { name: t("news"), href: `${prefix}/blog` },
     { name: t("academy"), href: `${prefix}/academy` },
-    { name: t("liveStreams"), href: "https://live.skygenesisenterprise.com", external: true },
+    { name: t("liveStreams"), href: "https://twitch.tv/kami-sama-tv", external: true },
     { name: t("podcast"), href: `${prefix}/podcast` },
     { name: t("rss"), href: `${prefix}/rss.xml` },
     { name: t("constitution"), href: `${prefix}/constitution` },
@@ -264,16 +264,16 @@ export async function Footer({ locale: initialLocale }: FooterProps) {
   ];
 
   const socialLinks = [
-    { name: "X (Twitter)", href: "https://x.com/SkyGEnterprise" },
-    { name: "LinkedIn", href: "https://linkedin.com/company/skygenesisenterprise" },
-    { name: "GitHub", href: "https://github.com/skygenesisenterprise" },
-    { name: "YouTube", href: "https://youtube.com/@skygenesisenterprise" },
+    { name: "X (Twitter)", href: "https://x.com/KamiSamaTV" },
+    { name: "LinkedIn", href: "https://linkedin.com/company/kami-sama" },
+    { name: "GitHub", href: "https://github.com/kami-sama" },
+    { name: "YouTube", href: "https://youtube.com/@kami-sama" },
     { name: "Discord", href: "https://discord.gg/skygenesisenterprise" },
-    { name: "Slack", href: "https://slack.com/skygenesisenterprise" },
-    { name: "Twitch", href: "https://twitch.tv/skygenesisenterprise" },
-    { name: "Instagram", href: "https://instagram.com/skygenesisenterprise" },
-    { name: "Facebook", href: "https://facebook.com/skygenesisenterprise" },
-    { name: "Mastodon", href: "https://mastodon.social/@skygenesisenterprise" },
+    { name: "Slack", href: "https://slack.com/kami-sama" },
+    { name: "Twitch", href: "https://twitch.tv/kami-sama-tv" },
+    { name: "Instagram", href: "https://instagram.com/kami-sama" },
+    { name: "Facebook", href: "https://facebook.com/kami-sama" },
+    { name: "Mastodon", href: "https://mastodon.social/@kami-sama" },
   ];
 
   return (
@@ -298,7 +298,7 @@ export async function Footer({ locale: initialLocale }: FooterProps) {
             <div className="max-w-xs">
               <Link href={`/${locale}`} className="inline-flex items-center gap-2.5 group">
                 <span className="text-base font-semibold text-foreground tracking-tight group-hover:text-foreground transition-colors">
-                  Sky Genesis Enterprise
+                  Kami-Sama
                 </span>
               </Link>
               <p className="mt-4 text-sm text-muted-foreground leading-relaxed">
@@ -351,6 +351,7 @@ export async function Footer({ locale: initialLocale }: FooterProps) {
                   alt="Powered by Lock7 Cloud"
                   width={1774}
                   height={887}
+                  loading="eager"
                   className="h-auto w-full"
                 />
               </Link>
