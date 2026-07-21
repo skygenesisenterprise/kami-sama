@@ -6,7 +6,10 @@ const isProduction = process.env.NODE_ENV === "production";
 const isStaticWebBuild = process.env.BUILD_WEB_STATIC === "true";
 
 const nextConfig: NextConfig = {
-  allowedDevOrigins: ["kami-sama.fr", "192.168.1.3"],
+  turbopack: {
+    root: "../",
+  },
+  allowedDevOrigins: ["kami-sama.tv", "192.168.1.3"],
   outputFileTracingExcludes: {
     "*": ["test/**"],
   },
@@ -21,7 +24,7 @@ const nextConfig: NextConfig = {
         images: {
           unoptimized: true,
           remotePatterns: [
-            { protocol: "https", hostname: "kami-sama.fr", pathname: "/**" },
+            { protocol: "https", hostname: "kami-sama.tv", pathname: "/**" },
             { protocol: "https", hostname: "api.dicebear.com", pathname: "/**" },
             { protocol: "https", hostname: "avatars.githubusercontent.com", pathname: "/**" },
             { protocol: "https", hostname: "images.unsplash.com", pathname: "/**" },
@@ -42,7 +45,7 @@ const nextConfig: NextConfig = {
   ...(!isStaticWebBuild && {
     images: {
       remotePatterns: [
-        { protocol: "https", hostname: "kami-sama.fr", pathname: "/**" },
+        { protocol: "https", hostname: "kami-sama.tv", pathname: "/**" },
         { protocol: "https", hostname: "api.dicebear.com", pathname: "/**" },
         { protocol: "https", hostname: "avatars.githubusercontent.com", pathname: "/**" },
         { protocol: "https", hostname: "images.unsplash.com", pathname: "/**" },
