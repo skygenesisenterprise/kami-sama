@@ -9,6 +9,8 @@ services:
     depends_on:
       server:
         condition: service_started
+    networks:
+      - kami-sama
 
   postgresql:
     image: docker.io/library/postgres:16-alpine
@@ -20,13 +22,15 @@ services:
       retries: 5
       timeout: 5s
     volumes:
-      - database:/var/lib/postgresql/data
+      - postgres-data:/var/lib/postgresql/data
     environment:
       POSTGRES_PASSWORD: ${PG_PASS:-postgres}
       POSTGRES_USER: ${PG_USER:-postgres}
       POSTGRES_DB: ${PG_DB:-postgres}
     expose:
       - 5432
+    networks:
+      - kami-sama
 
   redis:
     image: docker.io/library/redis:8-alpine
@@ -44,17 +48,58 @@ services:
       retries: 5
       timeout: 3s
     volumes:
-      - redis:/data
+      - redis-data:/data
     environment:
       REDIS_PASSWORD: ${REDIS_PASSWORD:-redis-dev-password}
     expose:
       - 6379
+    networks:
+      - kami-sama
+
+  rabbitmq:
+    image: docker.io/library/rabbitmq:3.13-management-alpine
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "rabbitmq-diagnostics -q check_running"]
+      start_period: 30s
+      interval: 30s
+      retries: 5
+      timeout: 10s
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-guest}
+    ports:
+      - ${RABBITMQ_AMQP_PORT:-5672}:5672
+      - ${RABBITMQ_MGMT_PORT:-15672}:15672
+    networks:
+      - kami-sama
+
+  meilisearch:
+    image: docker.io/getmeili/meilisearch:v1.7
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:7700/health || exit 1"]
+      start_period: 20s
+      interval: 30s
+      retries: 5
+      timeout: 5s
+    volumes:
+      - meilisearch-data:/meili_data
+    environment:
+      MEILI_MASTER_KEY: ${MEILI_MASTER_KEY:-dev-master-key}
+      MEILI_ENV: development
+    ports:
+      - ${MEILI_PORT:-7700}:7700
+    networks:
+      - kami-sama
 
   server:
     build:
       context: .
       dockerfile: Dockerfile.dev
-    image: skygenesisenterprise/aether-mailer:latest-dev
+    image: kami-sama/platform:latest-dev
     pull_policy: never
     restart: unless-stopped
     expose:
@@ -72,18 +117,19 @@ services:
       - /app/apps/node_modules
       - /app/apps/.next
       - ./entrypoint.sh:/entrypoint.sh
-      - media:/media
       - certs:/certs
       - custom-templates:/templates
     depends_on:
       worker:
         condition: service_started
+    networks:
+      - kami-sama
 
   worker:
     build:
       context: .
       dockerfile: Dockerfile.dev
-    image: skygenesisenterprise/aether-mailer:latest-dev
+    image: kami-sama/platform:latest-dev
     pull_policy: never
     restart: unless-stopped
     ports:
@@ -99,20 +145,23 @@ services:
       REDIS_PASSWORD: ${REDIS_PASSWORD:-redis-dev-password}
       REDIS_DB: "0"
       REDIS_URL: redis://default:${REDIS_PASSWORD:-redis-dev-password}@redis:6379/0
-      REDIS_KEY_PREFIX: aether-mailer:v1
+      REDIS_KEY_PREFIX: kami-sama:v1
       JWT_SECRET: ${JWT_SECRET:-dev-insecure-secret-change-me}
-      JWT_ISSUER: ${JWT_ISSUER:-aether-mailer}
-      AUTH_COOKIE_DOMAIN: ${AUTH_COOKIE_DOMAIN:-.skygenesisenterprise.localhost}
-      CORS_ALLOWED_ORIGINS: http://mailer.skygenesisenterprise.localhost,http://api.mailer.skygenesisenterprise.localhost,http://mailer.skygenesisenterprise.lan,http://api.mailer.skygenesisenterprise.lan,http://localhost:3000,http://localhost:8081,http://127.0.0.1:8081,http://localhost:19006,http://127.0.0.1:19006,http://192.168.1.48:8081
+      JWT_ISSUER: ${JWT_ISSUER:-kami-sama}
+      AUTH_COOKIE_DOMAIN: ${AUTH_COOKIE_DOMAIN:-.kami-sama.localhost}
+      CORS_ALLOWED_ORIGINS: http://kami-sama.localhost,http://api.kami-sama.localhost,http://kami-sama.lan,http://api.kami-sama.lan,http://localhost:3000,http://localhost:8081,http://127.0.0.1:8081,http://localhost:19006,http://127.0.0.1:19006,http://192.168.1.48:8081
       LISTEN__TRUSTED_PROXY_CIDRS: 0.0.0.0/0,::/0
       API_PORT: "8080"
-      HOST: ${DOMAIN_HOST:-mailer.skygenesisenterprise.localhost}
+      HOST: ${DOMAIN_HOST:-kami-sama.localhost}
       POSTGRESQL__HOST: postgresql
       POSTGRESQL__PORT: "5432"
       POSTGRESQL__USER: ${PG_USER:-postgres}
       POSTGRESQL__NAME: ${PG_DB:-postgres}
       POSTGRESQL__PASSWORD: ${PG_PASS:-postgres}
       DATABASE_URL: postgresql://${PG_USER:-postgres}:${PG_PASS:-postgres}@postgresql:5432/${PG_DB:-postgres}
+      RABBITMQ_URL: amqp://${RABBITMQ_USER:-guest}:${RABBITMQ_PASSWORD:-guest}@rabbitmq:5672
+      MEILI_HOST: http://meilisearch:7700
+      MEILI_API_KEY: ${MEILI_MASTER_KEY:-dev-master-key}
     volumes:
       - ./server:/app/server
       - ./go.mod:/app/go.mod
@@ -120,7 +169,6 @@ services:
       - ./entrypoint.sh:/entrypoint.sh
       - ./.air.toml:/app/.air.toml
       - gopkg:/go/pkg
-      - media:/media
       - certs:/certs
       - custom-templates:/templates
     depends_on:
@@ -128,62 +176,22 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-  
-  mailer:
-    build:
-      context: .
-      dockerfile: Dockerfile.dev
-    image: skygenesisenterprise/aether-mailer:latest-dev
-    pull_policy: never
-    restart: unless-stopped
-    command: mailer
-    ports:
-      - "2525:25"
-      - "2465:465"
-      - "2587:587"
-      - "2143:143"
-      - "2993:993"
-    environment:
-      API_PORT: "8080"
-      HOST: "0.0.0.0"
-      GIN_MODE: debug
-      POSTGRESQL__HOST: postgresql
-      POSTGRESQL__PORT: "5432"
-      POSTGRESQL__USER: ${PG_USER:-postgres}
-      POSTGRESQL__NAME: ${PG_DB:-postgres}
-      POSTGRESQL__PASSWORD: ${PG_PASS:-postgres}
-      DATABASE_URL: postgresql://${PG_USER:-postgres}:${PG_PASS:-postgres}@postgresql:5432/${PG_DB:-postgres}
-      REDIS_ENABLED: "true"
-      REDIS_REQUIRED: "false"
-      REDIS_HOST: redis
-      REDIS_PORT: "6379"
-      REDIS_PASSWORD: ${REDIS_PASSWORD:-redis-dev-password}
-      REDIS_DB: "1"
-      REDIS_KEY_PREFIX: aether-mail:v1
-      JWT_SECRET: ${JWT_SECRET:-dev-insecure-secret-change-me}
-      MAIL_HOSTNAME: ${MAIL_HOSTNAME:-mail.skygenesisenterprise.localhost}
-      MAIL_DOMAIN: ${MAIL_DOMAIN:-skygenesisenterprise.localhost}
-      TLS_CERT_PATH: /certs/mail.crt
-      TLS_KEY_PATH: /certs/mail.key
-    volumes:
-      - ./server:/app/server
-      - ./go.mod:/app/go.mod
-      - ./go.sum:/app/go.sum
-      - ./entrypoint.sh:/entrypoint.sh
-      - gopkg:/go/pkg
-      - mail-storage:/var/lib/aether-mail
-      - certs:/certs
-    depends_on:
-      postgresql:
+      rabbitmq:
         condition: service_healthy
-      redis:
+      meilisearch:
         condition: service_healthy
+    networks:
+      - kami-sama
 
 volumes:
-  database:
-  redis:
+  postgres-data:
+  redis-data:
   gopkg:
-  media:
   certs:
   custom-templates:
-  mail-storage:
+  rabbitmq-data:
+  meilisearch-data:
+
+networks:
+  kami-sama:
+    driver: bridge

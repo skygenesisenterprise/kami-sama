@@ -10,17 +10,18 @@ import {
   Bookmark,
   Calendar,
   ChevronDown,
+  Compass,
   CreditCard,
   Film,
-  Gift,
   History,
-  Home,
   Library,
   LogOut,
   Menu,
   Search,
   Settings,
   Sparkles,
+  Tag,
+  TrendingUp,
   Users,
   X,
 } from 'lucide-react'
@@ -46,36 +47,20 @@ export function SiteHeader() {
   const [scrolled, setScrolled] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
   const [mobileOpen, setMobileOpen] = useState(false)
-  const [categoryOpen, setCategoryOpen] = useState(false)
+  const [explorerOpen, setExplorerOpen] = useState(false)
   const [profileOpen, setProfileOpen] = useState(false)
 
   const locale = pathname.split('/')[1] || 'fr'
   const homeHref = `/${locale}/discover`
 
+  // Mobile menu — mirrors the 5 desktop items
   const NAV_LINKS = [
-    { href: '/discover', label: t('navHome'), icon: Home },
-    { href: '/catalog', label: t('navBrowse'), icon: Film },
-    { href: '/calendar', label: t('navCalendar'), icon: Calendar },
-    { href: '/community', label: t('navCommunity'), icon: Sparkles },
-    { href: '/library', label: t('navLibrary'), icon: Library },
-  ]
-
-  const CATEGORY_ITEMS = [
-    { href: '/catalog?genre=action', label: t('genreAction') },
-    { href: '/catalog?genre=adventure', label: t('genreAdventure') },
-    { href: '/catalog?genre=comedy', label: t('genreComedy') },
-    { href: '/catalog?genre=drama', label: t('genreDrama') },
-    { href: '/catalog?genre=fantasy', label: t('genreFantasy') },
-    { href: '/catalog?genre=music', label: t('genreMusic') },
-    { href: '/catalog?genre=romance', label: t('genreRomance') },
-    { href: '/catalog?genre=sci-fi', label: t('genreSciFi') },
-    { href: '/catalog?genre=seinen', label: t('genreSeinen') },
-    { href: '/catalog?genre=shoujo', label: t('genreShoujo') },
-    { href: '/catalog?genre=shonen', label: t('genreShonen') },
-    { href: '/catalog?genre=slice-of-life', label: t('genreSliceOfLife') },
-    { href: '/catalog?genre=sports', label: t('genreSports') },
-    { href: '/catalog?genre=supernatural', label: t('genreSupernatural') },
-    { href: '/catalog?genre=thriller', label: t('genreThriller') },
+    { href: '/videos/new', label: t('navNew'), icon: Sparkles },
+    { href: '/videos/popular', label: t('navPopular'), icon: TrendingUp },
+    { href: '/simulcast', label: t('navSimulcast'), icon: Calendar },
+    { href: '/explore', label: t('navExplorer'), icon: Compass },
+    { href: `/${locale}/calendar`, label: t('navCalendar'), icon: Calendar },
+    { href: `/${locale}/community`, label: t('navCommunity'), icon: Users },
   ]
 
   useEffect(() => {
@@ -88,6 +73,36 @@ export function SiteHeader() {
   function isActive(href: string) {
     return href === '/' ? pathname === '/' : pathname.startsWith(href)
   }
+
+  /* Explorer dropdown — new 4-column architecture (Découvrir / Contenu / Collections / Recherche). */
+  const EXPLORER_DISCOVER = [
+    { key: 'discoverNew', href: '/explore?sort=newest' },
+    { key: 'navPopular', href: '/explore?sort=popular' },
+    { key: 'discoverTrending', href: '/explore?status=airing' },
+    { key: 'discoverUpcoming', href: '/explore?status=upcoming' },
+  ]
+
+  const EXPLORER_CONTENT = [
+    { key: 'formatAnime', href: '/explore?format=anime' },
+    { key: 'formatFilms', href: '/explore?format=movie' },
+    { key: 'formatSeries', href: '/explore?format=tv' },
+    { key: 'formatOva', href: '/explore?format=ova' },
+  ]
+
+  const EXPLORER_COLLECTIONS_LIST = [
+    { key: 'collectionKami', href: '/explore?collection=kami' },
+    { key: 'collectionClassics', href: '/explore?collection=classics' },
+    { key: 'collectionCommunity', href: '/explore?collection=community' },
+    { key: 'collectionSeasons', href: '/explore?collection=seasons' },
+  ]
+
+  const EXPLORER_SEARCH = [
+    { key: 'browseAllAZ', href: '/explore?sort=title' },
+    { key: 'explorerGenres', href: '/explore?by=genre' },
+    { key: 'explorerStudios', href: '/explore?by=studio' },
+    { key: 'explorerYears', href: '/explore?by=year' },
+  ]
+
 
   return (
     <header
@@ -111,7 +126,7 @@ export function SiteHeader() {
               <Menu className="size-5" />
             </Button>
           </SheetTrigger>
-          <SheetContent side="left" className="w-72 border-border/40 p-0">
+          <SheetContent side="left" className="w-80 border-border/40 p-0">
             <SheetTitle className="sr-only">{t('navigation')}</SheetTitle>
             {/* Mobile header */}
             <div className="flex h-14 items-center border-b border-border/40 px-4">
@@ -137,6 +152,16 @@ export function SiteHeader() {
                   </Link>
                 )
               })}
+              <div className="mt-3 border-t border-border/40 pt-3">
+                <Link
+                  href="/library"
+                  onClick={() => setMobileOpen(false)}
+                  className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-muted-foreground hover:bg-accent hover:text-foreground"
+                >
+                  <Library className="size-4" />
+                  {t('navLibrary')}
+                </Link>
+              </div>
             </nav>
             <div className="absolute bottom-0 inset-x-0 border-t border-border/40 p-4">
               <Link
@@ -162,86 +187,100 @@ export function SiteHeader() {
           <Logo href={homeHref} className="sm:hidden [&>span:last-child]:hidden" />
         </div>
 
-        {/* Desktop nav */}
+        {/* Desktop nav — single bar, 5 items, no duplicate menu */}
         <nav className="ml-6 hidden items-center gap-0.5 md:flex">
-          <Link
+          <DesktopNavLink
             href={`/${locale}/videos/new`}
-            className={cn(
-              'relative rounded-md px-3 py-1.5 text-sm font-semibold transition-colors',
-              pathname.includes('/videos/new')
-                ? 'text-white'
-                : 'text-white/70 hover:text-white',
-            )}
+            active={pathname.startsWith('/videos/new')}
           >
             {t('navNew')}
-            {pathname.includes('/videos/new') && (
-              <span className="absolute inset-x-1 -bottom-2 h-0.5 rounded-full bg-primary" />
-            )}
-          </Link>
-          <Link
+          </DesktopNavLink>
+          <DesktopNavLink
             href={`/${locale}/videos/popular`}
-            className={cn(
-              'relative rounded-md px-3 py-1.5 text-sm font-semibold transition-colors',
-              pathname.includes('/videos/popular')
-                ? 'text-white'
-                : 'text-white/70 hover:text-white',
-            )}
+            active={pathname.startsWith('/videos/popular')}
           >
             {t('navPopular')}
-            {pathname.includes('/videos/popular') && (
-              <span className="absolute inset-x-1 -bottom-2 h-0.5 rounded-full bg-primary" />
-            )}
-          </Link>
-          <Link
+          </DesktopNavLink>
+          <DesktopNavLink
             href={`/${locale}/simulcast`}
-            className={cn(
-              'relative rounded-md px-3 py-1.5 text-sm font-semibold transition-colors',
-              pathname.includes('/simulcast')
-                ? 'text-white'
-                : 'text-white/70 hover:text-white',
-            )}
+            active={pathname.startsWith('/simulcast')}
           >
             {t('navSimulcast')}
-            {pathname.includes('/simulcast') && (
-              <span className="absolute inset-x-1 -bottom-2 h-0.5 rounded-full bg-primary" />
-            )}
-          </Link>
-          <DropdownMenu open={categoryOpen} onOpenChange={setCategoryOpen}>
+          </DesktopNavLink>
+          {/* Explorer — dropdown with genres only (compact) */}
+          <DropdownMenu open={explorerOpen} onOpenChange={setExplorerOpen}>
             <DropdownMenuTrigger asChild>
               <button
                 type="button"
-                className="flex items-center gap-1 rounded-md px-3 py-1.5 text-sm font-semibold text-white/70 transition-colors hover:text-white"
+                className={cn(
+                  'flex items-center gap-1 rounded-md px-2.5 py-1.5 text-sm font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background',
+                  explorerOpen
+                    ? 'text-white'
+                    : 'text-white/70 hover:text-white',
+                )}
+                aria-expanded={explorerOpen}
               >
-                {t('navCategory')}
-                <ChevronDown className={cn('size-3.5 transition-transform duration-200', categoryOpen && 'rotate-180')} />
+                {t('navExplorer')}
+                <ChevronDown
+                  className={cn(
+                    'size-3.5 transition-transform duration-200',
+                    explorerOpen && 'rotate-180',
+                  )}
+                />
               </button>
             </DropdownMenuTrigger>
-            <AnimatedDropdownContent open={categoryOpen} align="start" className="w-auto border-white/10 bg-background/90 p-0 text-ink shadow-xl backdrop-blur-xl">
-              <div className="flex">
-                <div className="flex flex-col border-r border-white/10 py-3">
-                  <Link
-                    href={`/${locale}/catalog`}
-                    className="flex items-center gap-3 px-4 py-2 text-sm font-medium text-white/90 transition-colors hover:bg-white/10 hover:text-white"
-                  >
-                    {t('browseAllAZ')}
-                  </Link>
-                  <Link
-                    href={`/${locale}/calendar`}
-                    className="flex items-center gap-3 px-4 py-2 text-sm font-medium text-white/90 transition-colors hover:bg-white/10 hover:text-white"
-                  >
-                    {t('agenda')}
-                  </Link>
-                </div>
-                <div className="flex flex-col py-3 pl-4 pr-6">
-                  <span className="mb-2 px-4 text-xs font-semibold uppercase tracking-wider text-white/40">{t('genres')}</span>
-                  <div className="grid grid-cols-3 gap-x-6 gap-y-0.5">
-                    {CATEGORY_ITEMS.map((item) => (
+            <AnimatedDropdownContent
+              open={explorerOpen}
+              align="start"
+              className="w-[min(56rem,calc(100vw-2rem))] max-h-[calc(100dvh-4rem)] overflow-y-auto border-white/10 bg-background/95 p-0 text-ink shadow-2xl shadow-black/40 backdrop-blur-xl"
+            >
+                <div className="grid grid-cols-3 divide-x divide-white/10">
+                {/* Col 1 — Contenu */} 
+                <div className="min-w-0 px-4 py-5">
+                  <SectionHeader icon={Film}>{t('explorerContent')}</SectionHeader>
+                  <div className="mt-3 flex flex-col gap-0.5">
+                    {EXPLORER_CONTENT.map((item) => (
                       <Link
-                        key={item.href}
+                        key={item.key}
                         href={item.href}
-                        className="whitespace-nowrap px-4 py-1.5 text-sm font-medium text-white/90 transition-colors hover:bg-white/10 hover:text-white"
+                        onClick={() => setExplorerOpen(false)}
+                        className="rounded-md px-2.5 py-1.5 text-sm font-medium text-white/90 transition-colors hover:bg-white/10 hover:text-white"
                       >
-                        {item.label}
+                        {t(item.key)}
+                      </Link>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Col 2 — Collections */}
+                <div className="min-w-0 px-4 py-5">
+                  <SectionHeader icon={Sparkles}>{t('explorerCollections')}</SectionHeader>
+                  <div className="mt-3 flex flex-col gap-0.5">
+                    {EXPLORER_COLLECTIONS_LIST.map((item) => (
+                      <Link
+                        key={item.key}
+                        href={item.href}
+                        onClick={() => setExplorerOpen(false)}
+                        className="rounded-md px-2.5 py-1.5 text-sm font-semibold text-white transition-colors hover:bg-white/10 hover:text-primary"
+                      >
+                        {t(item.key)}
+                      </Link>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Col 3 — Recherche */}
+                <div className="min-w-0 px-4 py-5">
+                  <SectionHeader icon={Search}>{t('explorerSearch')}</SectionHeader>
+                  <div className="mt-3 flex flex-col gap-0.5">
+                    {EXPLORER_SEARCH.map((item) => (
+                      <Link
+                        key={item.key}
+                        href={item.href}
+                        onClick={() => setExplorerOpen(false)}
+                        className="rounded-md px-2.5 py-1.5 text-sm font-medium text-white/90 transition-colors hover:bg-white/10 hover:text-white"
+                      >
+                        {t(item.key)}
                       </Link>
                     ))}
                   </div>
@@ -249,21 +288,19 @@ export function SiteHeader() {
               </div>
             </AnimatedDropdownContent>
           </DropdownMenu>
-          <span className="mx-1 h-4 w-px bg-white/20" aria-hidden="true" />
-          <Link
-            href="/community"
-            className={cn(
-              'relative rounded-md px-3 py-1.5 text-sm font-semibold transition-colors',
-              isActive('/community')
-                ? 'text-white'
-                : 'text-white/70 hover:text-white',
-            )}
+          <DesktopNavLink
+            href={`/${locale}/calendar`}
+            active={pathname.startsWith('/calendar')}
           >
-            {t('navForum')}
-            {isActive('/community') && (
-              <span className="absolute inset-x-1 -bottom-2 h-0.5 rounded-full bg-primary" />
-            )}
-          </Link>
+            {t('navCalendar')}
+          </DesktopNavLink>
+          <span className="mx-1 h-4 w-px bg-white/15" aria-hidden="true" />
+          <DesktopNavLink
+            href={`/${locale}/community`}
+            active={pathname.startsWith('/community')}
+          >
+            {t('navCommunity')}
+          </DesktopNavLink>
         </nav>
 
         {/* Right side actions */}
@@ -420,6 +457,54 @@ export function SiteHeader() {
   )
 }
 
+/* -------------------------------------------------------------------------- *
+ * DesktopNavLink — single underlined nav item with active highlight
+ * -------------------------------------------------------------------------- */
+function SectionHeader({
+  icon: Icon,
+  children,
+}: {
+  icon?: typeof Tag
+  children: ReactNode
+}) {
+  return (
+    <div className="flex items-center gap-2">
+      {Icon && <Icon className="size-3.5 text-white/50" strokeWidth={2.25} />}
+      <span className="text-[11px] font-semibold uppercase tracking-wider text-white/50">
+        {children}
+      </span>
+    </div>
+  )
+}
+
+function DesktopNavLink({
+  href,
+  active,
+  children,
+}: {
+  href: string
+  active: boolean
+  children: ReactNode
+}) {
+  return (
+    <Link
+      href={href}
+      className={cn(
+        'relative rounded-md px-2.5 py-1.5 text-sm font-semibold transition-colors',
+        active ? 'text-white' : 'text-white/70 hover:text-white',
+      )}
+    >
+      {children}
+      {active && (
+        <span className="absolute inset-x-2 -bottom-2 h-0.5 rounded-full bg-primary" />
+      )}
+    </Link>
+  )
+}
+
+/* -------------------------------------------------------------------------- *
+ * SectionHeader — uppercase label with optional icon used inside the mega-menu
+ * -------------------------------------------------------------------------- */
 function AnimatedDropdownContent({
   open,
   align = 'end',

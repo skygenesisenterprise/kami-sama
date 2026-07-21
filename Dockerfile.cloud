@@ -13,7 +13,7 @@ RUN go mod download
 COPY server/ ./server/
 
 RUN CGO_ENABLED=1 GOOS=linux \
-    go build -ldflags="-s -w" -o /app/server/aether-meet ./server/
+    go build -ldflags="-s -w" -o /app/server/aether-server ./server/
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Stage 2 — Node.js / pnpm Next.js Build
@@ -94,10 +94,7 @@ COPY --from=node-builder /app/app/out ./out
 COPY --from=node-builder /tmp/prisma/ ./prisma/
 
 # ── Go Backend Binary ────────────────────────────────────────────────────────
-COPY --from=go-builder /app/server/aether-meet ./server/aether-meet
-
-# Compatibilité avec anciens scripts éventuels
-RUN ln -s /app/server/aether-meet /app/server/etheriatimes-api
+COPY --from=go-builder /app/server/aether-server ./server/aether-server
 
 # ── Entrypoint ───────────────────────────────────────────────────────────────
 COPY entrypoint-cloud.sh /entrypoint-cloud.sh
