@@ -13,13 +13,13 @@ RUN apk add --no-cache \
 
 WORKDIR /app
 
-# ── Prisma Schema ────────────────────────────────────────────────────────────
-COPY prisma/ ./prisma/
-RUN cd prisma && npm install --no-audit --no-fund && cd ..
-
 # ── Package.json & Installation des dépendances ──────────────────────────────
 COPY package.json ./
 RUN npm install --no-audit --no-fund
+
+# ── Prisma Schema ────────────────────────────────────────────────────────────
+COPY prisma/ ./prisma/
+RUN npx prisma generate --schema=./prisma/schema.prisma
 
 # ── Source du bot ─────────────────────────────────────────────────────────────
 COPY . .

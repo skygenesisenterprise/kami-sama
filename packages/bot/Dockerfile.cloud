@@ -13,23 +13,18 @@ RUN apk add --no-cache \
 
 WORKDIR /app
 
-# ── Prisma Schema (pour la génération du client) ─────────────────────────────
-COPY prisma/ ./prisma/
-
-# ── Installation des dépendances Prisma ──────────────────────────────────────
-RUN cd prisma && npm install --no-audit --no-fund && cd ..
-
-# ── Génération du client Prisma ──────────────────────────────────────────────
-ARG DATABASE_URL
-RUN if [ -n "$DATABASE_URL" ]; then \
-        cd prisma && DATABASE_URL="$DATABASE_URL" npx prisma generate && cd ..; \
-    else \
-        echo "Warning: DATABASE_URL not set, skipping Prisma generate"; \
-    fi
-
 # ── Package.json & Installation des dépendances ──────────────────────────────
 COPY package.json ./
 RUN npm install --omit=dev --no-audit --no-fund
+
+# ── Prisma Schema & Génération du client ─────────────────────────────────────
+COPY prisma/ ./prisma/
+ARG DATABASE_URL
+RUN if [ -n "$DATABASE_URL" ]; then \
+        DATABASE_URL="$DATABASE_URL" npx prisma generate --schema=./prisma/schema.prisma; \
+    else \
+        npx prisma generate --schema=./prisma/schema.prisma; \
+    fi
 
 # ── Source du bot ─────────────────────────────────────────────────────────────
 COPY . .
