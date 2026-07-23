@@ -10,7 +10,6 @@ import {
   Bookmark,
   Calendar,
   ChevronDown,
-  Compass,
   CreditCard,
   Film,
   History,
@@ -35,6 +34,7 @@ import {
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from '@/components/ui/sheet'
 import { UserAvatar } from '@/components/kami/user-avatar'
 import { SearchBar } from '@/components/kami/search-bar'
+import { CastDeviceSelector } from '@/components/kami/cast-device-selector'
 import { Logo } from '@/components/kami/logo'
 import { useAuth } from '@/context/AuthContext'
 import { cn } from '@/lib/utils'
@@ -323,6 +323,9 @@ export function SiteHeader() {
             </Button>
           )}
 
+          {/* Cast */}
+          <CastDeviceSelector />
+
           {/* Profile */}
           {isAuthenticated ? (
             <DropdownMenu open={profileOpen} onOpenChange={setProfileOpen}>
@@ -347,7 +350,7 @@ export function SiteHeader() {
                 </div>
                 <div className="py-1.5">
                   <DropdownMenuItem asChild className="gap-3 px-4 py-2.5 focus:bg-white/10">
-                    <Link href={`/${locale}/profile`}>
+                    <Link href="/profile-change">
                       <Users className="size-4" />
                       {t('switchProfile')}
                     </Link>

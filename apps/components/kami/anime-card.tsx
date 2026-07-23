@@ -21,13 +21,13 @@ export function AnimeCard({ anime, badge, className, showMeta = true }: AnimeCar
         className,
       )}
     >
-      <div className="relative aspect-[2/3] overflow-hidden">
+      <div className="relative aspect-2/3 overflow-hidden">
         <img
           src={anime.cover || '/placeholder.svg'}
           alt={anime.title}
           className="absolute inset-0 size-full object-cover transition-transform duration-500 group-hover:scale-105"
         />
-        <div className="absolute inset-0 bg-gradient-to-t from-background via-background/10 to-transparent opacity-90" />
+        <div className="absolute inset-0 bg-linear-to-t from-background via-background/10 to-transparent opacity-90" />
 
         {badge && <div className="absolute left-2 top-2 z-10">{badge}</div>}
 

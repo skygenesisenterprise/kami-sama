@@ -4,9 +4,8 @@ import * as React from 'react'
 import Image from 'next/image'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { Play, Volume2, VolumeX } from 'lucide-react'
+import { Play } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { useAuth } from '@/context/AuthContext'
 import { cn } from '@/lib/utils'
 import type { Anime } from '@/types/anime'
 
@@ -17,13 +16,10 @@ interface HeroBannerProps {
 const SLIDE_DURATION = 8000
 
 export function HeroBanner({ items }: HeroBannerProps) {
-  const { isAuthenticated } = useAuth()
   const pathname = usePathname()
   const currentLocale = pathname?.split('/')[1] || 'fr'
   const [activeIndex, setActiveIndex] = React.useState(0)
   const [isPaused, setIsPaused] = React.useState(false)
-  const [isMuted, setIsMuted] = React.useState(true)
-
   React.useEffect(() => {
     if (activeIndex >= items.length) setActiveIndex(0)
   }, [activeIndex, items.length])
@@ -130,19 +126,6 @@ export function HeroBanner({ items }: HeroBannerProps) {
           </div>
         </div>
       </div>
-
-      <button
-        type="button"
-        onClick={() => setIsMuted(!isMuted)}
-        className="absolute right-4 top-4 z-20 flex size-11 items-center justify-center rounded-full border border-white/30 bg-black/60 text-white backdrop-blur-md transition-all duration-200 hover:bg-black/80 hover:border-white/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white sm:right-6 lg:right-10 xl:right-16"
-        aria-label={isMuted ? 'Activer le son' : 'Couper le son'}
-      >
-        {isMuted ? (
-          <VolumeX className="size-5" strokeWidth={1.5} />
-        ) : (
-          <Volume2 className="size-5" strokeWidth={1.5} />
-        )}
-      </button>
 
       <style>{`
         @keyframes hero-copy-in {

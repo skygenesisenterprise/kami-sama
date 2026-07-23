@@ -35,7 +35,7 @@ function isValidLocale(locale: string): locale is Locale {
 const AUTH_PATHS = ["/login", "/register"];
 const PROTECTED_PATHS = ["/dash", "/profile"];
 const ADMIN_PATHS = ["/dash"]; // Routes qui nécessitent des rôles admin
-const NO_LOCALE_PATHS = ["/discord", "/dash", "/profile", "/login", "/register", "/api", "/watch"];
+const NO_LOCALE_PATHS = [ "/dash", "/profile", "/login", "/register", "/profile-change", "/mfa-validate", "/mfa-setup", "/mfa-verify", "/mfa-recovery", "/mfa-recovery-setup", "/mfa-recovery-verify"];
 const DEFAULT_REDIRECT = DEFAULT_PLATFORM_ROUTE || "/profile";
 const REFRESH_COOKIE_NAME = "kami_sama_refresh";
 const ACCESS_TOKEN_COOKIE_NAME = "kami_sama_access_token";
