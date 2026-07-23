@@ -60,6 +60,7 @@ type Dependencies struct {
 	ModerationService       *services.ModerationService
 	NotificationAdminService *services.NotificationAdminService
 	SettingsAdminService     *services.SettingsAdminService
+	AnilistService           *services.AnilistService
 }
 
 func SetupRoutes(router *gin.Engine, deps Dependencies) {
@@ -341,6 +342,14 @@ func SetupRoutes(router *gin.Engine, deps Dependencies) {
 			searchGroup.GET("/characters", search.SearchCharacters)
 			searchGroup.GET("/studios", search.SearchStudios)
 			searchGroup.GET("/suggestions", search.Suggestions)
+		}
+
+		anilist := NewAnilistHandler(deps)
+		anilistGroup := protected.Group("/integrations/anilist")
+		{
+			anilistGroup.GET("/search", anilist.Search)
+			anilistGroup.GET("/:anilistId", anilist.GetMedia)
+			anilistGroup.POST("/:anilistId/import", anilist.ImportMedia)
 		}
 
 		settingsGroup := protected.Group("/settings")

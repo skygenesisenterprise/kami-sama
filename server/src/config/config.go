@@ -19,6 +19,7 @@ type Config struct {
 	Auth        AuthConfig
 	OAuth       OAuthConfig
 	CORS        CORSConfig
+	Anilist     AnilistConfig
 	MediaSource MediaSourceConfig
 }
 
@@ -101,6 +102,11 @@ type AuthConfig struct {
 
 type CORSConfig struct {
 	AllowedOrigins []string
+}
+
+type AnilistConfig struct {
+	Enabled  bool
+	CacheTTL time.Duration
 }
 
 type MediaSourceConfig struct {
@@ -206,6 +212,10 @@ func Load() (Config, error) {
 		},
 		CORS: CORSConfig{
 			AllowedOrigins: getEnvSlice("CORS_ALLOWED_ORIGINS", []string{"http://localhost:3000"}),
+		},
+		Anilist: AnilistConfig{
+			Enabled:  getEnvBool("ANILIST_ENABLED", false),
+			CacheTTL: getEnvDuration("ANILIST_CACHE_TTL", 5*time.Minute),
 		},
 		MediaSource: MediaSourceConfig{
 			Enabled: getEnvBool("MEDIA_SOURCE_ENABLED", false),

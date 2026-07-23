@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useTranslations } from 'next-intl'
-import { animate } from 'animejs'
+import { motion, AnimatePresence } from 'framer-motion'
 import {
   Bell,
   Bookmark,
@@ -48,6 +48,7 @@ export function SiteHeader() {
   const [mobileOpen, setMobileOpen] = useState(false)
   const [discoverOpen, setDiscoverOpen] = useState(false)
   const [profileOpen, setProfileOpen] = useState(false)
+  const discoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const locale = pathname.split('/')[1] || 'fr'
   const homeHref = `/${locale}/discover`
@@ -67,7 +68,10 @@ export function SiteHeader() {
     const onScroll = () => setScrolled(window.scrollY > 12)
     onScroll()
     window.addEventListener('scroll', onScroll, { passive: true })
-    return () => window.removeEventListener('scroll', onScroll)
+    return () => {
+      window.removeEventListener('scroll', onScroll)
+      if (discoverTimer.current) clearTimeout(discoverTimer.current)
+    }
   }, [])
 
   function isActive(href: string) {
@@ -78,7 +82,7 @@ export function SiteHeader() {
   return (
     <header
       className={cn(
-        'sticky top-0 z-60 w-full transition-all duration-300',
+        'sticky top-0 z-60 w-full select-none transition-all duration-300',
         scrolled
           ? 'bg-background/90 shadow-lg shadow-black/20 backdrop-blur-xl'
           : 'bg-background/70 backdrop-blur-md',
@@ -183,6 +187,13 @@ export function SiteHeader() {
                     : 'text-white/80 hover:text-white',
                 )}
                 aria-expanded={discoverOpen}
+                onMouseEnter={() => {
+                  if (discoverTimer.current) clearTimeout(discoverTimer.current)
+                  setDiscoverOpen(true)
+                }}
+                onMouseLeave={() => {
+                  discoverTimer.current = setTimeout(() => setDiscoverOpen(false), 200)
+                }}
               >
                 {t('navDiscover')}
                 <ChevronDown
@@ -197,6 +208,12 @@ export function SiteHeader() {
               open={discoverOpen}
               align="start"
               className="w-48 border-white/10 bg-black p-1.5 text-ink shadow-xl"
+              onMouseEnter={() => {
+                if (discoverTimer.current) clearTimeout(discoverTimer.current)
+              }}
+              onMouseLeave={() => {
+                discoverTimer.current = setTimeout(() => setDiscoverOpen(false), 200)
+              }}
             >
               <DropdownMenuItem asChild className="gap-2 rounded-md px-3 py-2 text-sm text-white/90 focus:bg-white/10">
                 <Link href={`/${locale}/calendar`} onClick={() => setDiscoverOpen(false)}>
@@ -458,40 +475,36 @@ function AnimatedDropdownContent({
   align = 'end',
   className,
   children,
+  onMouseEnter,
+  onMouseLeave,
 }: {
   open: boolean
   align?: 'start' | 'center' | 'end'
   className?: string
   children: ReactNode
+  onMouseEnter?: () => void
+  onMouseLeave?: () => void
 }) {
-  const ref = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    if (!ref.current) return
-    if (open) {
-      animate(ref.current, {
-        opacity: [0, 1],
-        scale: [0.95, 1],
-        translateY: [-4, 0],
-        duration: 200,
-        easing: 'easeOutCubic',
-      })
-    } else {
-      animate(ref.current, {
-        opacity: [1, 0],
-        scale: [1, 0.95],
-        translateY: [0, -4],
-        duration: 150,
-        easing: 'easeInCubic',
-      })
-    }
-  }, [open])
-
   return (
-    <DropdownMenuContent align={align} className={cn(open ? 'block' : 'hidden', className)}>
-      <div ref={ref}>
-        {children}
-      </div>
+    <DropdownMenuContent
+      align={align}
+      className={cn('overflow-hidden', className)}
+      onPointerEnter={onMouseEnter}
+      onPointerLeave={onMouseLeave}
+      forceMount
+    >
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95, y: -4 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.95, y: -4 }}
+            transition={{ duration: 0.15, ease: 'easeOut' }}
+          >
+            {children}
+          </motion.div>
+        )}
+      </AnimatePresence>
     </DropdownMenuContent>
   )
 }

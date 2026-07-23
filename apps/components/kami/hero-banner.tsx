@@ -52,7 +52,7 @@ export function HeroBanner({ items }: HeroBannerProps) {
 
   return (
     <section
-      className="relative isolate mx-3 mt-3 h-[76vh] min-h-120 max-h-200 overflow-hidden rounded-2xl bg-[#1a1a1a] md:mx-5 md:mt-4 lg:mx-8 xl:mx-20"
+      className="relative isolate mx-1 mt-2 h-[82.5vh] min-h-110 max-h-[88vh] overflow-hidden rounded-xl bg-[#1a1a1a] md:mx-2 md:mt-3 lg:mx-4 xl:mx-8"
       aria-roledescription="carousel"
       aria-label="Anime à la une"
       onMouseEnter={() => setIsPaused(true)}
@@ -84,7 +84,7 @@ export function HeroBanner({ items }: HeroBannerProps) {
       <div className="pointer-events-none absolute inset-0 bg-linear-to-r from-black/80 via-black/40 to-transparent" />
       <div className="pointer-events-none absolute inset-x-0 bottom-0 h-1/2 bg-linear-to-t from-[#141414] via-[#141414]/60 to-transparent" />
 
-      <div className="relative z-10 flex h-full flex-col justify-end px-6 pb-20 pt-20 sm:px-10 lg:px-14 xl:px-20">
+      <div className="relative z-10 flex h-full flex-col justify-end px-4 pb-16 pt-20 sm:px-8 lg:px-12 xl:px-16">
         <div key={anime.id} className="max-w-3xl animate-[hero-copy-in_450ms_ease-out] motion-reduce:animate-none">
           <h1 className="font-display text-5xl font-black leading-[0.9] tracking-[-0.03em] text-white sm:text-6xl md:text-7xl lg:text-8xl xl:text-[7.5rem]">
             {anime.title}
@@ -134,7 +134,7 @@ export function HeroBanner({ items }: HeroBannerProps) {
       <button
         type="button"
         onClick={() => setIsMuted(!isMuted)}
-        className="absolute right-5 top-5 z-20 flex size-11 items-center justify-center rounded-full border border-white/30 bg-black/60 text-white backdrop-blur-md transition-all duration-200 hover:bg-black/80 hover:border-white/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white sm:right-8 lg:right-12 xl:right-20"
+        className="absolute right-4 top-4 z-20 flex size-11 items-center justify-center rounded-full border border-white/30 bg-black/60 text-white backdrop-blur-md transition-all duration-200 hover:bg-black/80 hover:border-white/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white sm:right-6 lg:right-10 xl:right-16"
         aria-label={isMuted ? 'Activer le son' : 'Couper le son'}
       >
         {isMuted ? (

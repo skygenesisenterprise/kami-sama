@@ -18,7 +18,7 @@ export function UserAvatar({
 
   return (
     <Avatar className={cn('size-9', className)}>
-      <AvatarImage src={user.avatar || '/placeholder.svg'} alt={user.displayName} />
+      <AvatarImage src={user.avatar || '/kami-sama.png'} alt={user.displayName} />
       <AvatarFallback className="bg-secondary text-xs">{initials}</AvatarFallback>
     </Avatar>
   )

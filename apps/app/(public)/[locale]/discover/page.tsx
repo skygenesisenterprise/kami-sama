@@ -26,6 +26,7 @@ interface DiscoverRailProps {
 }
 
 function DiscoverRail({ title, href, subtitle, ctaLabel, children }: DiscoverRailProps) {
+  const t = useTranslations('Public.discover')
   const scrollRef = React.useRef<HTMLDivElement>(null)
   const [canScrollRight, setCanScrollRight] = React.useState(false)
   const [canScrollLeft, setCanScrollLeft] = React.useState(false)
@@ -77,7 +78,7 @@ function DiscoverRail({ title, href, subtitle, ctaLabel, children }: DiscoverRai
             type="button"
             onClick={scrollLeft}
             className="absolute left-0 top-0 bottom-0 z-10 w-12 bg-linear-to-r from-[#141414] to-transparent flex items-center justify-center opacity-0 group-hover/rail:opacity-100 transition-opacity"
-            aria-label="Reculer"
+            aria-label={t('railScrollBack')}
           >
             <ChevronLeft className="size-10 text-white" strokeWidth={2} />
           </button>
@@ -93,7 +94,7 @@ function DiscoverRail({ title, href, subtitle, ctaLabel, children }: DiscoverRai
             type="button"
             onClick={scrollRight}
             className="absolute right-0 top-0 bottom-0 z-10 w-12 bg-linear-to-l from-[#141414] to-transparent flex items-center justify-center opacity-0 group-hover/rail:opacity-100 transition-opacity"
-            aria-label="Voir plus"
+            aria-label={t('railScrollMore')}
           >
             <ChevronRight className="size-10 text-white" strokeWidth={2} />
           </button>
@@ -116,6 +117,7 @@ interface DiscoverAnimeTileProps {
 }
 
 function DiscoverAnimeTile({ anime, currentLocale, badge, progressPercent, remainingLabel, episodeNumber, episodeTitle, currentTime, totalTime }: DiscoverAnimeTileProps) {
+  const t = useTranslations('Public.discover')
   const { isAuthenticated } = useAuth()
   const isContinueWatching = progressPercent !== undefined
   const tileRef = React.useRef<HTMLDivElement>(null)
@@ -218,7 +220,7 @@ function DiscoverAnimeTile({ anime, currentLocale, badge, progressPercent, remai
             <button
               type="button"
               className="absolute right-2 top-2 flex size-8 items-center justify-center rounded-full bg-black/60 text-white opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 hover:bg-black/80"
-              aria-label={`Ajouter ${anime.title} à votre Watchlist`}
+              aria-label={t('addToWatchlist', { title: anime.title })}
             >
               <Bookmark className="size-4" aria-hidden="true" />
             </button>
@@ -293,7 +295,7 @@ function DiscoverAnimeTile({ anime, currentLocale, badge, progressPercent, remai
                       ? 'border-white bg-white text-black'
                       : 'border-white/40 text-white/70 hover:border-white hover:text-white'
                   }`}
-                  aria-label={isAddedToList ? `Retirer ${anime.title} de la liste` : `Ajouter ${anime.title} à la liste`}
+                  aria-label={isAddedToList ? t('removeFromList', { title: anime.title }) : t('addToList', { title: anime.title })}
                 >
                   {isAddedToList ? <Check className="size-3.5" /> : <Plus className="size-3.5" />}
                 </button>
@@ -305,7 +307,7 @@ function DiscoverAnimeTile({ anime, currentLocale, badge, progressPercent, remai
                       ? 'border-white bg-white text-black'
                       : 'border-white/40 text-white/70 hover:border-white hover:text-white'
                   }`}
-                  aria-label={isDisliked ? 'Retirer dislike' : 'Pas intéressé'}
+                  aria-label={isDisliked ? t('removeDislike') : t('notInterested')}
                 >
                   <ThumbsDown className="size-3.5" />
                 </button>
@@ -317,14 +319,14 @@ function DiscoverAnimeTile({ anime, currentLocale, badge, progressPercent, remai
                       ? 'border-white bg-white text-black'
                       : 'border-white/40 text-white/70 hover:border-white hover:text-white'
                   }`}
-                  aria-label={isLiked ? 'Retirer like' : "J'aime"}
+                  aria-label={isLiked ? t('removeLike') : t('like')}
                 >
                   <ThumbsUp className="size-3.5" />
                 </button>
                 <Link
                   href={`/${currentLocale}/anime/${anime.slug}`}
                   className="ml-auto flex size-7 items-center justify-center rounded-full border-[1.5px] border-white/40 text-white/70 transition-all hover:border-white hover:text-white hover:scale-110"
-                  aria-label="Episodes et Infos"
+                  aria-label={t('episodesAndInfo')}
                 >
                   <svg className="size-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                     <path d="m6 9 6 6 6-6" />
@@ -341,17 +343,17 @@ function DiscoverAnimeTile({ anime, currentLocale, badge, progressPercent, remai
                 )}
                 {isContinueWatching && episodeNumber && (
                   <span className="text-[10px] text-white/60">
-                    Saison 1
+                    {t('seasonOne')}
                   </span>
                 )}
                 {!isContinueWatching && anime.seasons && anime.seasons.length > 0 && (
                   <span className="text-[10px] text-white/60">
-                    {anime.seasons.length} Saison{anime.seasons.length > 1 ? 's' : ''}
+                    {anime.seasons.length === 1 ? t('seasonCount', { count: anime.seasons.length }) : t('seasonCountPlural', { count: anime.seasons.length })}
                   </span>
                 )}
                 {anime.totalEpisodes > 0 && (
                   <span className="text-[10px] text-white/60">
-                    {anime.totalEpisodes} Ep.
+                    {t('episodeCount', { count: anime.totalEpisodes })}
                   </span>
                 )}
               </div>
@@ -378,7 +380,7 @@ function DiscoverAnimeTile({ anime, currentLocale, badge, progressPercent, remai
                 <div className="flex items-center justify-between">
                   <span className="text-[10px] text-white/50">{remainingLabel}</span>
                   {currentTime && totalTime && (
-                    <span className="text-[10px] text-white/50">{currentTime} sur {totalTime} min</span>
+                    <span className="text-[10px] text-white/50">{t('timeSur', { current: currentTime, total: totalTime })}</span>
                   )}
                 </div>
               )}
@@ -438,7 +440,7 @@ export default function DiscoverPage({
   ]
 
   return (
-    <div className="min-h-screen overflow-x-hidden bg-[#141414] pb-16 text-white">
+    <div className="min-h-screen overflow-x-hidden bg-[#141414] pb-16 text-white select-none">
       <HeroBanner items={featured} />
 
       <main id="main-content" className="relative z-10 pb-12">
@@ -477,14 +479,14 @@ export default function DiscoverPage({
 
       <section className="flex flex-col items-center gap-5 px-4 py-16 text-center md:px-8">
         <p className="max-w-md font-display text-xl font-semibold leading-snug tracking-tight text-white sm:text-2xl">
-          Vous cherchez encore quelque chose à regarder ?<br />
-          Découvrez notre bibliothèque complète
+          {t('ctaLooking')}<br />
+          {t('ctaDiscover')}
         </p>
         <Button
           asChild
           className="h-10 rounded-sm bg-white px-5 text-xs font-semibold uppercase text-black transition-colors duration-200 hover:bg-white/90 focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-[#141414]"
         >
-          <Link href="/catalog">Voir tout</Link>
+          <Link href="/catalog">{t('ctaViewAll')}</Link>
         </Button>
       </section>
     </div>
