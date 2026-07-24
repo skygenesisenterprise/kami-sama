@@ -13,6 +13,7 @@ import {
   getAnime,
   getAllAnime,
   getContinueWatching,
+  getRecentlyAdded,
   getContentPath,
 } from '@/lib/mock-data'
 import { useAuth } from '@/context/AuthContext'
@@ -419,6 +420,7 @@ export default function DiscoverPage({
     { title: t('sectionExclusive'), href: '/catalog?sort=exclusive', animes: allAnime.slice(0, 8), subtitle: t('sectionExclusiveSub') },
     ...(isAuthenticated && username ? [{ title: t('sectionResumeUsername', { username }), href: '/library', animes: [] as Anime[], subtitle: t('sectionResumeSub') }] : []),
     { title: t('sectionThrillers'), href: '/catalog?genre=thriller', animes: allAnime.slice(2, 10), subtitle: t('sectionThrillersSub') },
+    { title: t('sectionRecentlyAdded'), href: '/catalog?sort=new', animes: getRecentlyAdded().map((item) => item.anime), subtitle: t('sectionRecentlyAddedSub') },
     ...(isAuthenticated ? [{
       title: t('sectionWatchlist'),
       href: '/library',
@@ -430,7 +432,6 @@ export default function DiscoverPage({
     { title: t('sectionRewatch'), href: '/catalog?sort=rewatch', animes: allAnime.slice(1, 7), subtitle: t('sectionRewatchSub') },
     { title: t('sectionFilms'), href: '/catalog?type=movie', animes: allAnime.slice(6, 14), subtitle: t('sectionFilmsSub') },
     { title: t('sectionTimeTravel'), href: '/catalog?genre=scifi', animes: allAnime.slice(3, 11), subtitle: t('sectionTimeTravelSub') },
-    { title: t('sectionNewWeek'), href: '/catalog?sort=new', animes: allAnime.slice(8, 16), subtitle: t('sectionNewWeekSub') },
     { title: t('sectionActionAdventure'), href: '/catalog?genre=action', animes: allAnime.slice(5, 13), subtitle: t('sectionActionAdventureSub') },
     { title: t('sectionBlockbusters'), href: '/catalog?genre=revenge', animes: allAnime.slice(0, 6), subtitle: t('sectionBlockbustersSub') },
     { title: t('sectionMultiverse'), href: '/catalog?genre=multiverse', animes: allAnime.slice(7, 15), subtitle: t('sectionMultiverseSub') },
