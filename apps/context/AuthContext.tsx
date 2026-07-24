@@ -223,9 +223,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   function getRedirectTarget(): string {
-    if (typeof window === "undefined") return DEFAULT_PLATFORM_ROUTE;
+    if (typeof window === "undefined") return "/profile-change";
     const params = new URLSearchParams(window.location.search);
-    return params.get("redirect") || DEFAULT_PLATFORM_ROUTE;
+    return params.get("redirect") || "/profile-change";
   }
 
   const login = React.useCallback(

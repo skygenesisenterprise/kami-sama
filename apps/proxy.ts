@@ -106,9 +106,7 @@ export default function proxy(request: NextRequest) {
   const firstSegment = segments[0];
 
   if (pathname === "/" || pathname === "") {
-    const country = getCountryFromRequest(request);
-    const locale = getLocaleFromCountry(country);
-    return NextResponse.redirect(new URL(`/${locale}/discover`, request.url));
+    return NextResponse.redirect(new URL("/profile-change", request.url));
   }
 
   const isAuthPath = AUTH_PATHS.some((p) => pathname === p || pathname === `/${firstSegment}${p}`);

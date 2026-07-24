@@ -4,11 +4,13 @@ import * as React from "react";
 import { useRouter, usePathname } from "next/navigation";
 
 import { useAuth } from "@/context/AuthContext";
-import { DEFAULT_PLATFORM_ROUTE } from "@/lib/routes";
+import { DEFAULT_PLATFORM_ROUTE, LOGIN_ROUTE } from "@/lib/routes";
 import { isProfileSelected } from "@/lib/profile-selection";
 
-// Routes that authenticated users CAN access within (auth)
+// Routes accessible to authenticated users within (auth)
 const AUTHENTICATED_ALLOWED_ROUTES = ["/profile-change", "/mfa-validate", "/mfa-setup", "/callback"];
+// Routes accessible to unauthenticated users within (auth)
+const PUBLIC_AUTH_ROUTES = ["/login", "/register", "/callback"];
 
 export default function AuthLayout({
   children,
@@ -23,16 +25,28 @@ export default function AuthLayout({
     pathname === route || pathname.startsWith(`${route}/`)
   );
 
+  const isPublicAuthRoute = PUBLIC_AUTH_ROUTES.some((route) =>
+    pathname === route || pathname.startsWith(`${route}/`)
+  );
+
   React.useEffect(() => {
-    if (!isLoading && isAuthenticated && !isAllowedAuthenticatedRoute) {
-      // If user has a session but hasn't selected a profile yet, go to profile-change
+    if (isLoading) return;
+
+    // Unauthenticated users: only allow public auth routes (login, register)
+    if (!isAuthenticated && !isPublicAuthRoute) {
+      router.replace(LOGIN_ROUTE);
+      return;
+    }
+
+    // Authenticated users on non-allowed routes: redirect based on profile selection
+    if (isAuthenticated && !isAllowedAuthenticatedRoute) {
       if (!isProfileSelected()) {
         router.replace("/profile-change");
       } else {
         router.replace(DEFAULT_PLATFORM_ROUTE);
       }
     }
-  }, [isAuthenticated, isLoading, router, isAllowedAuthenticatedRoute]);
+  }, [isAuthenticated, isLoading, router, isAllowedAuthenticatedRoute, isPublicAuthRoute]);
 
   if (isLoading) {
     return (
@@ -42,6 +56,12 @@ export default function AuthLayout({
     );
   }
 
+  // Block unauthenticated users from non-public routes
+  if (!isAuthenticated && !isPublicAuthRoute) {
+    return null;
+  }
+
+  // Block authenticated users from non-allowed routes
   if (isAuthenticated && !isAllowedAuthenticatedRoute) {
     return null;
   }

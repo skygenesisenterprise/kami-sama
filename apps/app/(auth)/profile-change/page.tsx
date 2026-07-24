@@ -1,13 +1,14 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Loader2, Plus, Settings } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { useAuth } from '@/context/AuthContext'
 import { toast } from '@/components/ui/use-toast'
 import { useRouter } from 'next/navigation'
-import { setProfileSelected } from '@/lib/profile-selection'
+import { setProfileSelected, clearProfileSelection } from '@/lib/profile-selection'
+import { routing } from '@/i18n/routing'
 
 // Mock profiles - in real app, these would come from API
 interface Profile {
@@ -20,6 +21,18 @@ export default function ProfileChangePage() {
   const router = useRouter()
   const { user } = useAuth()
   const [isSwitching, setIsSwitching] = useState<string | null>(null)
+
+  // Detect locale from browser, fallback to default
+  const locale = (() => {
+    if (typeof window === 'undefined') return routing.defaultLocale;
+    const browserLang = navigator.language.split('-')[0];
+    return routing.locales.includes(browserLang as any) ? browserLang : routing.defaultLocale;
+  })()
+
+  // Clear profile selection on mount so user must re-select
+  useEffect(() => {
+    clearProfileSelection()
+  }, [])
 
   // Mock connected profiles
   const profiles: Profile[] = user
@@ -47,8 +60,9 @@ export default function ProfileChangePage() {
         variant: 'default',
       })
 
-      // Redirect to discover page
-      router.push('/fr/discover')
+      // Redirect to discover page with correct locale
+      const validLocale = routing.locales.includes(locale as any) ? locale : routing.defaultLocale;
+      router.push(`/${validLocale}/discover`)
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Une erreur est survenue'
       toast({
