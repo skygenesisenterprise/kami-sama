@@ -372,6 +372,26 @@ func SetupRoutes(router *gin.Engine, deps Dependencies) {
 			anilistGroup.POST("/:anilistId/import", anilist.ImportMedia)
 		}
 
+	plex := NewPlexHandler(deps)
+	plexGroup := protected.Group("/integrations/plex")
+		{
+			plexGroup.GET("/health", plex.HealthCheck)
+			plexGroup.GET("/identity", plex.GetIdentity)
+			plexGroup.GET("/libraries", plex.ListLibraries)
+			plexGroup.GET("/libraries/:libraryId", plex.GetLibrary)
+			plexGroup.GET("/libraries/:libraryId/items", plex.ListItems)
+			plexGroup.POST("/libraries/:libraryId/refresh", plex.RefreshLibrary)
+			plexGroup.GET("/metadata/:ratingKey", plex.GetMetadata)
+			plexGroup.GET("/metadata/:ratingKey/children", plex.GetChildren)
+			plexGroup.GET("/hubs", plex.GetHubs)
+			plexGroup.GET("/search", plex.Search)
+			plexGroup.GET("/image", plex.ImageProxy)
+			plexGroup.POST("/transcode", plex.TranscodeDecision)
+			plexGroup.POST("/scrobble", plex.Scrobble)
+			plexGroup.POST("/unscrobble", plex.Unscrobble)
+			plexGroup.POST("/timeline", plex.UpdateTimeline)
+		}
+
 		discover := NewDiscoverHandler(deps)
 		discoverGroup := api.Group("/discover")
 		{

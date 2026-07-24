@@ -7,6 +7,8 @@ export LOG_LEVEL="${LOG_LEVEL:-info}"
 export PRISMA_SCHEMA_DEPLOY="${PRISMA_SCHEMA_DEPLOY:-true}"
 export PRISMA_DB_PUSH="${PRISMA_DB_PUSH:-false}"
 export ALLOW_MIGRATION_FAILURE="${ALLOW_MIGRATION_FAILURE:-true}"
+export PRISMA_HOT_RELOAD="${PRISMA_HOT_RELOAD:-false}"
+export PRISMA_POLL_INTERVAL="${PRISMA_POLL_INTERVAL:-5}"
 
 # ── Logging ────────────────────────────────────────────────────────────────────
 
@@ -92,7 +94,7 @@ setup_pnpm() {
 }
 
 find_prisma_dir() {
-    for dir in /app/server/prisma ./server/prisma; do
+    for dir in /prisma /app/server/prisma ./server/prisma; do
         if [ -f "${dir}/schema.prisma" ]; then
             echo "${dir}"
             return 0
@@ -103,6 +105,7 @@ find_prisma_dir() {
 
 find_prisma_bin() {
     for bin in \
+        /prisma/node_modules/.bin/prisma \
         /app/prisma/node_modules/.bin/prisma \
         /app/server/prisma/node_modules/.bin/prisma \
         ./node_modules/.bin/prisma \
@@ -176,6 +179,151 @@ run_prisma_schema_deploy() {
     DATABASE_URL="${DATABASE_URL}" ${prisma_bin} db push --accept-data-loss
 }
 
+# ── Prisma hot-reload watcher ───────────────────────────────────────────────
+
+start_prisma_watcher() {
+    schema_path="${SCHEMA_PATH:-/prisma/schema.prisma}"
+    deploy_script="${DEPLOY_SCRIPT:-/usr/local/bin/deploy-schema.sh}"
+    poll_interval="${PRISMA_POLL_INTERVAL:-5}"
+
+    if [ ! -f "${schema_path}" ]; then
+        log_warn "Schema file not found at ${schema_path}; watcher disabled"
+        return 0
+    fi
+
+    if command -v inotifywait >/dev/null 2>&1; then
+        log_info "Watching ${schema_path} for changes (inotify)"
+        prev_hash=""
+        while true; do
+            inotifywait -qq -e modify,create,delete,move "${schema_path}" 2>/dev/null || {
+                sleep "${poll_interval}"
+                continue
+            }
+            curr_hash=$(sha256sum "${schema_path}" 2>/dev/null | awk '{print $1}' || true)
+            if [ "${curr_hash}" = "${prev_hash}" ]; then
+                continue
+            fi
+            prev_hash="${curr_hash}"
+            log_info "Schema change detected — running migration..."
+            if [ -x "${deploy_script}" ]; then
+                "${deploy_script}" || log_warn "Migration failed (hot-reload)"
+            else
+                run_prisma_schema_deploy || log_warn "Migration failed (hot-reload)"
+            fi
+        done
+    else
+        log_info "Watching ${schema_path} for changes (polling every ${poll_interval}s)"
+        prev_hash=""
+        while true; do
+            curr_hash=$(sha256sum "${schema_path}" 2>/dev/null | awk '{print $1}' || true)
+            if [ -n "${prev_hash}" ] && [ "${curr_hash}" != "${prev_hash}" ]; then
+                log_info "Schema change detected — running migration..."
+                if [ -x "${deploy_script}" ]; then
+                    "${deploy_script}" || log_warn "Migration failed (hot-reload)"
+                else
+                    run_prisma_schema_deploy || log_warn "Migration failed (hot-reload)"
+                fi
+            fi
+            prev_hash="${curr_hash}"
+            sleep "${poll_interval}"
+        done
+    fi
+}
+
+# ── PostgreSQL role ─────────────────────────────────────────────────────────
+
+run_postgresql() {
+    export PGDATA="${PGDATA:-/var/lib/postgresql/data}"
+    export LANG="${LANG:-C.UTF-8}"
+    export LC_ALL="${LC_ALL:-C.UTF-8}"
+
+    log_info "PostgreSQL container starting"
+    log_info "Data directory: ${PGDATA}"
+
+    # Root-level setup: ensure directories exist and are owned by postgres
+    mkdir -p "$PGDATA" /var/run/postgresql
+    chown -R postgres:postgres "$PGDATA" /var/run/postgresql
+
+    # Initialize the database cluster if the data directory is empty
+    if [ ! -f "$PGDATA/PG_VERSION" ]; then
+        log_info "Initializing PostgreSQL data directory..."
+        gosu postgres initdb -D "$PGDATA" --encoding=UTF8 --locale=C.UTF-8 --auth-host=trust --auth-local=trust
+        {
+            echo "listen_addresses = '*'"
+            echo "port = 5432"
+        } >> "$PGDATA/postgresql.conf"
+    fi
+
+    # Ensure Docker network connections are allowed (development only)
+    if [ -f "$PGDATA/pg_hba.conf" ]; then
+        if ! grep -q "^host all all all " "$PGDATA/pg_hba.conf"; then
+            log_info "Allowing connections from any host in pg_hba.conf"
+            {
+                echo ""
+                echo "# Allow connections from any host (development only)"
+                echo "host all all all trust"
+            } >> "$PGDATA/pg_hba.conf"
+        fi
+    fi
+
+    # Start PostgreSQL in the background
+    gosu postgres postgres -D "$PGDATA" -c listen_addresses='*' -c port=5432 &
+    pg_pid=$!
+
+    trap "kill ${pg_pid} 2>/dev/null; wait ${pg_pid} 2>/dev/null" SIGTERM SIGINT
+
+    log_info "Waiting for PostgreSQL to accept connections..."
+    retry=0
+    max_retry=60
+    until pg_isready -U "${POSTGRES_USER:-postgres}" -q 2>/dev/null; do
+        retry=$((retry + 1))
+        if [ "${retry}" -ge "${max_retry}" ]; then
+            log_error "PostgreSQL did not become ready within ${max_retry}s"
+            return 1
+        fi
+        if ! kill -0 ${pg_pid} 2>/dev/null; then
+            log_error "PostgreSQL process exited unexpectedly"
+            return 1
+        fi
+        sleep 1
+    done
+    log_info "PostgreSQL is accepting connections"
+
+    # Create the requested role/database (mirrors the official image behaviour)
+    db_user="${POSTGRES_USER:-postgres}"
+    db_pass="${POSTGRES_PASSWORD:-}"
+    db_name="${POSTGRES_DB:-postgres}"
+
+    if [ "${db_user}" != "postgres" ]; then
+        log_info "Creating role: ${db_user}"
+        gosu postgres psql -v ON_ERROR_STOP=1 --username postgres -tc "SELECT 1 FROM pg_roles WHERE rolname='${db_user}'" | grep -q 1 || \
+            gosu postgres psql -v ON_ERROR_STOP=1 --username postgres -c "CREATE ROLE \"${db_user}\" WITH SUPERUSER LOGIN PASSWORD '${db_pass}'" || true
+    fi
+    if [ "${db_name}" != "postgres" ]; then
+        log_info "Creating database: ${db_name}"
+        gosu postgres psql -v ON_ERROR_STOP=1 --username postgres -tc "SELECT 1 FROM pg_database WHERE datname='${db_name}'" | grep -q 1 || \
+            gosu postgres psql -v ON_ERROR_STOP=1 --username postgres -c "CREATE DATABASE \"${db_name}\" OWNER \"${db_user}\"" || true
+    fi
+
+    # Prisma schema deployment
+    if ! run_prisma_schema_deploy; then
+        if [ "${ALLOW_MIGRATION_FAILURE}" = "true" ]; then
+            log_warn "Prisma schema deployment failed; continuing because ALLOW_MIGRATION_FAILURE=true"
+        else
+            log_error "Prisma schema deployment failed"
+            return 1
+        fi
+    fi
+
+    # Hot-reload watcher (background)
+    if [ "${PRISMA_HOT_RELOAD}" = "true" ]; then
+        start_prisma_watcher &
+    fi
+
+    # Forward signals and wait for PostgreSQL to exit
+    wait ${pg_pid}
+}
+
 # ── Commands ──────────────────────────────────────────────────────────────────
 
 run_server() {
@@ -238,6 +386,10 @@ case "${role}" in
     air)
         shift || true
         run_air "$@"
+        ;;
+    postgresql)
+        shift || true
+        run_postgresql "$@"
         ;;
     *)
         configure_runtime

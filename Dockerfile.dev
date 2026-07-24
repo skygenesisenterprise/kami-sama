@@ -34,7 +34,7 @@ RUN mkdir -p apps/next/fond/google && \
     pnpm install --filter @kami-sama/apps... --ignore-scripts --no-frozen-lockfile
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Stage final
+# Stage 3 — Final (server / worker / postgresql) — default build target
 # ══════════════════════════════════════════════════════════════════════════════
 FROM node:25-alpine
 
@@ -49,13 +49,18 @@ RUN apk add --no-cache \
     libc6-compat \
     postgresql \
     postgresql-client \
-    openssl
+    openssl \
+    npm \
+    gosu \
+    coreutils \
+    inotify-tools
 
-ENV PATH="/usr/local/go/bin:/go/bin:/root/go/bin:/root/.local/share/corepack:/usr/local/bin:/usr/bin:/bin:${PATH}"
 ENV GOPATH="/go"
-ENV PATH="${PATH}:/root/.local/share/corepack"
+ENV PATH="/usr/local/go/bin:/go/bin:/root/go/bin:/root/.local/share/corepack:/usr/local/bin:/usr/bin:/bin:${PATH}"
+ENV SCHEMA_PATH=/app/server/prisma/schema.prisma
+ENV PRISMA_DIR=/app/server/prisma
+ENV DEPLOY_SCRIPT=/usr/local/bin/deploy-schema.sh
 
-# ── pnpm (requis pour lancer next dev) ───────────────────────────────────────
 RUN npm install -g corepack --force && corepack enable && corepack prepare pnpm@9.15.4 --activate && \
     ln -sf /root/.local/share/corepack/pnpm /usr/local/bin/pnpm
 
@@ -69,7 +74,7 @@ COPY --from=go-builder /usr/local/go /usr/local/go
 COPY --from=go-builder /app/server/ ./server/
 COPY --from=go-builder /app/tmp/aether-server /app/tmp/aether-server
 
-# ── node_modules au bon endroit : /app/apps/node_modules ─────────────────────
+# ── node_modules ─────────────────────────────────────────────────────────────
 COPY --from=node-builder /app/node_modules ./node_modules/
 COPY --from=node-builder /app/apps/node_modules ./apps/node_modules/
 
@@ -88,9 +93,10 @@ COPY apps/lib/                 ./apps/lib/
 COPY apps/public/              ./apps/public/
 COPY apps/styles/              ./apps/styles/
 COPY apps/proxy.ts             ./apps/proxy.ts
-COPY server/prisma/           ./server/prisma/
+COPY server/prisma/            ./server/prisma/
+RUN cd server/prisma && npm install --no-audit --no-fund
 
-# ── Config dev ────────────────────────────────────────────────────────────────
+# ── Config dev ───────────────────────────────────────────────────────────────
 COPY .air.toml   ./
 COPY .env.example ./
 COPY entrypoint.sh /entrypoint.sh

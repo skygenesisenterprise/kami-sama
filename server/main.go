@@ -101,13 +101,14 @@ func main() {
 
 	db, err := connectDatabase(context.Background(), logger, cfg)
 	if err != nil {
-		logger.Warn("database unavailable, running without database", "error", err)
-		db = services.NewNilDatabaseService()
-	} else {
-		defer db.Close()
-		if err := db.AutoMigrate(); err != nil {
-			logger.Warn("database migration failed", "error", err)
-		}
+		logger.Error("database connection failed", "error", err)
+		os.Exit(1)
+	}
+	defer db.Close()
+
+	if err := db.AutoMigrate(); err != nil {
+		logger.Error("database migration failed", "error", err)
+		os.Exit(1)
 	}
 
 	redis, err := redisclient.New(redisclient.Config{

@@ -15,6 +15,7 @@ type MediaSourceService struct {
 	db       *gorm.DB
 	provider string
 	jellyfin *JellyfinClient
+	plex     *PlexMediaSource
 	local    *LocalMediaSource
 }
 
@@ -23,26 +24,59 @@ func NewMediaSourceService(db *gorm.DB, cfg config.MediaSourceConfig) *MediaSour
 		db:       db,
 		provider: cfg.Type,
 	}
-	if cfg.Type == "jellyfin" && cfg.Enabled {
+	switch {
+	case cfg.Type == "jellyfin" && cfg.Enabled:
 		s.jellyfin = NewJellyfinClient(JellyfinConfig{
 			URL:    cfg.Jellyfin.URL,
 			APIKey: cfg.Jellyfin.APIKey,
 			UserID: cfg.Jellyfin.UserID,
 		})
-	} else {
+	case cfg.Type == "plex" && cfg.Enabled:
+		if cfg.Plex.URL != "" && cfg.Plex.Token != "" {
+			plexClient := NewPlexClient(PlexConfig{
+				URL:              cfg.Plex.URL,
+				Token:            cfg.Plex.Token,
+				ClientIdentifier: cfg.Plex.ClientIdentifier,
+				Product:          cfg.Plex.Product,
+				Version:          cfg.Plex.Version,
+				Device:           cfg.Plex.Device,
+				Timeout:          cfg.Plex.Timeout,
+			})
+			s.plex = NewPlexMediaSource(plexClient, db)
+		}
+	}
+	if s.jellyfin == nil && s.plex == nil {
 		s.local = NewLocalMediaSource(db)
 	}
 	return s
 }
 
 func (s *MediaSourceService) providerName() string {
+	if s.plex != nil {
+		return "plex"
+	}
 	if s.jellyfin != nil {
 		return "jellyfin"
 	}
 	return "local"
 }
 
+// Plex exposes the active Plex provider (or nil when Plex is not selected).
+// Callers such as the dedicated /api/v1/integrations/plex handler use this
+// to bypass the multiplexer while still keeping a single configured provider.
+func (s *MediaSourceService) Plex() *PlexMediaSource {
+	return s.plex
+}
+
+// Enabled reports whether the active provider is fully wired.
+func (s *MediaSourceService) Enabled() bool {
+	return s.plex != nil || s.jellyfin != nil
+}
+
 func (s *MediaSourceService) ListLibraries(ctx context.Context) ([]map[string]interface{}, error) {
+	if s.plex != nil {
+		return s.plex.ListLibraries(ctx)
+	}
 	if s.jellyfin != nil {
 		return s.jellyfin.ListLibraries(ctx)
 	}
@@ -50,6 +84,9 @@ func (s *MediaSourceService) ListLibraries(ctx context.Context) ([]map[string]in
 }
 
 func (s *MediaSourceService) GetLibrary(ctx context.Context, id string) (map[string]interface{}, error) {
+	if s.plex != nil {
+		return s.plex.GetLibrary(ctx, id)
+	}
 	if s.jellyfin != nil {
 		return s.jellyfin.GetLibrary(ctx, id)
 	}
@@ -57,6 +94,9 @@ func (s *MediaSourceService) GetLibrary(ctx context.Context, id string) (map[str
 }
 
 func (s *MediaSourceService) ListItems(ctx context.Context, libraryID string, limit, offset int, sortBy, query string) ([]map[string]interface{}, int, error) {
+	if s.plex != nil {
+		return s.plex.ListItems(ctx, libraryID, limit, offset, sortBy, query)
+	}
 	if s.jellyfin != nil {
 		return s.jellyfin.ListItems(ctx, libraryID, limit, offset, sortBy, query)
 	}
@@ -64,6 +104,9 @@ func (s *MediaSourceService) ListItems(ctx context.Context, libraryID string, li
 }
 
 func (s *MediaSourceService) GetItem(ctx context.Context, id string) (map[string]interface{}, error) {
+	if s.plex != nil {
+		return s.plex.GetItem(ctx, id)
+	}
 	if s.jellyfin != nil {
 		return s.jellyfin.GetItem(ctx, id)
 	}
@@ -71,20 +114,34 @@ func (s *MediaSourceService) GetItem(ctx context.Context, id string) (map[string
 }
 
 func (s *MediaSourceService) SearchItems(ctx context.Context, query string, limit int) ([]map[string]interface{}, error) {
+	if s.plex != nil {
+		return s.plex.SearchItems(ctx, query, limit)
+	}
 	if s.jellyfin != nil {
 		return s.jellyfin.SearchItems(ctx, query, limit)
 	}
 	return s.local.SearchItems(ctx, query, limit)
 }
 
-func (s *MediaSourceService) GetStreamURL(ctx context.Context, itemID string, static bool) (string, error) {
-	if s.jellyfin != nil {
-		return s.jellyfin.GetStreamURL(ctx, itemID, static)
+func (s *MediaSourceService) GetStreamURL(ctx context.Context, itemID string, profile string) (string, error) {
+	if s.plex != nil {
+		return s.plex.GetStreamURL(ctx, itemID, profile)
 	}
-	return s.local.GetStreamURL(ctx, itemID, static)
+	if s.jellyfin != nil {
+		// Jellyfin's GetStreamURL still takes a boolean; "static" is what
+		// every client of this multiplexer historically forwarded so we
+		// keep that contract intact while the active provider bridges
+		// through the Plex profile string elsewhere.
+		_ = profile
+		return s.jellyfin.GetStreamURL(ctx, itemID, true)
+	}
+	return s.local.GetStreamURL(ctx, itemID, true)
 }
 
 func (s *MediaSourceService) GetPlaybackInfo(ctx context.Context, itemID string) (map[string]interface{}, error) {
+	if s.plex != nil {
+		return s.plex.GetPlaybackInfo(ctx, itemID)
+	}
 	if s.jellyfin != nil {
 		return s.jellyfin.GetPlaybackInfo(ctx, itemID)
 	}
@@ -92,6 +149,9 @@ func (s *MediaSourceService) GetPlaybackInfo(ctx context.Context, itemID string)
 }
 
 func (s *MediaSourceService) ReportPlaybackProgress(ctx context.Context, itemID string, positionTicks int64, stopped bool) error {
+	if s.plex != nil {
+		return s.plex.ReportPlaybackProgress(ctx, itemID, positionTicks, stopped)
+	}
 	if s.jellyfin != nil {
 		return s.jellyfin.ReportPlaybackProgress(ctx, itemID, positionTicks, stopped)
 	}
@@ -111,7 +171,9 @@ func (s *MediaSourceService) SyncLibrary(ctx context.Context, libraryID string) 
 
 	var result map[string]interface{}
 	var err error
-	if s.jellyfin != nil {
+	if s.plex != nil {
+		result, err = s.plex.SyncLibrary(ctx, libraryID)
+	} else if s.jellyfin != nil {
 		result, err = s.syncJellyfinLibrary(ctx, libraryID)
 	} else {
 		result, err = s.local.SyncLibrary(ctx, libraryID)
@@ -194,6 +256,9 @@ func (s *MediaSourceService) syncJellyfinLibrary(ctx context.Context, libraryID 
 }
 
 func (s *MediaSourceService) GetSyncStatus(ctx context.Context, libraryID string) (map[string]interface{}, error) {
+	if s.plex != nil {
+		return s.plex.GetSyncStatus(ctx, libraryID)
+	}
 	if s.jellyfin != nil {
 		var log models.SourceSyncLog
 		s.db.Where("library_id = ?", libraryID).Order("created_at DESC").First(&log)

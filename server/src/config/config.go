@@ -113,6 +113,7 @@ type MediaSourceConfig struct {
 	Enabled  bool
 	Type     string
 	Jellyfin JellyfinConfig
+	Plex     PlexConfig
 }
 
 type JellyfinConfig struct {
@@ -122,6 +123,21 @@ type JellyfinConfig struct {
 	SyncInterval  time.Duration
 	StreamProfile string
 	CacheTTL      time.Duration
+}
+
+// PlexConfig configures the Plex Media Server integration.
+// Auth uses a static X-Plex-Token; no plex.tv PIN flow is supported here.
+type PlexConfig struct {
+	URL              string
+	Token            string
+	ClientIdentifier string
+	Product          string
+	Version          string
+	Device           string
+	StreamProfile    string
+	SyncInterval     time.Duration
+	CacheTTL         time.Duration
+	Timeout          time.Duration
 }
 
 func Load() (Config, error) {
@@ -227,6 +243,18 @@ func Load() (Config, error) {
 				SyncInterval:  getEnvDuration("MEDIA_SOURCE_SYNC_INTERVAL", time.Hour),
 				StreamProfile: getEnv("MEDIA_SOURCE_STREAM_PROFILE", "native"),
 				CacheTTL:      getEnvDuration("MEDIA_SOURCE_CACHE_TTL", 5*time.Minute),
+			},
+			Plex: PlexConfig{
+				URL:              getEnv("MEDIA_SOURCE_PLEX_URL", ""),
+				Token:            getEnv("MEDIA_SOURCE_PLEX_TOKEN", ""),
+				ClientIdentifier: getEnv("MEDIA_SOURCE_PLEX_CLIENT_ID", "kamisama-server"),
+				Product:          getEnv("MEDIA_SOURCE_PLEX_PRODUCT", "KamiSama"),
+				Version:          getEnv("MEDIA_SOURCE_PLEX_VERSION", "1.0.0"),
+				Device:           getEnv("MEDIA_SOURCE_PLEX_DEVICE", "Server"),
+				StreamProfile:    getEnv("MEDIA_SOURCE_PLEX_STREAM_PROFILE", "native"),
+				SyncInterval:     getEnvDuration("MEDIA_SOURCE_PLEX_SYNC_INTERVAL", time.Hour),
+				CacheTTL:         getEnvDuration("MEDIA_SOURCE_PLEX_CACHE_TTL", 5*time.Minute),
+				Timeout:          getEnvDuration("MEDIA_SOURCE_PLEX_TIMEOUT", 30*time.Second),
 			},
 		},
 	}

@@ -15,7 +15,11 @@ services:
       - kami-sama
 
   postgresql:
-    image: docker.io/library/postgres:16-alpine
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    image: skygenesisenterprise/kami-sama:latest
+    pull_policy: never
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -d $${POSTGRES_DB} -U $${POSTGRES_USER}"]
@@ -23,12 +27,23 @@ services:
       interval: 30s
       retries: 5
       timeout: 5s
+    command: postgresql
     volumes:
       - postgres-data:/var/lib/postgresql/data
+      - ./server/prisma/schema.prisma:/app/server/prisma/schema.prisma:ro
+      - ./server/prisma/package.json:/app/server/prisma/package.json:ro
+      - ./infrastructure/docker/deploy-schema.sh:/usr/local/bin/deploy-schema.sh:ro
+      - ./entrypoint.sh:/entrypoint.sh
     environment:
       POSTGRES_PASSWORD: ${PG_PASS:-postgres}
       POSTGRES_USER: ${PG_USER:-postgres}
       POSTGRES_DB: ${PG_DB:-postgres}
+      DATABASE_URL: postgresql://${PG_USER:-postgres}:${PG_PASS:-postgres}@localhost:5432/${PG_DB:-postgres}
+      PRISMA_SCHEMA_DEPLOY: "true"
+      PRISMA_DB_PUSH: "true"
+      PRISMA_HOT_RELOAD: ${PRISMA_HOT_RELOAD:-false}
+      PRISMA_POLL_INTERVAL: ${PRISMA_POLL_INTERVAL:-5}
+      ALLOW_MIGRATION_FAILURE: "true"
     expose:
       - 5432
     networks:
@@ -101,7 +116,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.dev
-    image: skygenesisenterprise/kami-sama:latest-dev
+    image: skygenesisenterprise/kami-sama:latest
     pull_policy: never
     restart: unless-stopped
     expose:
@@ -131,7 +146,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.dev
-    image: skygenesisenterprise/kami-sama:latest-dev
+    image: skygenesisenterprise/kami-sama:latest
     pull_policy: never
     restart: unless-stopped
     ports:

@@ -1429,3 +1429,207 @@ model SourceSyncLog {
   @@index([libraryId])
   @@map("source_sync_logs")
 }
+
+// ═══════════════════════════════════════════════════════════════
+// MEDIA CATALOGUE — METADATA-ONLY INDEX FROM EXTERNAL SOURCES
+// ═══════════════════════════════════════════════════════════════
+//
+// The Plex / Jellyfin / Emby integrations expose rich, normalised metadata
+// we persist here so the API layer can serve it to clients without
+// round-tripping back to the upstream server on every request. We
+// deliberately do NOT store binary content here: no file paths, no CDN
+// URLs, no codec bytes, no media asset urls. Pointers to remote file
+// locations live exclusively on the upstream Plex / Jellyfin server,
+// proxied on-demand via /api/v1/integrations/{plex,jellyfin}/image and
+// /api/v1/integrations/{plex,jellyfin}/transcode.
+//
+// Each row carries:
+//   - sourceType: "plex" | "jellyfin" | "emby" | "local" | "other"
+//   - sourceId:   the upstream stable id (Plex ratingKey, Jellyfin Id, …)
+//   - externalUuid: optional UUID/GUID when the upstream provides one
+//   - indexedAt: when this row was last refreshed from the upstream
+//   - metadata:  the raw MediaContainer/Metadata JSON block for round-trips
+//
+// All fields are nullable / defaulted so partial syncs are safe.
+
+model MediaLibrary {
+  id            String    @id @default(uuid())
+  sourceType    String    @map("source_type")
+  sourceId      String    @map("source_id")
+  externalUuid  String?   @map("external_uuid")
+  name          String
+  type          String
+  language      String?
+  agent         String?
+  scanner       String?
+  itemCount     Int       @default(0) @map("item_count")
+  isEnabled     Boolean   @default(true) @map("is_enabled")
+  lastIndexedAt DateTime? @map("last_indexed_at")
+  metadata      Json?
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  movies MediaMovie[]
+  series MediaSeries[]
+
+  @@unique([sourceType, sourceId])
+  @@index([sourceType, type])
+  @@map("media_libraries")
+}
+
+model MediaMovie {
+  id              String    @id @default(uuid())
+  libraryId       String?   @map("library_id")
+  sourceType      String    @map("source_type")
+  sourceId        String    @map("source_id")
+  externalUuid    String?   @map("external_uuid")
+  title           String
+  originalTitle   String?   @map("original_title")
+  sortTitle       String?   @map("sort_title")
+  year            Int       @default(0)
+  releaseDate     DateTime? @map("release_date")
+  summary         String?
+  contentRating   String?   @map("content_rating")
+  studio          String?
+  country         String?
+  durationSeconds Int       @default(0) @map("duration_seconds")
+  rating          Float     @default(0)
+  audienceRating  Float?    @map("audience_rating")
+  ratingCount     Int       @default(0) @map("rating_count")
+  genres          String[]  @default([])
+  tags            String[]  @default([])
+  // Image URLs only point at thumb/art metadata keys; the actual image
+  // bytes are reachable through the server-side proxy so we never persist
+  // a raw Plex URL (the token would leak).
+  thumbUrl        String?   @map("thumb_url")
+  artUrl          String?   @map("art_url")
+  posterUrl       String?   @map("poster_url")
+  language        String?
+  isWatched       Boolean   @default(false) @map("is_watched")
+  viewCount       Int       @default(0) @map("view_count")
+  lastViewedAt    DateTime? @map("last_viewed_at")
+  indexedAt       DateTime  @default(now()) @map("indexed_at")
+  metadata        Json?
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  library MediaLibrary? @relation(fields: [libraryId], references: [id], onDelete: SetNull)
+
+  @@unique([sourceType, sourceId])
+  @@index([libraryId])
+  @@index([year])
+  @@index([sortTitle])
+  @@index([title])
+  @@map("media_movies")
+}
+
+model MediaSeries {
+  id               String    @id @default(uuid())
+  libraryId        String?   @map("library_id")
+  sourceType       String    @map("source_type")
+  sourceId         String    @map("source_id")
+  externalUuid     String?   @map("external_uuid")
+  title            String
+  originalTitle    String?   @map("original_title")
+  sortTitle        String?   @map("sort_title")
+  year             Int       @default(0)
+  summary          String?
+  contentRating    String?   @map("content_rating")
+  network          String?
+  studio           String?
+  status           String    @default("unknown")
+  seasonCount      Int       @default(0) @map("season_count")
+  episodeCount     Int       @default(0) @map("episode_count")
+  rating           Float     @default(0)
+  audienceRating   Float?    @map("audience_rating")
+  ratingCount      Int       @default(0) @map("rating_count")
+  genres           String[]  @default([])
+  tags             String[]  @default([])
+  thumbUrl         String?   @map("thumb_url")
+  artUrl           String?   @map("art_url")
+  bannerUrl        String?   @map("banner_url")
+  language         String?
+  isWatched        Boolean   @default(false) @map("is_watched")
+  viewCount        Int       @default(0) @map("view_count")
+  lastViewedAt     DateTime? @map("last_viewed_at")
+  indexedAt        DateTime  @default(now()) @map("indexed_at")
+  metadata         Json?
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+
+  library MediaLibrary? @relation(fields: [libraryId], references: [id], onDelete: SetNull)
+  seasons MediaSeason[]
+  episodes MediaEpisode[]
+
+  @@unique([sourceType, sourceId])
+  @@index([libraryId])
+  @@index([year])
+  @@index([sortTitle])
+  @@index([title])
+  @@index([status])
+  @@map("media_series")
+}
+
+model MediaSeason {
+  id           String    @id @default(uuid())
+  seriesId     String    @map("series_id")
+  sourceType   String    @map("source_type")
+  sourceId     String    @map("source_id")
+  externalUuid String?   @map("external_uuid")
+  indexNumber  Int       @map("index_number")
+  title        String?
+  summary      String?
+  episodeCount Int       @default(0) @map("episode_count")
+  year         Int?
+  thumbUrl     String?   @map("thumb_url")
+  artUrl       String?   @map("art_url")
+  indexedAt    DateTime  @default(now()) @map("indexed_at")
+  metadata     Json?
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  series   MediaSeries    @relation(fields: [seriesId], references: [id], onDelete: Cascade)
+  episodes MediaEpisode[]
+
+  @@unique([sourceType, sourceId])
+  @@unique([seriesId, indexNumber])
+  @@index([seriesId])
+  @@map("media_seasons")
+}
+
+model MediaEpisode {
+  id              String    @id @default(uuid())
+  seriesId        String    @map("series_id")
+  seasonId        String?   @map("season_id")
+  sourceType      String    @map("source_type")
+  sourceId        String    @map("source_id")
+  externalUuid    String?   @map("external_uuid")
+  seasonIndex     Int       @map("season_index")
+  indexNumber     Int       @map("index_number")
+  title           String
+  originalTitle   String?   @map("original_title")
+  summary         String?
+  durationSeconds Int       @default(0) @map("duration_seconds")
+  rating          Float     @default(0)
+  contentRating   String?   @map("content_rating")
+  airDate         DateTime? @map("air_date")
+  isWatched       Boolean   @default(false) @map("is_watched")
+  viewCount       Int       @default(0) @map("view_count")
+  lastViewedAt    DateTime? @map("last_viewed_at")
+  thumbUrl        String?   @map("thumb_url")
+  language        String?
+  indexedAt       DateTime  @default(now()) @map("indexed_at")
+  metadata        Json?
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  series MediaSeries  @relation(fields: [seriesId], references: [id], onDelete: Cascade)
+  season MediaSeason? @relation(fields: [seasonId], references: [id], onDelete: SetNull)
+
+  @@unique([sourceType, sourceId])
+  @@unique([seriesId, seasonIndex, indexNumber])
+  @@index([seriesId])
+  @@index([seasonId])
+  @@index([airDate])
+  @@map("media_episodes")
+}

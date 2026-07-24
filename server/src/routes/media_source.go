@@ -100,13 +100,13 @@ func (h *MediaSourceHandler) GetStreamURL(c *gin.Context) {
 		utils.Error(c, utils.ErrValidationFailed)
 		return
 	}
-	static := c.Query("static") != "false"
-	streamURL, err := h.deps.MediaSourceService.GetStreamURL(c.Request.Context(), id, static)
+	profile := c.DefaultQuery("profile", "native")
+	streamURL, err := h.deps.MediaSourceService.GetStreamURL(c.Request.Context(), id, profile)
 	if err != nil {
 		utils.Error(c, err)
 		return
 	}
-	utils.Success(c, http.StatusOK, gin.H{"streamUrl": streamURL})
+	utils.Success(c, http.StatusOK, gin.H{"streamUrl": streamURL, "profile": profile})
 }
 
 func (h *MediaSourceHandler) GetPlaybackInfo(c *gin.Context) {
@@ -133,7 +133,7 @@ func (h *MediaSourceHandler) ReportProgress(c *gin.Context) {
 		PositionTicks int64 `json:"positionTicks"`
 		Stopped       bool  `json:"stopped"`
 	}
-	if c.ShouldBindJSON(&req) != nil {
+	if err := c.ShouldBindJSON(&req); err != nil {
 		utils.Error(c, utils.ErrValidationFailed)
 		return
 	}

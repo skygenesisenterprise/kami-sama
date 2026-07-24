@@ -124,7 +124,7 @@ export function AuthForm() {
             description: 'Your account has been created successfully.',
             variant: 'default',
           })
-          router.push(getRedirectPath(response.user))
+          router.push('/profile-change')
         }
       } else {
         // Soumission du formulaire de connexion

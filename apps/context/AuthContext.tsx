@@ -169,25 +169,31 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     let cancelled = false;
 
     async function bootstrap() {
+      let nextUser: User | null = null;
       try {
-        await authApi.bootstrap();
+        nextUser = await authApi.bootstrap();
       } catch {
         // Bootstrap failed (network error, invalid session, etc.)
       }
       if (cancelled) {
         return;
       }
-      
-      const session = loadSession();
-      if (session) {
-        setAccessToken(session.accessToken);
-        setUser(session.user);
+
+      // authApi.bootstrap() validates the stored tokens. If it can't refresh,
+      // the session is invalid and we must not render the account UI as logged-in.
+      if (nextUser) {
+        setAccessToken(authApi.getStoredToken());
+        setUser(nextUser);
         setStatus("authenticated");
       } else {
-        const nextToken = authApi.getStoredToken();
-        setAccessToken(nextToken);
-        setUser(authApi.getStoredUser());
-        setStatus(nextToken ? "authenticated" : "unauthenticated");
+        clearSession();
+        setAccessToken(null);
+        setUser(null);
+        setStatus("unauthenticated");
+        if (typeof document !== "undefined") {
+          document.cookie = "kami_sama_access_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+          document.cookie = "kami_sama_refresh=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+        }
       }
     }
 
