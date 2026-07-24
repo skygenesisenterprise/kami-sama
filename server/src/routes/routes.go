@@ -61,6 +61,7 @@ type Dependencies struct {
 	NotificationAdminService *services.NotificationAdminService
 	SettingsAdminService     *services.SettingsAdminService
 	AnilistService           *services.AnilistService
+	ProfileService          *services.ProfileService
 }
 
 func SetupRoutes(router *gin.Engine, deps Dependencies) {
@@ -344,12 +345,39 @@ func SetupRoutes(router *gin.Engine, deps Dependencies) {
 			searchGroup.GET("/suggestions", search.Suggestions)
 		}
 
-		anilist := NewAnilistHandler(deps)
-		anilistGroup := protected.Group("/integrations/anilist")
+	profile := NewProfileHandler(deps)
+	profileGroup := protected.Group("/profiles")
+	{
+		profileGroup.GET("", profile.List)
+		profileGroup.POST("", profile.Create)
+		profileGroup.GET("/:profileId", profile.GetByID)
+		profileGroup.PATCH("/:profileId", profile.Update)
+		profileGroup.DELETE("/:profileId", profile.Delete)
+		profileGroup.POST("/:profileId/select", profile.Select)
+		profileGroup.POST("/:profileId/pin", profile.SetPin)
+		profileGroup.POST("/verify-pin", profile.VerifyPin)
+	}
+
+	anilist := NewAnilistHandler(deps)
+	anilistGroup := protected.Group("/integrations/anilist")
 		{
 			anilistGroup.GET("/search", anilist.Search)
+			anilistGroup.GET("/trending", anilist.Trending)
+			anilistGroup.GET("/popular", anilist.Popular)
+			anilistGroup.GET("/seasonal", anilist.Seasonal)
+			anilistGroup.GET("/airing-schedule", anilist.AiringSchedule)
+			anilistGroup.GET("/characters/:characterId", anilist.GetCharacter)
+			anilistGroup.GET("/staff/:staffId", anilist.GetStaff)
 			anilistGroup.GET("/:anilistId", anilist.GetMedia)
 			anilistGroup.POST("/:anilistId/import", anilist.ImportMedia)
+		}
+
+		discover := NewDiscoverHandler(deps)
+		discoverGroup := api.Group("/discover")
+		{
+			discoverGroup.GET("", discover.GetDiscover)
+			discoverGroup.GET("/continue-watching", discover.GetDiscoverContinueWatching)
+			discoverGroup.GET("/content/:anilistId", discover.GetContentDetail)
 		}
 
 		settingsGroup := protected.Group("/settings")

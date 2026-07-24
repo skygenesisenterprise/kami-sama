@@ -2,6 +2,7 @@ import { NextIntlClientProvider } from 'next-intl'
 import { getMessages } from 'next-intl/server'
 import { SiteHeader } from '@/components/layout/site-header'
 import { Footer } from '@/components/layout/site-footer'
+import { PublicLayoutTransition } from '@/components/public-layout-transition'
 
 export default async function PublicLayout({
   children,
@@ -17,7 +18,9 @@ export default async function PublicLayout({
     <NextIntlClientProvider locale={locale} messages={messages}>
       <div className="relative flex min-h-screen flex-col">
         <SiteHeader />
-        <main className="flex-1">{children}</main>
+        <main className="flex-1">
+          <PublicLayoutTransition>{children}</PublicLayoutTransition>
+        </main>
         <Footer />
       </div>
     </NextIntlClientProvider>

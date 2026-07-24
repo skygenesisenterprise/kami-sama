@@ -14,7 +14,7 @@ import { useTranslations } from 'next-intl'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
-import { getRecentlyAdded } from '@/lib/mock-data'
+import { getRecentlyAdded, getContentPath } from '@/lib/mock-data'
 import type { RecentlyAddedItem } from '@/types/anime'
 
 /* -------------------------------------------------------------------------- *
@@ -69,7 +69,7 @@ function NewAnimeCard({ item, bookmarked, onToggleBookmark }: NewAnimeCardProps)
 
   return (
     <Link
-      href={`/anime/${anime.slug}`}
+      href={`${getContentPath(anime)}/${anime.slug}`}
       className="group relative block overflow-hidden rounded-xl border border-border/40 bg-card outline-none transition-all duration-300 hover:-translate-y-1 hover:border-border/80 hover:shadow-xl focus-visible:ring-2 focus-visible:ring-ring"
     >
       {/* Cover Image */}

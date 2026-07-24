@@ -434,6 +434,19 @@ type CalendarEventRepository interface {
 	Delete(ctx context.Context, id string) error
 }
 
+// Profile repository
+type ProfileRepository interface {
+	Create(ctx context.Context, profile *models.Profile) error
+	GetByID(ctx context.Context, id string) (*models.Profile, error)
+	GetByUserID(ctx context.Context, userID string) ([]models.Profile, error)
+	GetDefaultByUserID(ctx context.Context, userID string) (*models.Profile, error)
+	Update(ctx context.Context, profile *models.Profile) error
+	Delete(ctx context.Context, id string) error
+	SetDefault(ctx context.Context, userID, profileID string) error
+	ClearOtherDefaults(ctx context.Context, userID, excludeProfileID string) error
+	SetLastUsed(ctx context.Context, id string, lastUsedAt time.Time) error
+}
+
 // Premiere repository
 type PremiereRepository interface {
 	Create(ctx context.Context, premiere *models.Premiere) error
@@ -487,4 +500,5 @@ type RepositorySet interface {
 	Integrations() IntegrationRepository
 	CalendarEvents() CalendarEventRepository
 	Premieres() PremiereRepository
+	Profiles() ProfileRepository
 }

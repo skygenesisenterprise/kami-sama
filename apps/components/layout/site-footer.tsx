@@ -175,22 +175,6 @@ export async function Footer({ locale: initialLocale }: FooterProps) {
     ([code, label]) => ({ code, label })
   );
 
-  const platformApiLinks: FooterLink[] = [
-    { name: t("platformOverview"), href: `${prefix}/platform` },
-    { name: t("pricing"), href: `${prefix}/pricing` },
-    { name: t("connectApi"), href: "https://api.skygenesisenterprise.com", external: true },
-    { name: t("apiDocumentation"), href: "https://docs.skygenesisenterprise.com", external: true },
-    { name: t("developerForum"), href: "https://developer.skygenesisenterprise.com", external: true },
-  ];
-
-  const developerLinks: FooterLink[] = [
-    { name: t("documentation"), href: `${prefix}/developers` },
-    { name: t("apiReference"), href: `${prefix}/developers/api` },
-    { name: t("sdks"), href: `${prefix}/developers/sdks` },
-    { name: t("quickstarts"), href: `${prefix}/developers/quickstarts` },
-    { name: t("statusPage"), href: "https://status.kami-sama.tv", external: true },
-  ];
-
   const resourcesLinks: FooterLink[] = [
     { name: t("blog"), href: `${prefix}/blog` },
     { name: t("caseStudies"), href: `${prefix}/resources/case-studies` },
@@ -223,14 +207,6 @@ export async function Footer({ locale: initialLocale }: FooterProps) {
     { name: t("security"), href: `${prefix}/legal/security` },
   ];
 
-  const otherLinks: FooterLink[] = [
-    { name: t("news"), href: `${prefix}/blog` },
-    { name: t("academy"), href: `${prefix}/academy` },
-    { name: t("liveStreams"), href: "https://twitch.tv/kami-sama-tv", external: true },
-    { name: t("podcast"), href: `${prefix}/podcast` },
-    { name: t("rss"), href: `${prefix}/rss.xml` },
-  ];
-
   const footerSections = [
     { title: t("resources"), links: resourcesLinks },
     { title: t("company"), links: companyLinks },
@@ -240,10 +216,10 @@ export async function Footer({ locale: initialLocale }: FooterProps) {
 
   const socialLinks = [
     { name: "X (Twitter)", href: "https://x.com/KamiSamaTV" },
-    { name: "GitHub", href: "https://github.com/kami-sama" },
-    { name: "YouTube", href: "https://youtube.com/@kami-sama" },
+    { name: "GitHub", href: "https://github.com/skygenesisenterprise/kami-sama" },
+    { name: "YouTube", href: "https://youtube.com/@KamiSamaTV" },
     { name: "Discord", href: "https://discord.gg/skygenesisenterprise" },
-    { name: "Instagram", href: "https://instagram.com/kami-sama" },
+    { name: "Instagram", href: "https://instagram.com/KamiSamaTV" },
   ];
 
   return (

@@ -112,6 +112,7 @@ func (s *DatabaseService) AutoMigrate() error {
 		&models.Tag{},
 		&models.Role{},
 		&models.UserRole{},
+		&models.Profile{},
 	)
 }
 

@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { Play } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { getContentPath } from '@/lib/mock-data'
 import type { Anime } from '@/types/anime'
 import { RatingBadge } from './rating-badge'
 
@@ -15,7 +16,7 @@ interface AnimeCardProps {
 export function AnimeCard({ anime, badge, className, showMeta = true }: AnimeCardProps) {
   return (
     <Link
-      href={`/anime/${anime.slug}`}
+      href={`${getContentPath(anime)}/${anime.slug}`}
       className={cn(
         'group relative block overflow-hidden rounded-xl border border-border/60 bg-card outline-none transition-transform duration-300 hover:-translate-y-1 focus-visible:ring-2 focus-visible:ring-ring',
         className,

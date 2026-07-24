@@ -182,6 +182,7 @@ _episodeService := services.NewEpisodeService(repos)
 	premiereService := services.NewPremiereService(repos)
 	systemService := services.NewSystemService(db.Gorm(), redis)
 	settingsAdminService := services.NewSettingsAdminService(db.Gorm(), repos)
+	profileService := services.NewProfileService(db, repos)
 	anilistService := services.NewAnilistService(cfg.Anilist, repos, logger)
 
 	mode, err := parseRuntimeMode(os.Args[1:])
@@ -239,6 +240,7 @@ _episodeService := services.NewEpisodeService(repos)
 		NotificationAdminService: notificationAdminService,
 		SettingsAdminService:     settingsAdminService,
 		AnilistService:           anilistService,
+		ProfileService:          profileService,
 		RuntimeRole:             string(mode),
 	})
 

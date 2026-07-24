@@ -2,15 +2,15 @@
 
 import * as React from "react";
 import { useRouter, usePathname } from "next/navigation";
-
 import { useAuth } from "@/context/AuthContext";
 import { DEFAULT_PLATFORM_ROUTE, LOGIN_ROUTE } from "@/lib/routes";
 import { isProfileSelected } from "@/lib/profile-selection";
+import { RouteTransition } from "@/components/route-transition";
 
 // Routes accessible to authenticated users within (auth)
 const AUTHENTICATED_ALLOWED_ROUTES = ["/profile-change", "/mfa-validate", "/mfa-setup", "/callback"];
 // Routes accessible to unauthenticated users within (auth)
-const PUBLIC_AUTH_ROUTES = ["/login", "/register", "/callback"];
+const PUBLIC_AUTH_ROUTES = ["/login", "/register"];
 
 export default function AuthLayout({
   children,
@@ -66,5 +66,9 @@ export default function AuthLayout({
     return null;
   }
 
-  return <>{children}</>;
+  return (
+    <RouteTransition>
+      {children}
+    </RouteTransition>
+  );
 }

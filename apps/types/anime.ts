@@ -5,6 +5,7 @@
  */
 
 export type AnimeStatus = 'airing' | 'completed' | 'upcoming' | 'hiatus'
+export type ContentType = 'series' | 'movies'
 
 export interface Genre {
   id: string
@@ -82,6 +83,7 @@ export interface UserSummary {
 export interface Anime {
   id: string
   slug: string
+  type: ContentType
   title: string
   japaneseTitle: string
   synopsis: string

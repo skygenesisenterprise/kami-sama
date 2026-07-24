@@ -63,6 +63,48 @@ func (s *AnilistService) GetMedia(ctx context.Context, anilistID int) (*AnilistM
 	return s.client.GetMediaByID(ctx, anilistID)
 }
 
+func (s *AnilistService) GetTrending(ctx context.Context, mediaType string, page, perPage int) (*AnilistSearchResult, error) {
+	if !s.cfg.Enabled {
+		return nil, utils.NewError(http.StatusServiceUnavailable, "ANILIST_DISABLED", "Anilist integration is not enabled.", nil)
+	}
+	return s.client.GetTrendingMedia(ctx, mediaType, page, perPage)
+}
+
+func (s *AnilistService) GetPopular(ctx context.Context, mediaType string, page, perPage int) (*AnilistSearchResult, error) {
+	if !s.cfg.Enabled {
+		return nil, utils.NewError(http.StatusServiceUnavailable, "ANILIST_DISABLED", "Anilist integration is not enabled.", nil)
+	}
+	return s.client.GetPopularMedia(ctx, mediaType, page, perPage)
+}
+
+func (s *AnilistService) GetSeasonal(ctx context.Context, season string, seasonYear int, page, perPage int) (*AnilistSearchResult, error) {
+	if !s.cfg.Enabled {
+		return nil, utils.NewError(http.StatusServiceUnavailable, "ANILIST_DISABLED", "Anilist integration is not enabled.", nil)
+	}
+	return s.client.GetSeasonalMedia(ctx, season, seasonYear, page, perPage)
+}
+
+func (s *AnilistService) GetAiringSchedule(ctx context.Context, page, perPage int, notYetAired bool) ([]AnilistAiringSchedule, *AnilistPageInfo, error) {
+	if !s.cfg.Enabled {
+		return nil, nil, utils.NewError(http.StatusServiceUnavailable, "ANILIST_DISABLED", "Anilist integration is not enabled.", nil)
+	}
+	return s.client.GetAiringSchedule(ctx, page, perPage, notYetAired)
+}
+
+func (s *AnilistService) GetCharacterDetail(ctx context.Context, characterID int) (*AnilistCharacter, error) {
+	if !s.cfg.Enabled {
+		return nil, utils.NewError(http.StatusServiceUnavailable, "ANILIST_DISABLED", "Anilist integration is not enabled.", nil)
+	}
+	return s.client.GetCharacterByID(ctx, characterID)
+}
+
+func (s *AnilistService) GetStaffDetail(ctx context.Context, staffID int) (*AnilistStaff, error) {
+	if !s.cfg.Enabled {
+		return nil, utils.NewError(http.StatusServiceUnavailable, "ANILIST_DISABLED", "Anilist integration is not enabled.", nil)
+	}
+	return s.client.GetStaffByID(ctx, staffID)
+}
+
 func (s *AnilistService) ImportMedia(ctx context.Context, anilistID int, userID string) (*models.Anime, error) {
 	if !s.cfg.Enabled {
 		return nil, utils.NewError(http.StatusServiceUnavailable, "ANILIST_DISABLED", "Anilist integration is not enabled.", nil)

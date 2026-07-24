@@ -128,6 +128,7 @@ export const ANIME: Anime[] = [
   {
     id: 'eternal-frost',
     slug: 'eternal-frost',
+    type: 'series',
     title: 'Eternal Frost',
     japaneseTitle: '永遠の霜',
     synopsis:
@@ -150,6 +151,7 @@ export const ANIME: Anime[] = [
   {
     id: 'crimson-blade',
     slug: 'crimson-blade',
+    type: 'series',
     title: 'Crimson Blade',
     japaneseTitle: '紅の刃',
     synopsis:
@@ -169,6 +171,7 @@ export const ANIME: Anime[] = [
   {
     id: 'neon-orbit',
     slug: 'neon-orbit',
+    type: 'series',
     title: 'Neon Orbit',
     japaneseTitle: 'ネオンオービット',
     synopsis:
@@ -188,6 +191,7 @@ export const ANIME: Anime[] = [
   {
     id: 'spirit-veil',
     slug: 'spirit-veil',
+    type: 'series',
     title: 'Spirit Veil',
     japaneseTitle: '霊の帳',
     synopsis:
@@ -207,6 +211,7 @@ export const ANIME: Anime[] = [
   {
     id: 'after-school-skies',
     slug: 'after-school-skies',
+    type: 'series',
     title: 'After School Skies',
     japaneseTitle: '放課後の空',
     synopsis:
@@ -226,6 +231,7 @@ export const ANIME: Anime[] = [
   {
     id: 'hollow-kingdom',
     slug: 'hollow-kingdom',
+    type: 'series',
     title: 'Hollow Kingdom',
     japaneseTitle: '虚ろな王国',
     synopsis:
@@ -245,6 +251,7 @@ export const ANIME: Anime[] = [
   {
     id: 'last-serve',
     slug: 'last-serve',
+    type: 'series',
     title: 'Last Serve',
     japaneseTitle: 'ラストサーブ',
     synopsis:
@@ -264,6 +271,7 @@ export const ANIME: Anime[] = [
   {
     id: 'letter-to-spring',
     slug: 'letter-to-spring',
+    type: 'movies',
     title: 'Letter to Spring',
     japaneseTitle: '春への手紙',
     synopsis:
@@ -283,6 +291,7 @@ export const ANIME: Anime[] = [
   {
     id: 'starfall-academy',
     slug: 'starfall-academy',
+    type: 'series',
     title: 'Starfall Academy',
     japaneseTitle: 'スターフォール学園',
     synopsis:
@@ -302,6 +311,7 @@ export const ANIME: Anime[] = [
   {
     id: 'blade-of-the-fallen',
     slug: 'blade-of-the-fallen',
+    type: 'series',
     title: 'Blade of the Fallen',
     japaneseTitle: '堕ちた者の刃',
     synopsis:
@@ -321,6 +331,7 @@ export const ANIME: Anime[] = [
   {
     id: 'moonlit-path',
     slug: 'moonlit-path',
+    type: 'movies',
     title: 'Moonlit Path',
     japaneseTitle: '月明かりの道',
     synopsis:
@@ -340,6 +351,7 @@ export const ANIME: Anime[] = [
   {
     id: 'oceans-whisper',
     slug: 'oceans-whisper',
+    type: 'movies',
     title: "Ocean's Whisper",
     japaneseTitle: '海の囁き',
     synopsis:
@@ -359,6 +371,7 @@ export const ANIME: Anime[] = [
   {
     id: 'thunder-league',
     slug: 'thunder-league',
+    type: 'series',
     title: 'Thunder League',
     japaneseTitle: 'サンダーリーグ',
     synopsis:
@@ -378,6 +391,7 @@ export const ANIME: Anime[] = [
   {
     id: 'crimson-vow',
     slug: 'crimson-vow',
+    type: 'movies',
     title: 'Crimson Vow',
     japaneseTitle: '紅の誓い',
     synopsis:
@@ -397,6 +411,7 @@ export const ANIME: Anime[] = [
   {
     id: 'neon-samurai',
     slug: 'neon-samurai',
+    type: 'series',
     title: 'Neon Samurai',
     japaneseTitle: 'ネオン侍',
     synopsis:
@@ -416,6 +431,7 @@ export const ANIME: Anime[] = [
   {
     id: 'ember-crown',
     slug: 'ember-crown',
+    type: 'series',
     title: 'Ember Crown',
     japaneseTitle: '炎の王冠',
     synopsis:
@@ -454,8 +470,20 @@ export function getAllAnime(): Anime[] {
   return ANIME
 }
 
+export function getSeries(): Anime[] {
+  return ANIME.filter((a) => a.type === 'series')
+}
+
+export function getMovies(): Anime[] {
+  return ANIME.filter((a) => a.type === 'movies')
+}
+
 export function getAnime(idOrSlug: string): Anime | undefined {
   return ANIME.find((a) => a.id === idOrSlug || a.slug === idOrSlug)
+}
+
+export function getContentPath(anime: Anime): string {
+  return anime.type === 'movies' ? '/movies' : '/series'
 }
 
 export function getEpisodes(animeId: string): Episode[] {

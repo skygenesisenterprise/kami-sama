@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { DashboardShell } from '@/components/admin/dashboard-shell'
 import { useAuth } from "@/context/AuthContext";
 import { isProfileSelected } from "@/lib/profile-selection";
+import { RouteTransition } from "@/components/route-transition";
 
 export default function PlatformLayout({
   children,
@@ -39,5 +40,9 @@ export default function PlatformLayout({
     return null;
   }
 
-  return <DashboardShell>{children}</DashboardShell>
+  return (
+    <RouteTransition>
+      <DashboardShell>{children}</DashboardShell>
+    </RouteTransition>
+  )
 }

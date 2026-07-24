@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { Clock, Play } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { getContentPath } from '@/lib/mock-data'
 import type { SimulcastItem } from '@/types/anime'
 
 export function SimulcastCard({
@@ -14,7 +15,7 @@ export function SimulcastCard({
 
   return (
     <Link
-      href={`/anime/${anime.slug}`}
+      href={`${getContentPath(anime)}/${anime.slug}`}
       className={cn(
         'group relative block w-37.5 shrink-0 overflow-hidden rounded-xl bg-card outline-none transition-transform duration-300 hover:-translate-y-1 focus-visible:ring-2 focus-visible:ring-ring sm:w-42.5 lg:w-46.25',
         className,

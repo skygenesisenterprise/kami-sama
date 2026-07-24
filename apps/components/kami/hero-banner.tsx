@@ -7,6 +7,7 @@ import { usePathname } from 'next/navigation'
 import { Play } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
+import { getContentPath } from '@/lib/mock-data'
 import type { Anime } from '@/types/anime'
 
 interface HeroBannerProps {
@@ -119,7 +120,7 @@ export function HeroBanner({ items }: HeroBannerProps) {
               variant="outline"
               className="h-11 rounded-sm border-white/40 bg-white/10 px-7 text-sm font-semibold text-white backdrop-blur-sm transition-colors duration-200 hover:bg-white/20 focus-visible:ring-2 focus-visible:ring-white"
             >
-              <Link href={`/${currentLocale}/anime/${anime.slug}`}>
+              <Link href={`/${currentLocale}${getContentPath(anime)}/${anime.slug}`}>
                 Plus d&apos;infos
               </Link>
             </Button>

@@ -15,3 +15,4 @@ export * from "@/lib/api/preferences";
 export * from "@/lib/api/contacts";
 export * from "@/lib/api/platform";
 export * from "@/lib/api/oauth";
+export * from "@/lib/api/profiles";

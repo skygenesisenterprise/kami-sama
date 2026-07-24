@@ -13,6 +13,7 @@ import {
   getAnime,
   getAllAnime,
   getContinueWatching,
+  getContentPath,
 } from '@/lib/mock-data'
 import { useAuth } from '@/context/AuthContext'
 import type { Anime } from '@/types/anime'
@@ -201,7 +202,7 @@ function DiscoverAnimeTile({ anime, currentLocale, badge, progressPercent, remai
       onMouseLeave={handleMouseLeave}
     >
       <Link
-        href={`/${currentLocale}/anime/${anime.slug}`}
+        href={`/${currentLocale}${getContentPath(anime)}/${anime.slug}`}
         className="block overflow-hidden rounded-md"
       >
         <div className="relative aspect-video overflow-hidden bg-[#1a1a1a]">
@@ -324,7 +325,7 @@ function DiscoverAnimeTile({ anime, currentLocale, badge, progressPercent, remai
                   <ThumbsUp className="size-3.5" />
                 </button>
                 <Link
-                  href={`/${currentLocale}/anime/${anime.slug}`}
+                  href={`/${currentLocale}${getContentPath(anime)}/${anime.slug}`}
                   className="ml-auto flex size-7 items-center justify-center rounded-full border-[1.5px] border-white/40 text-white/70 transition-all hover:border-white hover:text-white hover:scale-110"
                   aria-label={t('episodesAndInfo')}
                 >

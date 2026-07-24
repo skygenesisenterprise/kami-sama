@@ -105,16 +105,16 @@ type AnilistMedia struct {
 		English string `json:"english"`
 		Native  string `json:"native"`
 	} `json:"title"`
-	Type       string `json:"type"`
-	Format     string `json:"format"`
-	Status     string `json:"status"`
-	Source     string `json:"source"`
-	Season     string `json:"season"`
-	SeasonYear *int   `json:"seasonYear"`
-	Episodes   *int   `json:"episodes"`
-	Duration   *int   `json:"duration"`
+	Type        string `json:"type"`
+	Format      string `json:"format"`
+	Status      string `json:"status"`
+	Source      string `json:"source"`
+	Season      string `json:"season"`
+	SeasonYear  *int   `json:"seasonYear"`
+	Episodes    *int   `json:"episodes"`
+	Duration    *int   `json:"duration"`
 	Description string `json:"description"`
-	StartDate  struct {
+	StartDate   struct {
 		Year  *int `json:"year"`
 		Month *int `json:"month"`
 		Day   *int `json:"day"`
@@ -128,14 +128,14 @@ type AnilistMedia struct {
 		Large  string `json:"large"`
 		Medium string `json:"medium"`
 	} `json:"coverImage"`
-	BannerImage    string   `json:"bannerImage"`
-	Genres         []string `json:"genres"`
-	AverageScore   *int     `json:"averageScore"`
-	MeanScore      *int     `json:"meanScore"`
-	Popularity     *int     `json:"popularity"`
-	Trailer        *struct {
-		ID      *int   `json:"id"`
-		Site    string `json:"site"`
+	BannerImage  string   `json:"bannerImage"`
+	Genres       []string `json:"genres"`
+	AverageScore *int     `json:"averageScore"`
+	MeanScore    *int     `json:"meanScore"`
+	Popularity   *int     `json:"popularity"`
+	Trailer      *struct {
+		ID        *int   `json:"id"`
+		Site      string `json:"site"`
 		Thumbnail string `json:"thumbnail"`
 	} `json:"trailer"`
 	Studios struct {
@@ -151,11 +151,11 @@ type AnilistMedia struct {
 		Edges []struct {
 			Role string `json:"role"`
 			Node struct {
-				ID   int    `json:"id"`
-				Name struct {
+				ID     int    `json:"id"`
+				Name   struct {
 					Full string `json:"full"`
 				} `json:"name"`
-				Image struct {
+				Image  struct {
 					Medium string `json:"medium"`
 				} `json:"image"`
 				Gender *string `json:"gender"`
@@ -186,8 +186,80 @@ type AnilistPageInfo struct {
 }
 
 type AnilistSearchResult struct {
-	PageInfo AnilistPageInfo  `json:"pageInfo"`
-	Media    []AnilistMedia   `json:"media"`
+	PageInfo AnilistPageInfo `json:"pageInfo"`
+	Media    []AnilistMedia  `json:"media"`
+}
+
+type AnilistAiringSchedule struct {
+	ID          int           `json:"id"`
+	AiringAt    int64         `json:"airingAt"`
+	TimeUntilAiring int       `json:"timeUntilAiring"`
+	Episode     int           `json:"episode"`
+	MediaID     int           `json:"mediaId"`
+	Media       *AnilistMedia `json:"media,omitempty"`
+}
+
+type AnilistCharacter struct {
+	ID         int    `json:"id"`
+	Name       struct {
+		Full  string `json:"full"`
+		Native string `json:"native"`
+	} `json:"name"`
+	Image struct {
+		Large  string `json:"large"`
+		Medium string `json:"medium"`
+	} `json:"image"`
+	Description string `json:"description"`
+	Gender      string `json:"gender"`
+	DateOfBirth struct {
+		Month *int `json:"month"`
+		Day   *int `json:"day"`
+	} `json:"dateOfBirth"`
+	Age       *string `json:"age"`
+	BloodType *string `json:"bloodType"`
+	SiteURL   string  `json:"siteUrl"`
+	Media     struct {
+		Edges []struct {
+			ID      int    `json:"id"`
+			Role    string `json:"characterRole"`
+			Node    struct {
+				ID    int    `json:"id"`
+				Title struct {
+					Romaji  string `json:"romaji"`
+					English string `json:"english"`
+				} `json:"title"`
+				Type   string `json:"type"`
+				Format string `json:"format"`
+				Status string `json:"status"`
+			} `json:"node"`
+		} `json:"edges"`
+	} `json:"media"`
+}
+
+type AnilistStaff struct {
+	ID          int    `json:"id"`
+	Name        struct {
+		Full  string `json:"full"`
+		Native string `json:"native"`
+	} `json:"name"`
+	Language    string `json:"language"`
+	Image       struct {
+		Large  string `json:"large"`
+		Medium string `json:"medium"`
+	} `json:"image"`
+	Description string `json:"description"`
+	PrimaryOccupations []string `json:"primaryOccupations"`
+	YearsActive []string `json:"yearsActive"`
+	DateOfBirth struct {
+		Month *int `json:"month"`
+		Day   *int `json:"day"`
+	} `json:"dateOfBirth"`
+	DateOfDeath struct {
+		Month *int `json:"month"`
+		Day   *int `json:"day"`
+	} `json:"dateOfDeath"`
+	HomeTown  *string `json:"homeTown"`
+	SiteURL   string  `json:"siteUrl"`
 }
 
 const searchMediaQuery = `
@@ -314,4 +386,362 @@ func (c *AnilistClient) GetMediaByID(ctx context.Context, id int) (*AnilistMedia
 		return nil, fmt.Errorf("anilist: media %d not found", id)
 	}
 	return &raw.Media, nil
+}
+
+// ──────────────────────────────────────────────────────────────
+// Trending & Popular
+// ──────────────────────────────────────────────────────────────
+
+const trendingMediaQuery = `
+query ($page: Int, $perPage: Int, $type: MediaType) {
+  Page(page: $page, perPage: $perPage) {
+    pageInfo {
+      total
+      perPage
+      currentPage
+      lastPage
+      hasNextPage
+    }
+    media(sort: TRENDING_DESC, type: $type) {
+      id
+      title { romaji english native }
+      type
+      format
+      status
+      season
+      seasonYear
+      episodes
+      duration
+      description(asHtml: false)
+      coverImage { large medium }
+      bannerImage
+      genres
+      averageScore
+      meanScore
+      popularity
+      source
+      trailer { id site thumbnail }
+      studios(isMain: true) { edges { node { id name } } }
+      siteUrl
+    }
+  }
+}
+`
+
+func (c *AnilistClient) GetTrendingMedia(ctx context.Context, mediaType string, page, perPage int) (*AnilistSearchResult, error) {
+	if page < 1 {
+		page = 1
+	}
+	if perPage < 1 || perPage > 50 {
+		perPage = 20
+	}
+	vars := map[string]any{
+		"page":    page,
+		"perPage": perPage,
+		"type":    mediaType,
+	}
+	data, err := c.do(ctx, trendingMediaQuery, vars)
+	if err != nil {
+		return nil, err
+	}
+
+	var raw struct {
+		Page AnilistSearchResult `json:"Page"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, fmt.Errorf("anilist: unmarshal trending result: %w", err)
+	}
+	return &raw.Page, nil
+}
+
+const popularMediaQuery = `
+query ($page: Int, $perPage: Int, $type: MediaType) {
+  Page(page: $page, perPage: $perPage) {
+    pageInfo {
+      total
+      perPage
+      currentPage
+      lastPage
+      hasNextPage
+    }
+    media(sort: POPULARITY_DESC, type: $type) {
+      id
+      title { romaji english native }
+      type
+      format
+      status
+      season
+      seasonYear
+      episodes
+      duration
+      description(asHtml: false)
+      coverImage { large medium }
+      bannerImage
+      genres
+      averageScore
+      meanScore
+      popularity
+      source
+      trailer { id site thumbnail }
+      studios(isMain: true) { edges { node { id name } } }
+      siteUrl
+    }
+  }
+}
+`
+
+func (c *AnilistClient) GetPopularMedia(ctx context.Context, mediaType string, page, perPage int) (*AnilistSearchResult, error) {
+	if page < 1 {
+		page = 1
+	}
+	if perPage < 1 || perPage > 50 {
+		perPage = 20
+	}
+	vars := map[string]any{
+		"page":    page,
+		"perPage": perPage,
+		"type":    mediaType,
+	}
+	data, err := c.do(ctx, popularMediaQuery, vars)
+	if err != nil {
+		return nil, err
+	}
+
+	var raw struct {
+		Page AnilistSearchResult `json:"Page"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, fmt.Errorf("anilist: unmarshal popular result: %w", err)
+	}
+	return &raw.Page, nil
+}
+
+// ──────────────────────────────────────────────────────────────
+// Seasonal
+// ──────────────────────────────────────────────────────────────
+
+const seasonalMediaQuery = `
+query ($season: MediaSeason, $seasonYear: Int, $page: Int, $perPage: Int) {
+  Page(page: $page, perPage: $perPage) {
+    pageInfo {
+      total
+      perPage
+      currentPage
+      lastPage
+      hasNextPage
+    }
+    media(season: $season, seasonYear: $seasonYear, type: ANIME, sort: POPULARITY_DESC) {
+      id
+      title { romaji english native }
+      type
+      format
+      status
+      season
+      seasonYear
+      episodes
+      duration
+      description(asHtml: false)
+      coverImage { large medium }
+      bannerImage
+      genres
+      averageScore
+      meanScore
+      popularity
+      source
+      trailer { id site thumbnail }
+      studios(isMain: true) { edges { node { id name } } }
+      siteUrl
+    }
+  }
+}
+`
+
+func (c *AnilistClient) GetSeasonalMedia(ctx context.Context, season string, seasonYear int, page, perPage int) (*AnilistSearchResult, error) {
+	if page < 1 {
+		page = 1
+	}
+	if perPage < 1 || perPage > 50 {
+		perPage = 20
+	}
+	vars := map[string]any{
+		"season":     season,
+		"seasonYear": seasonYear,
+		"page":       page,
+		"perPage":    perPage,
+	}
+	data, err := c.do(ctx, seasonalMediaQuery, vars)
+	if err != nil {
+		return nil, err
+	}
+
+	var raw struct {
+		Page AnilistSearchResult `json:"Page"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, fmt.Errorf("anilist: unmarshal seasonal result: %w", err)
+	}
+	return &raw.Page, nil
+}
+
+// ──────────────────────────────────────────────────────────────
+// Airing Schedule
+// ──────────────────────────────────────────────────────────────
+
+const airingScheduleQuery = `
+query ($page: Int, $perPage: Int, $notYetAired: Boolean) {
+  Page(page: $page, perPage: $perPage) {
+    pageInfo {
+      total
+      perPage
+      currentPage
+      lastPage
+      hasNextPage
+    }
+    airingSchedules(notYetAired: $notYetAired, sort: TIME) {
+      id
+      airingAt
+      timeUntilAiring
+      episode
+      mediaId
+      media {
+        id
+        title { romaji english native }
+        type
+        format
+        status
+        season
+        seasonYear
+        episodes
+        coverImage { large medium }
+        bannerImage
+        genres
+        averageScore
+        meanScore
+        popularity
+        studios(isMain: true) { edges { node { id name } } }
+        siteUrl
+      }
+    }
+  }
+}
+`
+
+func (c *AnilistClient) GetAiringSchedule(ctx context.Context, page, perPage int, notYetAired bool) ([]AnilistAiringSchedule, *AnilistPageInfo, error) {
+	if page < 1 {
+		page = 1
+	}
+	if perPage < 1 || perPage > 50 {
+		perPage = 20
+	}
+	vars := map[string]any{
+		"page":        page,
+		"perPage":     perPage,
+		"notYetAired": notYetAired,
+	}
+	data, err := c.do(ctx, airingScheduleQuery, vars)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	var raw struct {
+		Page struct {
+			PageInfo      AnilistPageInfo      `json:"pageInfo"`
+			AiringSchedules []AnilistAiringSchedule `json:"airingSchedules"`
+		} `json:"Page"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, nil, fmt.Errorf("anilist: unmarshal airing schedule: %w", err)
+	}
+	return raw.Page.AiringSchedules, &raw.Page.PageInfo, nil
+}
+
+// ──────────────────────────────────────────────────────────────
+// Character Detail
+// ──────────────────────────────────────────────────────────────
+
+const characterDetailQuery = `
+query ($id: Int!) {
+  Character(id: $id) {
+    id
+    name { full native }
+    image { large medium }
+    description(asHtml: false)
+    gender
+    dateOfBirth { month day }
+    age
+    bloodType
+    siteUrl
+    media(page: 1, perPage: 10, sort: POPULARITY_DESC) {
+      edges {
+        id
+        characterRole
+        node {
+          id
+          title { romaji english }
+          type
+          format
+          status
+        }
+      }
+    }
+  }
+}
+`
+
+func (c *AnilistClient) GetCharacterByID(ctx context.Context, id int) (*AnilistCharacter, error) {
+	data, err := c.do(ctx, characterDetailQuery, map[string]any{"id": id})
+	if err != nil {
+		return nil, err
+	}
+
+	var raw struct {
+		Character AnilistCharacter `json:"Character"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, fmt.Errorf("anilist: unmarshal character: %w", err)
+	}
+	if raw.Character.ID == 0 {
+		return nil, fmt.Errorf("anilist: character %d not found", id)
+	}
+	return &raw.Character, nil
+}
+
+// ──────────────────────────────────────────────────────────────
+// Staff Detail
+// ──────────────────────────────────────────────────────────────
+
+const staffDetailQuery = `
+query ($id: Int!) {
+  Staff(id: $id) {
+    id
+    name { full native }
+    language
+    image { large medium }
+    description(asHtml: false)
+    primaryOccupations
+    yearsActive
+    dateOfBirth { month day }
+    dateOfDeath { month day }
+    homeTown
+    siteUrl
+  }
+}
+`
+
+func (c *AnilistClient) GetStaffByID(ctx context.Context, id int) (*AnilistStaff, error) {
+	data, err := c.do(ctx, staffDetailQuery, map[string]any{"id": id})
+	if err != nil {
+		return nil, err
+	}
+
+	var raw struct {
+		Staff AnilistStaff `json:"Staff"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, fmt.Errorf("anilist: unmarshal staff: %w", err)
+	}
+	if raw.Staff.ID == 0 {
+		return nil, fmt.Errorf("anilist: staff %d not found", id)
+	}
+	return &raw.Staff, nil
 }

@@ -38,6 +38,7 @@ import { CastDeviceSelector } from '@/components/kami/cast-device-selector'
 import { Logo } from '@/components/kami/logo'
 import { useAuth } from '@/context/AuthContext'
 import { cn } from '@/lib/utils'
+import { getSelectedProfile } from '@/lib/profile-selection'
 
 export function SiteHeader() {
   const t = useTranslations('Public.header')
@@ -49,6 +50,12 @@ export function SiteHeader() {
   const [discoverOpen, setDiscoverOpen] = useState(false)
   const [profileOpen, setProfileOpen] = useState(false)
   const discoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // Use selected profile info when available, fall back to user account info
+  const selectedProfile = getSelectedProfile()
+  const displayName = selectedProfile?.displayName || user?.displayName || 'User'
+  const avatarUrl = selectedProfile?.avatarUrl || user?.avatarUrl || ''
+  const username = user?.email?.split('@')[0] || ''
 
   const locale = pathname.split('/')[1] || 'fr'
   const homeHref = `/${locale}/discover`
@@ -144,9 +151,9 @@ export function SiteHeader() {
                 onClick={() => setMobileOpen(false)}
                 className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-muted-foreground hover:bg-accent hover:text-foreground"
               >
-                <UserAvatar user={{ id: user?.id ?? '', username: user?.email?.split('@')[0] ?? '', displayName: user?.displayName ?? '', avatar: user?.avatarUrl ?? '' }} className="size-7" />
+                <UserAvatar user={{ id: user?.id ?? '', username: displayName, displayName, avatar: avatarUrl }} className="size-7" />
                 <div className="flex flex-col">
-                  <span>{user?.displayName ?? 'User'}</span>
+                  <span>{displayName}</span>
                   <span className="text-xs text-muted-foreground">
                     {user?.email ?? ''}
                   </span>
@@ -335,18 +342,13 @@ export function SiteHeader() {
                   aria-label={t('profileMenu')}
                   className="ml-1 rounded-full outline-none transition-opacity hover:opacity-80 focus-visible:ring-2 focus-visible:ring-ring"
                 >
-                  <UserAvatar user={{ id: user?.id ?? '', username: user?.email?.split('@')[0] ?? '', displayName: user?.displayName ?? '', avatar: user?.avatarUrl ?? '' }} className="size-8" />
+                  <UserAvatar user={{ id: user?.id ?? '', username: displayName, displayName, avatar: avatarUrl }} className="size-8" />
                 </button>
               </DropdownMenuTrigger>
               <AnimatedDropdownContent open={profileOpen} align="end" className="w-64 border-white/10 bg-black p-0 text-ink shadow-xl">
                 <div className="flex items-center gap-3 border-b border-white/10 px-4 py-3">
-                  <UserAvatar user={{ id: user?.id ?? '', username: user?.email?.split('@')[0] ?? '', displayName: user?.displayName ?? '', avatar: user?.avatarUrl ?? '' }} className="size-10" />
-                  <div className="flex flex-col">
-                    <span className="text-sm font-semibold">{user?.displayName ?? 'User'}</span>
-                    <span className="text-xs text-white/50">
-                      {user?.email ?? ''}
-                    </span>
-                  </div>
+                  <UserAvatar user={{ id: user?.id ?? '', username: displayName, displayName, avatar: avatarUrl }} className="size-10" />
+                  <span className="text-sm font-semibold">{displayName}</span>
                 </div>
                 <div className="py-1.5">
                   <DropdownMenuItem asChild className="gap-3 px-4 py-2.5 focus:bg-white/10">

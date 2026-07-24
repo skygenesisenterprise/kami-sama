@@ -2,6 +2,7 @@ import Link from 'next/link'
 import { Play, Sparkles } from 'lucide-react'
 import { RatingBadge } from './rating-badge'
 import { cn } from '@/lib/utils'
+import { getContentPath } from '@/lib/mock-data'
 import type { SeasonalPick } from '@/types/anime'
 
 export function SeasonalPickCard({
@@ -15,7 +16,7 @@ export function SeasonalPickCard({
 
   return (
     <Link
-      href={`/anime/${anime.slug}`}
+      href={`${getContentPath(anime)}/${anime.slug}`}
       className={cn(
         'group relative block w-37.5 shrink-0 overflow-hidden rounded-xl border border-border/60 bg-card outline-none transition-transform duration-300 hover:-translate-y-1 focus-visible:ring-2 focus-visible:ring-ring sm:w-42.5 lg:w-46.25',
         className,

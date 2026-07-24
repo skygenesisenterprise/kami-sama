@@ -18,7 +18,7 @@ import {
 import { useTranslations } from 'next-intl'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { getLibrarySection } from '@/lib/mock-data'
+import { getLibrarySection, getContentPath } from '@/lib/mock-data'
 import { useAuth } from '@/context/AuthContext'
 import type { Anime } from '@/types/anime'
 import { cn } from '@/lib/utils'
@@ -131,7 +131,7 @@ function WatchlistAnimeCard({
       onMouseLeave={() => setShowActions(false)}
     >
       <Link
-        href={`/${locale}/anime/${anime.slug}`}
+        href={`/${locale}${getContentPath(anime)}/${anime.slug}`}
         className="block overflow-hidden rounded-xl border border-border/40 bg-card transition-all duration-300 hover:-translate-y-1 hover:border-border/80 hover:shadow-xl focus-visible:ring-2 focus-visible:ring-ring"
       >
         {/* Cover Image */}

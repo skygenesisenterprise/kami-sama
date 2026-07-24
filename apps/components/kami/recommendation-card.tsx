@@ -1,12 +1,13 @@
 import Link from 'next/link'
 import { Sparkles } from 'lucide-react'
 import { RatingBadge } from './rating-badge'
+import { getContentPath } from '@/lib/mock-data'
 import type { Recommendation } from '@/types/anime'
 
 export function RecommendationCard({ rec }: { rec: Recommendation }) {
   return (
     <Link
-      href={`/anime/${rec.anime.slug}`}
+      href={`${getContentPath(rec.anime)}/${rec.anime.slug}`}
       className="group flex h-full flex-col overflow-hidden rounded-xl border border-border/60 bg-card outline-none transition-transform hover:-translate-y-1 focus-visible:ring-2 focus-visible:ring-ring"
     >
       <div className="relative aspect-video overflow-hidden">

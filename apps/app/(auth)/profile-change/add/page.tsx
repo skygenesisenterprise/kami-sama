@@ -11,6 +11,7 @@ import { Label } from '@/components/ui/label'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { toast } from '@/components/ui/use-toast'
 import { useRouter } from 'next/navigation'
+import { profileApi } from '@/lib/api/profiles'
 
 
 const createProfileSchema = z.object({
@@ -47,8 +48,9 @@ export default function AddProfilePage() {
     try {
       const formData = form.getValues()
 
-      // TODO: Implement actual profile creation API
-      await new Promise((resolve) => setTimeout(resolve, 1000))
+      await profileApi.create({
+        displayName: formData.displayName,
+      })
 
       toast({
         title: 'Profil créé',
@@ -56,7 +58,7 @@ export default function AddProfilePage() {
         variant: 'default',
       })
 
-      // Redirect to profile selection page
+      // Redirect to profile selection page — profiles will be re-fetched from API
       router.push('/profile-change')
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Une erreur est survenue'

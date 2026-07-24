@@ -124,6 +124,9 @@ func (r *Repositories) CalendarEvents() interfaces.CalendarEventRepository {
 func (r *Repositories) Premieres() interfaces.PremiereRepository {
 	return &premiereRepository{db: r.db}
 }
+func (r *Repositories) Profiles() interfaces.ProfileRepository {
+	return &profileRepository{db: r.db}
+}
 func (r *Repositories) WithDB(db *gorm.DB) *Repositories { return &Repositories{db: db} }
 
 type userRepository struct{ db *gorm.DB }
@@ -1726,6 +1729,50 @@ func (r *premiereRepository) Update(ctx context.Context, premiere *models.Premie
 
 func (r *premiereRepository) Delete(ctx context.Context, id string) error {
 	return r.db.WithContext(ctx).Delete(&models.Premiere{}, "id = ?", id).Error
+}
+
+type profileRepository struct{ db *gorm.DB }
+
+func (r *profileRepository) Create(ctx context.Context, profile *models.Profile) error {
+	return r.db.WithContext(ctx).Create(profile).Error
+}
+
+func (r *profileRepository) GetByID(ctx context.Context, id string) (*models.Profile, error) {
+	var item models.Profile
+	err := r.db.WithContext(ctx).First(&item, "id = ?", id).Error
+	return &item, normalizeNotFound(err, utils.NewError(404, "PROFILE_NOT_FOUND", "The requested profile was not found.", nil))
+}
+
+func (r *profileRepository) GetByUserID(ctx context.Context, userID string) ([]models.Profile, error) {
+	var items []models.Profile
+	err := r.db.WithContext(ctx).Where("user_id = ? AND deleted_at IS NULL", userID).Order("sort_order ASC, created_at ASC").Find(&items).Error
+	return items, err
+}
+
+func (r *profileRepository) GetDefaultByUserID(ctx context.Context, userID string) (*models.Profile, error) {
+	var item models.Profile
+	err := r.db.WithContext(ctx).Where("user_id = ? AND is_default = ? AND deleted_at IS NULL", userID, true).First(&item).Error
+	return &item, normalizeNotFound(err, utils.NewError(404, "DEFAULT_PROFILE_NOT_FOUND", "The default profile was not found.", nil))
+}
+
+func (r *profileRepository) Update(ctx context.Context, profile *models.Profile) error {
+	return r.db.WithContext(ctx).Save(profile).Error
+}
+
+func (r *profileRepository) Delete(ctx context.Context, id string) error {
+	return r.db.WithContext(ctx).Delete(&models.Profile{}, "id = ?", id).Error
+}
+
+func (r *profileRepository) SetDefault(ctx context.Context, userID, profileID string) error {
+	return r.db.WithContext(ctx).Model(&models.Profile{}).Where("id = ? AND user_id = ?", profileID, userID).Update("is_default", true).Error
+}
+
+func (r *profileRepository) ClearOtherDefaults(ctx context.Context, userID, excludeProfileID string) error {
+	return r.db.WithContext(ctx).Model(&models.Profile{}).Where("user_id = ? AND id <> ? AND is_default = ?", userID, excludeProfileID, true).Update("is_default", false).Error
+}
+
+func (r *profileRepository) SetLastUsed(ctx context.Context, id string, lastUsedAt time.Time) error {
+	return r.db.WithContext(ctx).Model(&models.Profile{}).Where("id = ?", id).Update("last_used_at", lastUsedAt).Error
 }
 
 func normalizeNotFound(err error, notFound error) error {

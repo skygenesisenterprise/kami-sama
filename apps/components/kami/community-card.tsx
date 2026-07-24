@@ -2,6 +2,7 @@ import Image from 'next/image'
 import Link from 'next/link'
 import { ChevronUp, Star } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { getContentPath } from '@/lib/mock-data'
 import type { CommunityPick } from '@/types/anime'
 
 export function CommunityCard({
@@ -21,7 +22,7 @@ export function CommunityCard({
       )}
     >
       <Link
-        href={`/anime/${pick.anime.slug}`}
+        href={`${getContentPath(pick.anime)}/${pick.anime.slug}`}
         className="relative aspect-[2/3] w-20 shrink-0 overflow-hidden rounded-lg"
       >
         <Image
@@ -38,7 +39,7 @@ export function CommunityCard({
           {typeof rank === 'number' && (
             <span className="text-xs font-medium text-muted-foreground">#{rank} Most Requested</span>
           )}
-          <Link href={`/anime/${pick.anime.slug}`}>
+          <Link href={`${getContentPath(pick.anime)}/${pick.anime.slug}`}>
             <h3 className="line-clamp-1 font-semibold leading-tight hover:text-primary">
               {pick.anime.title}
             </h3>

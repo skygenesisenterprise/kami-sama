@@ -3,11 +3,26 @@ package routes
 import (
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/skygenesisenterprise/kami-sama/server/src/middleware"
 	"github.com/skygenesisenterprise/kami-sama/server/src/utils"
 )
+
+func currentSeasonStr() string {
+	m := time.Now().Month()
+	switch {
+	case m >= 1 && m <= 3:
+		return "WINTER"
+	case m >= 4 && m <= 6:
+		return "SPRING"
+	case m >= 7 && m <= 9:
+		return "SUMMER"
+	default:
+		return "FALL"
+	}
+}
 
 type AnilistHandler struct {
 	deps Dependencies
@@ -54,6 +69,115 @@ func (h *AnilistHandler) GetMedia(c *gin.Context) {
 		return
 	}
 	utils.Success(c, http.StatusOK, media)
+}
+
+func (h *AnilistHandler) Trending(c *gin.Context) {
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	perPage, _ := strconv.Atoi(c.DefaultQuery("perPage", "20"))
+	mediaType := c.DefaultQuery("type", "ANIME")
+
+	result, err := h.deps.AnilistService.GetTrending(c.Request.Context(), mediaType, page, perPage)
+	if err != nil {
+		utils.Error(c, err)
+		return
+	}
+	utils.Success(c, http.StatusOK, gin.H{
+		"items":    result.Media,
+		"total":    result.PageInfo.Total,
+		"page":     result.PageInfo.CurrentPage,
+		"hasNext":  result.PageInfo.HasNextPage,
+	})
+}
+
+func (h *AnilistHandler) Popular(c *gin.Context) {
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	perPage, _ := strconv.Atoi(c.DefaultQuery("perPage", "20"))
+	mediaType := c.DefaultQuery("type", "ANIME")
+
+	result, err := h.deps.AnilistService.GetPopular(c.Request.Context(), mediaType, page, perPage)
+	if err != nil {
+		utils.Error(c, err)
+		return
+	}
+	utils.Success(c, http.StatusOK, gin.H{
+		"items":    result.Media,
+		"total":    result.PageInfo.Total,
+		"page":     result.PageInfo.CurrentPage,
+		"hasNext":  result.PageInfo.HasNextPage,
+	})
+}
+
+func (h *AnilistHandler) Seasonal(c *gin.Context) {
+	season := c.DefaultQuery("season", currentSeasonStr())
+	yearStr := c.DefaultQuery("year", "")
+	year, _ := strconv.Atoi(yearStr)
+	if year == 0 {
+		year = time.Now().Year()
+	}
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	perPage, _ := strconv.Atoi(c.DefaultQuery("perPage", "20"))
+
+	result, err := h.deps.AnilistService.GetSeasonal(c.Request.Context(), season, year, page, perPage)
+	if err != nil {
+		utils.Error(c, err)
+		return
+	}
+	utils.Success(c, http.StatusOK, gin.H{
+		"items":    result.Media,
+		"total":    result.PageInfo.Total,
+		"page":     result.PageInfo.CurrentPage,
+		"hasNext":  result.PageInfo.HasNextPage,
+	})
+}
+
+func (h *AnilistHandler) AiringSchedule(c *gin.Context) {
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	perPage, _ := strconv.Atoi(c.DefaultQuery("perPage", "20"))
+	notYetAired := c.DefaultQuery("notYetAired", "true") == "true"
+
+	schedules, pageInfo, err := h.deps.AnilistService.GetAiringSchedule(c.Request.Context(), page, perPage, notYetAired)
+	if err != nil {
+		utils.Error(c, err)
+		return
+	}
+	utils.Success(c, http.StatusOK, gin.H{
+		"items":    schedules,
+		"total":    pageInfo.Total,
+		"page":     pageInfo.CurrentPage,
+		"hasNext":  pageInfo.HasNextPage,
+	})
+}
+
+func (h *AnilistHandler) GetCharacter(c *gin.Context) {
+	idStr := c.Param("characterId")
+	charID, err := strconv.Atoi(idStr)
+	if err != nil || charID <= 0 {
+		utils.Error(c, utils.ErrValidationFailed)
+		return
+	}
+
+	character, err := h.deps.AnilistService.GetCharacterDetail(c.Request.Context(), charID)
+	if err != nil {
+		utils.Error(c, err)
+		return
+	}
+	utils.Success(c, http.StatusOK, character)
+}
+
+func (h *AnilistHandler) GetStaff(c *gin.Context) {
+	idStr := c.Param("staffId")
+	staffID, err := strconv.Atoi(idStr)
+	if err != nil || staffID <= 0 {
+		utils.Error(c, utils.ErrValidationFailed)
+		return
+	}
+
+	staff, err := h.deps.AnilistService.GetStaffDetail(c.Request.Context(), staffID)
+	if err != nil {
+		utils.Error(c, err)
+		return
+	}
+	utils.Success(c, http.StatusOK, staff)
 }
 
 func (h *AnilistHandler) ImportMedia(c *gin.Context) {
