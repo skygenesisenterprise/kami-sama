@@ -1,204 +1,231 @@
-import type { LucideIcon } from 'lucide-react'
 import {
-  LayoutDashboard,
+  Activity,
+  AudioLines,
+  BadgeCheck,
+  BarChart3,
+  Blocks,
+  Bot,
+  Boxes,
+  Building2,
+  Captions,
+  Clock,
+  Cloud,
+  Code2,
+  Cog,
+  CreditCard,
+  DollarSign,
+  Eye,
+  FileClock,
+  FileEdit,
+  FileImage,
   FileText,
   Film,
-  Users,
-  Calendar,
-  ChartColumn,
-  LifeBuoy,
-  Settings,
-  Server,
-  Clapperboard,
-  Tags,
-  BookOpen,
-  Tv,
-  Popcorn,
-  Mic,
-  Palette,
-  Building2,
-  Languages,
-  BookMarked,
-  Video,
-  Play,
-  Music,
-  Captions,
-  Image,
-  Upload,
-  HardDrive,
-  Scissors,
-  Globe,
-  MessageSquare,
-  Shield,
-  UserCheck,
-  Star,
-  Eye,
   Flag,
-  Bookmark,
-  Lock,
-  Bell,
-  CalendarCheck,
-  Radio,
-  Sparkles,
-  CalendarClock,
-  BarChart3,
-  MonitorSmartphone,
-  Map,
-  TrendingUp,
-  Clock,
-  AlertTriangle,
-  Phone,
-  HelpCircle,
-  FileWarning,
-  Ticket,
-  Database,
-  Cog,
+  Flame,
+  FolderOpen,
   Gauge,
-  FileSearch,
+  Globe,
+  HardDrive,
+  Heart,
+  History,
+  Home,
+  Image,
+  Import,
+  Key,
   Layers,
+  LayoutTemplate,
+  Library,
+  ListChecks,
+  ListVideo,
+  Lock,
   Mail,
+  MessageSquare,
+  MonitorPlay,
+  Palette,
+  Play,
+  PlayCircle,
   Puzzle,
-  SearchCode,
-  ServerCrash,
-  Wifi,
-  HardDriveIcon,
-  Paintbrush,
-  Link,
-  Wrench,
+  RefreshCw,
+  ScrollText,
+  Server,
+  Shield,
+  ShieldAlert,
+  Smartphone,
+  Sparkles,
+  Star,
+  Tags,
+  Timer,
+  Tv,
+  Users,
+  Video,
+  Webhook,
+  Workflow,
+  type LucideIcon,
 } from 'lucide-react'
 
 export type NavItem = {
-  id: string
-  label: string
-  icon: LucideIcon
+  title: string
   href: string
+  icon?: LucideIcon
   badge?: string
-  children?: NavChildItem[]
-}
-
-export type NavChildItem = {
-  id: string
-  label: string
-  icon: LucideIcon
-  href: string
 }
 
 export type NavGroup = {
-  label: string
+  title: string
+  icon: LucideIcon
+  href?: string
   items: NavItem[]
 }
 
+export const navHome: NavItem = { title: 'Home', href: '/dash', icon: Home }
+
 export const navGroups: NavGroup[] = [
   {
-    label: 'Principal',
+    title: 'Catalog',
+    icon: Library,
     items: [
-      { id: 'overview', label: 'Overview', icon: LayoutDashboard, href: '/dash' },
+      { title: 'Series', href: '/dash/catalog/series', icon: Sparkles },
+      { title: 'Movies', href: '/dash/catalog/movies', icon: Film },
+      { title: 'TV Shows', href: '/dash/catalog/tv-shows', icon: Tv },
+      { title: 'Episodes', href: '/dash/catalog/episodes', icon: PlayCircle },
+      { title: 'Seasons', href: '/dash/catalog/seasons', icon: Layers },
+      { title: 'Collections', href: '/dash/catalog/collections', icon: FolderOpen },
+      { title: 'People', href: '/dash/catalog/people', icon: Users },
+      { title: 'Genres', href: '/dash/catalog/genres', icon: Blocks },
+      { title: 'Tags', href: '/dash/catalog/tags', icon: Tags },
     ],
   },
   {
-    label: 'Contenu',
+    title: 'Publishing',
+    icon: FileEdit,
     items: [
-      {
-        id: 'content', label: 'Content', icon: Film, href: '/dash/content',
-        children: [
-          { id: 'content-anime', label: 'Anime', icon: Clapperboard, href: '/dash/content/anime' },
-          { id: 'content-library', label: 'Library', icon: BookOpen, href: '/dash/content/library' },
-          { id: 'content-categories', label: 'Categories', icon: Palette, href: '/dash/content/categories' },
-          { id: 'content-genres', label: 'Genres', icon: Popcorn, href: '/dash/content/genres' },
-          { id: 'content-tags', label: 'Tags', icon: Tags, href: '/dash/content/tags' },
-          { id: 'content-providers', label: 'Providers', icon: Building2, href: '/dash/content/providers' },
-        ],
-      },
+      { title: 'Drafts', href: '/dash/publish/drafts', icon: FileText, badge: '24' },
+      { title: 'Reviews', href: '/dash/publish/reviews', icon: Eye, badge: '7' },
+      { title: 'Scheduled', href: '/dash/publish/scheduled', icon: Clock },
+      { title: 'Published', href: '/dash/publish/published', icon: BadgeCheck },
+      { title: 'Archived', href: '/dash/publish/archived', icon: Boxes },
     ],
   },
   {
-    label: 'Engagement',
+    title: 'Discovery',
+    icon: LayoutTemplate,
     items: [
-      {
-        id: 'community', label: 'Community', icon: Users, href: '/dash/community',
-        children: [
-          { id: 'community-users', label: 'Users', icon: Users, href: '/dash/community/users' },
-          { id: 'community-profiles', label: 'Profiles', icon: UserCheck, href: '/dash/community/profiles' },
-          { id: 'community-roles', label: 'Roles', icon: Shield, href: '/dash/community/roles' },
-          { id: 'community-comments', label: 'Comments', icon: MessageSquare, href: '/dash/community/comments' },
-          { id: 'community-reviews', label: 'Reviews', icon: Star, href: '/dash/community/reviews' },
-          { id: 'community-reports', label: 'Reports', icon: Flag, href: '/dash/community/reports' },
-          { id: 'community-moderations', label: 'Moderations', icon: Eye, href: '/dash/community/moderations' },
-          { id: 'community-watchlists', label: 'Watchlists', icon: Bookmark, href: '/dash/community/watchlists' },
-          { id: 'community-permissions', label: 'Permissions', icon: Lock, href: '/dash/community/permissions' },
-        ],
-      },
-      {
-        id: 'scheduling', label: 'Scheduling', icon: Calendar, href: '/dash/scheduling',
-        children: [
-          { id: 'scheduling-calendar', label: 'Calendar', icon: CalendarCheck, href: '/dash/scheduling/calendar' },
-          { id: 'scheduling-releases', label: 'Releases', icon: Sparkles, href: '/dash/scheduling/releases' },
-          { id: 'scheduling-premieres', label: 'Premieres', icon: CalendarClock, href: '/dash/scheduling/premieres' },
-          { id: 'scheduling-simulcasts', label: 'Simulcasts', icon: Radio, href: '/dash/scheduling/simulcasts' },
-          { id: 'scheduling-notifications', label: 'Notifications', icon: Bell, href: '/dash/scheduling/notifications' },
-        ],
-      },
+      { title: 'Trending', href: '/dash/discovery/trending', icon: Flame },
+      { title: 'Recommendations', href: '/dash/discovery/recommendations', icon: Heart },
+      { title: 'Seasonal', href: '/dash/discovery/seasonal', icon: Star },
+      { title: 'Collections', href: '/dash/discovery/collections', icon: FolderOpen },
     ],
   },
   {
-    label: 'Insights',
+    title: 'Assets',
+    icon: Image,
     items: [
-      {
-        id: 'analytics', label: 'Analytics', icon: ChartColumn, href: '/dash/analytics',
-        children: [
-          { id: 'analytics-overview', label: 'Overview', icon: BarChart3, href: '/dash/analytics/overview' },
-          { id: 'analytics-watch-time', label: 'Watch Time', icon: Clock, href: '/dash/analytics/watch-time' },
-          { id: 'analytics-devices', label: 'Devices', icon: MonitorSmartphone, href: '/dash/analytics/devices' },
-          { id: 'analytics-geography', label: 'Geography', icon: Map, href: '/dash/analytics/geography' },
-          { id: 'analytics-popular', label: 'Popular', icon: TrendingUp, href: '/dash/analytics/popular' },
-          { id: 'analytics-actives', label: 'Active Users', icon: Users, href: '/dash/analytics/actives' },
-        ],
-      },
-      {
-        id: 'support', label: 'Support', icon: LifeBuoy, href: '/dash/support',
-        children: [
-          { id: 'support-tickets', label: 'Tickets', icon: Ticket, href: '/dash/support/tickets' },
-          { id: 'support-contact', label: 'Contact', icon: Phone, href: '/dash/support/contact' },
-          { id: 'support-faq', label: 'FAQ', icon: HelpCircle, href: '/dash/support/faq' },
-          { id: 'support-abuse', label: 'Abuse Reports', icon: AlertTriangle, href: '/dash/support/abuse' },
-          { id: 'support-logs', label: 'Logs', icon: FileWarning, href: '/dash/support/logs' },
-        ],
-      },
+      { title: 'Posters', href: '/dash/assets/posters', icon: FileImage },
+      { title: 'Backgrounds', href: '/dash/assets/backgrounds', icon: Image },
+      { title: 'Thumbnails', href: '/dash/assets/thumbnails', icon: ListVideo },
+      { title: 'Trailers', href: '/dash/assets/trailers', icon: Video },
+      { title: 'Audio', href: '/dash/assets/audio', icon: AudioLines },
+      { title: 'Subtitles', href: '/dash/assets/subtitles', icon: Captions },
     ],
   },
   {
-    label: 'Administration',
+    title: 'Sources',
+    icon: Import,
     items: [
-      {
-        id: 'system', label: 'System', icon: Server, href: '/dash/system',
-        children: [
-          { id: 'system-health', label: 'Health', icon: Gauge, href: '/dash/system/health' },
-          { id: 'system-logs', label: 'Logs', icon: FileSearch, href: '/dash/system/logs' },
-          { id: 'system-queue', label: 'Queue', icon: Layers, href: '/dash/system/queue' },
-          { id: 'system-cache', label: 'Cache', icon: HardDriveIcon, href: '/dash/system/cache' },
-          { id: 'system-search', label: 'Search', icon: SearchCode, href: '/dash/system/search' },
-          { id: 'system-background', label: 'Background Jobs', icon: ServerCrash, href: '/dash/system/backroung' },
-        ],
-      },
-      {
-        id: 'settings', label: 'Settings', icon: Settings, href: '/dash/settings',
-        children: [
-          { id: 'settings-general', label: 'General', icon: Cog, href: '/dash/settings' },
-          { id: 'settings-security', label: 'Security', icon: Shield, href: '/dash/settings/security' },
-          { id: 'settings-branding', label: 'Branding', icon: Paintbrush, href: '/dash/settings/branding' },
-          { id: 'settings-email', label: 'Email', icon: Mail, href: '/dash/settings/email' },
-          { id: 'settings-seo', label: 'SEO', icon: SearchCode, href: '/dash/settings/seo' },
-          { id: 'settings-storage', label: 'Storage', icon: Database, href: '/dash/settings/storage' },
-          { id: 'settings-cdn', label: 'CDN', icon: Globe, href: '/dash/settings/cdn' },
-          { id: 'settings-domains', label: 'Domains', icon: Link, href: '/dash/settings/domains' },
-          { id: 'settings-apis', label: 'APIs', icon: Puzzle, href: '/dash/settings/apis' },
-          { id: 'settings-oauth', label: 'OAuth', icon: Lock, href: '/dash/settings/oauth' },
-          { id: 'settings-integrations', label: 'Integrations', icon: Wifi, href: '/dash/settings/integrations' },
-          { id: 'settings-maintenance', label: 'Maintenance', icon: Wrench, href: '/dash/settings/maintenance' },
-        ],
-      },
+      { title: 'TMDB', href: '/dash/sources/tmdb', icon: Globe },
+      { title: 'AniList', href: '/dash/sources/anilist', icon: Globe },
+      { title: 'MyAnimeList', href: '/dash/sources/myanimelist', icon: Globe },
+      { title: 'TVDB', href: '/dash/sources/tvdb', icon: Globe },
+      { title: 'FanArt', href: '/dash/sources/fanart', icon: Image },
+      { title: 'Plex', href: '/dash/sources/plex', icon: MonitorPlay },
+      { title: 'Jellyfin', href: '/dash/sources/jellyfin', icon: MonitorPlay },
+      { title: 'Import History', href: '/dash/sources/import-history', icon: History },
+      { title: 'Synchronization', href: '/dash/sources/synchronization', icon: RefreshCw },
+    ],
+  },
+  {
+    title: 'Automation',
+    icon: Workflow,
+    items: [
+      { title: 'Workflows', href: '/dash/automation/workflows', icon: Workflow },
+      { title: 'Scheduled Jobs', href: '/dash/automation/scheduled', icon: Timer },
+      { title: 'Workers', href: '/dash/automation/workers', icon: Bot },
+      { title: 'Queues', href: '/dash/automation/queues', icon: ListChecks },
+      { title: 'Webhooks', href: '/dash/automation/webhooks', icon: Webhook },
+    ],
+  },
+  {
+    title: 'Operations',
+    icon: Server,
+    items: [
+      { title: 'Infrastructure', href: '/dash/operations/infra', icon: Server },
+      { title: 'Storage', href: '/dash/operations/storage', icon: HardDrive },
+      { title: 'Streaming Nodes', href: '/dash/operations/streaming-nodes', icon: Cloud },
+      { title: 'Encoding', href: '/dash/operations/encoding', icon: Cog },
+      { title: 'Logs', href: '/dash/operations/logs', icon: ScrollText },
+      { title: 'Monitoring', href: '/dash/operations/monitoring', icon: Gauge },
+      { title: 'Health Checks', href: '/dash/operations/health-checks', icon: Activity },
+    ],
+  },
+  {
+    title: 'Community',
+    icon: Users,
+    items: [
+      { title: 'Users', href: '/dash/community/users', icon: Users },
+      { title: 'Roles', href: '/dash/community/role', icon: Shield },
+      { title: 'Permissions', href: '/dash/community/permissions', icon: Lock },
+      { title: 'Reviews', href: '/dash/community/reviews', icon: Star },
+      { title: 'Reports', href: '/dash/community/reports', icon: ShieldAlert, badge: '12' },
+      { title: 'Comments', href: '/dash/community/comments', icon: MessageSquare },
+      { title: 'Sessions', href: '/dash/community/sessions', icon: Smartphone },
+    ],
+  },
+  {
+    title: 'Analytics',
+    icon: BarChart3,
+    items: [
+      { title: 'Views', href: '/dash/analytics/view', icon: Eye },
+      { title: 'Watch Time', href: '/dash/analytics/watch-time', icon: Clock },
+      { title: 'Devices', href: '/dash/analytics/devices', icon: Smartphone },
+      { title: 'Countries', href: '/dash/analytics/countries', icon: Globe },
+      { title: 'Popularity', href: '/dash/analytics/popularity', icon: Flame },
+    ],
+  },
+  {
+    title: 'Developer',
+    icon: Code2,
+    items: [
+      { title: 'API Keys', href: '/dash/developer/api-keys', icon: Key },
+      { title: 'OAuth', href: '/dash/developer/oauth', icon: Lock },
+      { title: 'Webhooks', href: '/dash/developer/webhooks', icon: Webhook },
+      { title: 'SDK', href: '/dash/developer/sdk', icon: Puzzle },
+      { title: 'Audit Logs', href: '/dash/developer/audit-logs', icon: FileClock },
+    ],
+  },
+  {
+    title: 'Platform',
+    icon: Cog,
+    items: [
+      { title: 'Overview', href: '/dash/settings/overview', icon: Cog },
+      { title: 'Feature Flags', href: '/dash/settings/feature-flag', icon: Flag },
+      { title: 'Email', href: '/dash/settings/email', icon: Mail },
+      { title: 'Security', href: '/dash/settings/security', icon: Shield },
     ],
   },
 ]
 
-export const navItemsFlat: NavItem[] = navGroups.flatMap((group) => group.items)
+/** Flat list of every route for command palette + breadcrumbs. */
+export const allRoutes: Array<NavItem & { group: string }> = [
+  { ...navHome, group: 'General' },
+  ...navGroups.flatMap((group) =>
+    group.items.map((item) => ({ ...item, group: group.title })),
+  ),
+]
+
+export function findRoute(pathname: string) {
+  return allRoutes.find((r) => r.href === pathname)
+}
+
+export function findGroup(pathname: string) {
+  return navGroups.find((g) => g.items.some((i) => pathname.startsWith(i.href)))
+}

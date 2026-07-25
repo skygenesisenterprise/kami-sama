@@ -238,7 +238,7 @@ export function SiteHeader() {
                     {/* Orange gradient top line */}
                     <div className="h-0.5 bg-linear-to-r from-transparent via-primary to-transparent" />
 
-                    <div className="flex min-w-175">
+                    <div className="flex min-w-225">
                       {/* Col 1: featured anime */}
                       <div className="w-64 shrink-0 border-r border-white/5 p-4">
                         <div className="mb-3 overflow-hidden rounded-md">
@@ -297,24 +297,36 @@ export function SiteHeader() {
                           >
                             {t('navRandom')}
                           </Link>
+                          <Link
+                            href={`/${locale}/live`}
+                            onClick={() => setDiscoverOpen(false)}
+                            className="mega-menu-link rounded-md px-2.5 py-1.5 text-[13px] text-white/70"
+                          >
+                            {t('navLiveTV')}
+                          </Link>
                         </div>
                       </div>
 
                       {/* Col 3: genres */}
                       <div className="flex-1 p-4">
                         <SectionHeader>{t('megaByGenre')}</SectionHeader>
-                        <div className="mt-2.5 grid grid-cols-2 gap-x-4 gap-y-0.5">
+                        <div className="mt-2.5 grid grid-cols-3 gap-x-4 gap-y-0.5">
                           {[
                             { label: t('genreAction'), slug: 'action' },
+                            { label: t('genreAdventure'), slug: 'adventure' },
+                            { label: t('genreComedy'), slug: 'comedy' },
+                            { label: t('genreDrama'), slug: 'drama' },
                             { label: t('genreFantasy'), slug: 'fantasy' },
+                            { label: t('genreMusic'), slug: 'music' },
                             { label: t('genreRomance'), slug: 'romance' },
                             { label: t('genreSciFi'), slug: 'sci-fi' },
-                            { label: t('genreThriller'), slug: 'thriller' },
+                            { label: t('genreSeinen'), slug: 'seinen' },
+                            { label: t('genreShoujo'), slug: 'shoujo' },
+                            { label: t('genreShonen'), slug: 'shonen' },
                             { label: t('genreSliceOfLife'), slug: 'slice-of-life' },
-                            { label: t('genreAdventure'), slug: 'adventure' },
-                            { label: t('genreSupernatural'), slug: 'supernatural' },
-                            { label: t('genreDrama'), slug: 'drama' },
                             { label: t('genreSports'), slug: 'sports' },
+                            { label: t('genreSupernatural'), slug: 'supernatural' },
+                            { label: t('genreThriller'), slug: 'thriller' },
                           ].map((genre) => (
                             <Link
                               key={genre.slug}
