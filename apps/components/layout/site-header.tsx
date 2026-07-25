@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { useTranslations } from 'next-intl'
+import { useLocale, useTranslations } from 'next-intl'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Bell,
@@ -20,14 +20,13 @@ import {
   UserRoundCog,
   Sparkles,
   TrendingUp,
+  LayoutDashboard,
   Tag,
   Users,
-  X,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from '@/components/ui/sheet'
 import { UserAvatar } from '@/components/kami/user-avatar'
-import { SearchBar } from '@/components/kami/search-bar'
 import { CastDeviceSelector } from '@/components/kami/cast-device-selector'
 import { Logo } from '@/components/kami/logo'
 import { useAuth } from '@/context/AuthContext'
@@ -40,7 +39,6 @@ export function SiteHeader() {
   const pathname = usePathname()
   const { isAuthenticated, user } = useAuth()
   const [scrolled, setScrolled] = useState(false)
-  const [searchOpen, setSearchOpen] = useState(false)
   const [mobileOpen, setMobileOpen] = useState(false)
   const [discoverOpen, setDiscoverOpen] = useState(false)
   const [profileOpen, setProfileOpen] = useState(false)
@@ -52,16 +50,16 @@ export function SiteHeader() {
   const displayName = selectedProfile?.displayName || user?.displayName || 'User'
   const avatarUrl = selectedProfile?.avatarUrl || user?.avatarUrl || ''
 
-  const locale = pathname.split('/')[1] || 'fr'
+  const locale = useLocale()
   const homeHref = `/${locale}/discover`
 
   // Mobile menu — mirrors the desktop items
   const NAV_LINKS = [
+    { href: `/${locale}/simulcast`, label: t('navSimulcast'), icon: Calendar },
+    { href: `/${locale}/rankings`, label: t('navRankings'), icon: TrendingUp },
     { href: `/${locale}/calendar`, label: t('navCalendar'), icon: Calendar },
     { href: `/${locale}/collections`, label: t('navCollections'), icon: Film },
     { href: `/${locale}/random`, label: t('navRandom'), icon: Sparkles },
-    { href: `/${locale}/simulcast`, label: t('navSimulcast'), icon: Calendar },
-    { href: `/${locale}/rankings`, label: t('navRankings'), icon: TrendingUp },
     { href: `/${locale}/community`, label: t('navCommunity'), icon: Users },
     { href: `/${locale}/videos/new`, label: t('navNew'), icon: Sparkles },
   ]
@@ -108,7 +106,7 @@ export function SiteHeader() {
             <SheetTitle className="sr-only">{t('navigation')}</SheetTitle>
             {/* Mobile header */}
             <div className="flex h-14 items-center border-b border-border/40 px-4">
-              <Logo href={homeHref} />
+              <Logo />
             </div>
             <nav className="flex flex-col gap-0.5 p-3">
               {NAV_LINKS.map((link) => {
@@ -162,7 +160,7 @@ export function SiteHeader() {
                   onClick={() => setMobileOpen(false)}
                   className="mt-3 flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-muted-foreground hover:bg-accent hover:text-foreground"
                 >
-                  <TrendingUp className="size-4" />
+                  <LayoutDashboard className="size-4" />
                   Dashboard
                 </Link>
               )}
@@ -172,17 +170,30 @@ export function SiteHeader() {
 
         {/* Logo */}
         <div className="flex shrink-0 items-center">
-          <Logo href={homeHref} className="hidden sm:flex" />
-          <Logo href={homeHref} className="sm:hidden [&>span:last-child]:hidden" />
+          <Logo className="hidden sm:flex" />
+          <Logo className="sm:hidden [&>span:last-child]:hidden" />
         </div>
 
         {/* Desktop nav — Netflix-style with mega-menu */}
         <nav className="ml-6 hidden items-center gap-0.5 md:flex">
           <DesktopNavLink
             href={homeHref}
-            active={pathname.endsWith('/discover')}
+            active={isActive(homeHref)}
           >
             {t('navHome')}
+          </DesktopNavLink>
+
+          <DesktopNavLink
+            href={`/${locale}/simulcast`}
+            active={isActive(`/${locale}/simulcast`)}
+          >
+            {t('navSimulcast')}
+          </DesktopNavLink>
+          <DesktopNavLink
+            href={`/${locale}/rankings`}
+            active={isActive(`/${locale}/rankings`)}
+          >
+            {t('navRankings')}
           </DesktopNavLink>
 
           {/* Découvrir mega-menu */}
@@ -266,13 +277,6 @@ export function SiteHeader() {
                             {t('megaFilms')}
                           </Link>
                           <Link
-                            href={`/${locale}/catalog?sort=new`}
-                            onClick={() => setDiscoverOpen(false)}
-                            className="mega-menu-link rounded-md px-2.5 py-1.5 text-[13px] text-white/70"
-                          >
-                            {t('navNew')}
-                          </Link>
-                          <Link
                             href={`/${locale}/calendar`}
                             onClick={() => setDiscoverOpen(false)}
                             className="mega-menu-link rounded-md px-2.5 py-1.5 text-[13px] text-white/70"
@@ -292,13 +296,6 @@ export function SiteHeader() {
                             className="mega-menu-link rounded-md px-2.5 py-1.5 text-[13px] text-white/70"
                           >
                             {t('navRandom')}
-                          </Link>
-                          <Link
-                            href={`/${locale}/catalog?sort=top10`}
-                            onClick={() => setDiscoverOpen(false)}
-                            className="mega-menu-link rounded-md px-2.5 py-1.5 text-[13px] text-white/70"
-                          >
-                            {t('navRankings')}
                           </Link>
                         </div>
                       </div>
@@ -337,27 +334,18 @@ export function SiteHeader() {
             </AnimatePresence>
           </div>
 
-          <DesktopNavLink
-            href={`/${locale}/simulcast`}
-            active={pathname.startsWith('/simulcast')}
-          >
-            {t('navSimulcast')}
-          </DesktopNavLink>
-          <DesktopNavLink
-            href={`/${locale}/rankings`}
-            active={pathname.startsWith('/rankings')}
-          >
-            {t('navRankings')}
-          </DesktopNavLink>
+          {/* Separator */}
+          <span className="mx-1 h-4 w-px bg-white/20" />
+
           <DesktopNavLink
             href={`/${locale}/community`}
-            active={pathname.startsWith('/community')}
+            active={isActive(`/${locale}/community`)}
           >
             {t('navCommunity')}
           </DesktopNavLink>
           <DesktopNavLink
             href={`/${locale}/videos/new`}
-            active={pathname.startsWith('/videos/new')}
+            active={isActive(`/${locale}/videos/new`)}
           >
             {t('navNew')}
           </DesktopNavLink>
@@ -365,46 +353,16 @@ export function SiteHeader() {
 
         {/* Right side actions */}
         <div className="ml-auto flex shrink-0 items-center gap-1">
-          {/* Search — desktop inline, mobile toggle */}
-          <div className="hidden lg:block">
-            {searchOpen ? (
-              <div className="flex items-center gap-2">
-                <SearchBar
-                  autoFocus
-                  className="w-64 [&_input]:h-9"
-                  placeholder={t('searchPlaceholder')}
-                />
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="size-9 shrink-0"
-                  onClick={() => setSearchOpen(false)}
-                >
-                  <X className="size-4" />
-                </Button>
-              </div>
-            ) : (
-              <Button
-                variant="ghost"
-                size="icon"
-                className="size-9"
-                onClick={() => setSearchOpen(true)}
-                aria-label={t('search')}
-              >
-                <Search className="size-5" />
-              </Button>
-            )}
-          </div>
-
-          {/* Mobile search toggle */}
+          {/* Search — link to search page */}
           <Button
             variant="ghost"
             size="icon"
-            className="size-9 lg:hidden"
-            aria-label={t('search')}
-            onClick={() => setSearchOpen((v) => !v)}
+            className="size-9"
+            asChild
           >
-            <Search className="size-5" />
+            <Link href={`/${locale}/search`} aria-label={t('search')}>
+              <Search className="size-5" />
+            </Link>
           </Button>
 
           {/* Notifications */}
@@ -464,7 +422,7 @@ export function SiteHeader() {
 
                       <div className="flex items-center gap-3 border-b border-white/10 px-4 py-3">
                         <UserAvatar user={{ id: user?.id ?? '', username: displayName, displayName, avatar: avatarUrl }} className="size-10" />
-                        <span className="text-sm font-semibold">{displayName}</span>
+                        <span className="min-w-0 flex-1 truncate text-sm font-semibold">{displayName}</span>
                       </div>
 
                       <div className="py-1.5">
@@ -490,7 +448,7 @@ export function SiteHeader() {
                             onClick={() => setProfileOpen(false)}
                             className="mega-menu-link flex items-center gap-3 px-4 py-2.5 text-sm text-white/70"
                           >
-                            <TrendingUp className="size-4" />
+                            <LayoutDashboard className="size-4" />
                             Dashboard
                           </Link>
                         )}
@@ -542,12 +500,6 @@ export function SiteHeader() {
         </div>
       </div>
 
-      {/* Mobile expandable search */}
-      {searchOpen && (
-        <div className="border-t border-border/40 bg-background/95 px-4 py-3 backdrop-blur-xl lg:hidden md:px-5">
-          <SearchBar autoFocus placeholder={t('searchAnimePlaceholder')} />
-        </div>
-      )}
     </header>
   )
 }
@@ -605,21 +557,6 @@ function NotificationsMenu() {
   const [open, setOpen] = useState(false)
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  const items = [
-    {
-      title: t('notifNewEpisodeTitle'),
-      meta: t('notifNewEpisodeMeta'),
-    },
-    {
-      title: t('notifReplyTitle'),
-      meta: t('notifReplyMeta'),
-    },
-    {
-      title: t('notifReleaseTitle'),
-      meta: t('notifReleaseMeta'),
-    },
-  ]
-
   return (
     <div
       className="relative"
@@ -654,16 +591,8 @@ function NotificationsMenu() {
               <div className="h-0.5 bg-linear-to-r from-transparent via-primary to-transparent" />
               <div className="px-4 py-3 font-semibold">{t('notifications')}</div>
               <div className="mx-3 h-px bg-white/10" />
-              <div className="py-1.5">
-                {items.map((item) => (
-                  <div
-                    key={item.title}
-                    className="mega-menu-link flex flex-col items-start gap-0.5 px-4 py-2.5"
-                  >
-                    <span className="text-sm font-medium">{item.title}</span>
-                    <span className="text-xs text-white/50">{item.meta}</span>
-                  </div>
-                ))}
+              <div className="py-6 text-center">
+                <p className="text-sm text-white/40">{t('notifEmpty')}</p>
               </div>
             </div>
           </motion.div>

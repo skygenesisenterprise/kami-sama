@@ -166,9 +166,10 @@
       "search": "Rechercher",
       "notifications": "Notifications",
       "notificationsLabel": "Notifications",
+      "notifEmpty": "Aucune notification pour vous aujourd'hui",
       "profileMenu": "Menu profil",
       "profile": "Profil",
-      "settings": "Profile",
+      "settings": "Paramètres",
       "signOut": "Se déconnecter",
       "login": "Se connecter",
       "navigation": "Navigation",
@@ -458,6 +459,110 @@
       "quickAddTitle": "Envie de découvrir plus d'animes ?",
       "quickAddDescription": "Parcourez notre catalogue pour trouver votre prochain coup de cœur.",
       "discoverMore": "Découvrir"
+    },
+    "search": {
+      "placeholder": "Rechercher…",
+      "recentTitle": "Résultats de recherche récente",
+      "clearRecent": "Effacer les recherches récentes",
+      "noResults": "Aucun résultat trouvé",
+      "noResultsHint": "Essayez avec d'autres mots-clés"
+    },
+    "rankings": {
+      "title": "Classements du jour",
+      "tabAll": "Tout",
+      "tabSeries": "Séries",
+      "tabMovies": "Films"
+    },
+    "profileManage": {
+      "title": "Modifier le profil",
+      "editBanner": "Modifier la bannière",
+      "editAvatar": "Modifier l'avatar",
+      "profileNameLabel": "Nom du profil",
+      "profileNameHint": "Ceci se voit dans votre foyer, et peut être modifié à tout moment.",
+      "usernameLabel": "Nom d'utilisateur (Facultatif)",
+      "usernameHint": "Créez un nom d'utilisateur pour être prêt pour les futures expériences qui partageront votre amour de l'anime ! Choisissez-en un que vous adorez, il ne peut pas être changé !",
+      "save": "Enregistrer",
+      "cancel": "Annuler"
+    },
+    "profile": {
+      "changeAvatar": "Changer l'avatar",
+      "premium": "Premium",
+      "joined": "Inscrit en {date}",
+      "watched": "{count} regardés",
+      "reviews": "{count} avis",
+      "follows": "{count} abonnés",
+      "tabProfile": "Profil",
+      "tabAccount": "Compte",
+      "tabNotifications": "Notifications",
+      "personalInfo": {
+        "title": "Informations personnelles",
+        "description": "Mettez à jour les détails de votre profil public.",
+        "displayName": "Nom d'affichage",
+        "username": "Nom d'utilisateur",
+        "email": "E-mail",
+        "bio": "Bio",
+        "save": "Enregistrer les modifications"
+      },
+      "preferences": {
+        "title": "Préférences",
+        "description": "Personnalisez votre expérience de visionnage.",
+        "theme": "Thème",
+        "themeDescription": "Choisissez votre schéma de couleurs préféré",
+        "themeDark": "Sombre",
+        "themeLight": "Clair",
+        "themeSystem": "Système",
+        "language": "Langue",
+        "languageDescription": "Définissez votre langue préférée",
+        "matureContent": "Contenu mature",
+        "matureContentDescription": "Afficher les contenus classés R et au-dessus"
+      },
+      "security": {
+        "title": "Sécurité",
+        "description": "Gérez votre mot de passe et vos paramètres de sécurité.",
+        "currentPassword": "Mot de passe actuel",
+        "currentPasswordPlaceholder": "Entrez le mot de passe actuel",
+        "newPassword": "Nouveau mot de passe",
+        "newPasswordPlaceholder": "Entrez le nouveau mot de passe",
+        "confirmPassword": "Confirmer le mot de passe",
+        "confirmPasswordPlaceholder": "Confirmez le nouveau mot de passe",
+        "updatePassword": "Mettre à jour le mot de passe"
+      },
+      "sessions": {
+        "title": "Sessions actives",
+        "description": "Gérez vos sessions de connexion actives.",
+        "active": "Actif",
+        "revoke": "Révoquer"
+      },
+      "dangerZone": {
+        "title": "Zone de danger",
+        "description": "Actions de compte irréversibles.",
+        "signOutAll": "Se déconnecter de tous les appareils",
+        "signOutAllDescription": "Cela vous déconnectera de toutes les autres sessions actives.",
+        "signOutAllButton": "Tout déconnecter",
+        "deleteAccount": "Supprimer le compte",
+        "deleteAccountDescription": "Supprimez définitivement votre compte et toutes les données associées.",
+        "deleteAccountButton": "Supprimer"
+      },
+      "emailNotifications": {
+        "title": "Notifications par e-mail",
+        "description": "Choisissez les e-mails que vous recevez.",
+        "newEpisodes": "Nouveaux épisodes",
+        "newEpisodesDescription": "Soyez averti lorsque les séries de votre bibliothèque sortent de nouveaux épisodes",
+        "weeklyDigest": "Résumé hebdomadaire",
+        "weeklyDigestDescription": "Un résumé hebdomadaire des animes tendances et recommandations",
+        "securityAlerts": "Alertes de sécurité",
+        "securityAlertsDescription": "Mises à jour importantes de sécurité concernant votre compte",
+        "promotions": "Promotions",
+        "promotionsDescription": "Offres spéciales et fonctionnalités premium"
+      },
+      "pushNotifications": {
+        "title": "Notifications push",
+        "description": "Contrôlez les notifications dans l'application.",
+        "episodeReleases": "Sorties d'épisodes",
+        "episodeReleasesDescription": "Push navigateur lorsque de nouveaux épisodes sont disponibles",
+        "communityActivity": "Activité communautaire",
+        "communityActivityDescription": "Réponses, mentions et abonnements"
+      }
     }
   }
 }
