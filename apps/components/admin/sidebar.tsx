@@ -2,7 +2,7 @@
 
 import { cn } from "@/lib/utils";
 import { AnimatePresence, motion } from "framer-motion";
-import { ChevronRight, LogOut, Play, X } from "lucide-react";
+import { ChevronRight, Play, X } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
@@ -205,24 +205,6 @@ export function Sidebar({ mobileOpen, onCloseMobileAction }: SidebarProps) {
             />
           ))}
         </nav>
-
-        <div className="border-t border-sidebar-border p-3">
-          <div className="flex items-center gap-3 rounded-md px-2 py-2">
-            <span className="flex size-9 items-center justify-center rounded-full bg-accent text-sm font-semibold text-accent-foreground">
-              YK
-            </span>
-            <div className="min-w-0 flex-1 leading-tight">
-              <p className="truncate text-sm font-medium">Yuki Kobayashi</p>
-              <p className="truncate text-xs text-muted-foreground">Administrateur</p>
-            </div>
-            <button
-              className="rounded-md p-1.5 text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-              aria-label="Se déconnecter"
-            >
-              <LogOut className="size-4.5" />
-            </button>
-          </div>
-        </div>
       </aside>
     </>
   );

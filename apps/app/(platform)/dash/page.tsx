@@ -22,7 +22,7 @@ import {
 } from '@/components/dash/home/side-rail'
 
 export const metadata: Metadata = {
-  title: 'Operations Center',
+  title: 'Kami-Sama: Operations Center',
 }
 
 export default function DashHomePage() {
