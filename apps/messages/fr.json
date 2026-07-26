@@ -565,5 +565,122 @@
         "communityActivityDescription": "Réponses, mentions et abonnements"
       }
     }
+  },
+  "community": {
+    "siteTitle": "Kami-Sama",
+    "nav": {
+      "community": "Communauté",
+      "discussions": "Discussions",
+      "reviews": "Avis",
+      "recommendations": "Recommandations"
+    },
+    "homepage": {
+      "title": "Bienvenue sur la Communauté Kami-Sama",
+      "description": "Rejoignez les discussions, partagez vos avis et découvrez de nouvelles recommandations avec la communauté."
+    },
+    "stats": {
+      "members": "Membres",
+      "posts": "Publications",
+      "reviews": "Avis",
+      "onlineNow": "En ligne",
+      "totalComments": "Total commentaires",
+      "newToday": "Nouveaux aujourd'hui",
+      "topContributor": "Meilleur contributeur"
+    },
+    "sections": {
+      "announcements": "Annonces",
+      "popularDiscussions": "Discussions populaires",
+      "recentReviews": "Avis récents",
+      "topRecommendations": "Meilleures recommandations",
+      "categories": "Catégories",
+      "topContributors": "Meilleurs contributeurs",
+      "communityStats": "Statistiques"
+    },
+    "actions": {
+      "viewAll": "Voir tout"
+    },
+    "categories": {
+      "posts": "publications"
+    },
+    "comments": "commentaires",
+    "reactions": "réactions",
+    "helpful": "utile",
+    "discussions": {
+      "title": "Discussions",
+      "description": "Participez aux conversations de la communauté.",
+      "searchPlaceholder": "Rechercher une discussion…",
+      "sortBy": "Trier par",
+      "sort": {
+        "recent": "Récent",
+        "popular": "Populaire",
+        "unanswered": "Sans réponse"
+      },
+      "categories": "Catégories",
+      "allCategories": "Toutes les catégories",
+      "noResults": "Aucune discussion trouvée.",
+      "resultCount": "discussion(s)"
+    },
+    "detail": {
+      "notFound": "Discussion introuvable",
+      "backToDiscussions": "Retour aux discussions",
+      "reply": "Répondre",
+      "replyPlaceholder": "Écrivez votre réponse…",
+      "postReply": "Publier",
+      "views": "vues",
+      "comments": "commentaires",
+      "leaveComment": "Laisser un commentaire",
+      "commentPlaceholder": "Partagez votre avis…",
+      "containsSpoilers": "Contient des spoilers",
+      "postComment": "Publier le commentaire",
+      "author": "Auteur",
+      "reputation": "réputation",
+      "relatedCategories": "Catégories",
+      "communityGuidelines": "Règles de la communauté"
+    },
+    "guidelines": {
+      "respectful": "Soyez respectueux envers les autres membres",
+      "noSpoilers": "Marquez les spoilers avec un avertissement",
+      "stayOnTopic": "Restez dans le sujet de la discussion",
+      "noSpam": "Pas de spam ni de publicité"
+    },
+    "reviews": {
+      "title": "Avis",
+      "description": "Lisez et partagez vos avis sur les œuvres.",
+      "searchPlaceholder": "Rechercher un avis…",
+      "minRating": "Note minimale",
+      "all": "Tout",
+      "spoilerFilter": "Filtre spoilers",
+      "filter": {
+        "all": "Tous les avis",
+        "no-spoilers": "Sans spoilers",
+        "with-spoilers": "Avec spoilers"
+      },
+      "noResults": "Aucun avis trouvé.",
+      "resultCount": "avis",
+      "showLess": "Voir moins",
+      "readMore": "Lire la suite",
+      "stats": {
+        "total": "Total avis",
+        "avgRating": "Note moyenne",
+        "helpfulVotes": "Votes utiles",
+        "comments": "Commentaires"
+      }
+    },
+    "recommendations": {
+      "title": "Recommandations",
+      "description": "Découvrez de nouvelles œuvres grâce aux recommandations de la communauté.",
+      "searchPlaceholder": "Rechercher une recommandation…",
+      "sortBy": "Trier par",
+      "sort": {
+        "top": "Les meilleures",
+        "recent": "Récentes",
+        "discussed": "Les plus discutées"
+      },
+      "ifYouLike": "Si vous aimez",
+      "try": "Alors essayez",
+      "noResults": "Aucune recommandation trouvée.",
+      "resultCount": "recommandation(s)",
+      "comments": "commentaires"
+    }
   }
 }

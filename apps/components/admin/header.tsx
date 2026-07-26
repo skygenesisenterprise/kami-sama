@@ -21,7 +21,7 @@ import { UserAvatar } from '@/components/kami/user-avatar'
 import { CastDeviceSelector } from '@/components/kami/cast-device-selector'
 import { useAuth } from '@/context/AuthContext'
 import { getSelectedProfile } from '@/lib/profile-selection'
-import { getLocaleFromPath, defaultLocale } from '@/lib/locale'
+import { getLocaleFromPath } from '@/lib/locale'
 import { cn } from '@/lib/utils'
 
 type HeaderProps = {
@@ -55,11 +55,6 @@ export function Header({ title, onOpenMobileAction }: HeaderProps) {
       >
         <Menu className="size-5" />
       </button>
-
-      <div className="hidden min-w-0 md:block">
-        <h1 className="truncate text-base font-semibold tracking-tight text-foreground">{title}</h1>
-        <p className="truncate text-xs text-muted-foreground">Bon retour, voici l&apos;activité de la plateforme</p>
-      </div>
 
       {/* Recherche */}
       <div className="relative ml-auto hidden w-full max-w-xs items-center sm:flex">
