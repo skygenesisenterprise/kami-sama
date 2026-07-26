@@ -18,6 +18,7 @@ import {
   Users,
 } from 'lucide-react'
 import { UserAvatar } from '@/components/kami/user-avatar'
+import { CastDeviceSelector } from '@/components/kami/cast-device-selector'
 import { useAuth } from '@/context/AuthContext'
 import { getSelectedProfile } from '@/lib/profile-selection'
 import { getLocaleFromPath, defaultLocale } from '@/lib/locale'
@@ -86,6 +87,9 @@ export function Header({ title, onOpenMobileAction }: HeaderProps) {
         </a>
 
         <NotificationsMenu />
+
+        {/* Cast */}
+        <CastDeviceSelector />
 
         {/* Profile */}
         <div
