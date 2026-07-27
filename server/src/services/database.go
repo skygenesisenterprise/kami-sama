@@ -113,6 +113,7 @@ func (s *DatabaseService) AutoMigrate() error {
 		&models.Role{},
 		&models.UserRole{},
 		&models.Profile{},
+		&models.MfaRecoveryCode{},
 	)
 }
 

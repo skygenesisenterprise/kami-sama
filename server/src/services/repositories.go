@@ -127,6 +127,9 @@ func (r *Repositories) Premieres() interfaces.PremiereRepository {
 func (r *Repositories) Profiles() interfaces.ProfileRepository {
 	return &profileRepository{db: r.db}
 }
+func (r *Repositories) MfaRecoveryCodes() interfaces.MfaRecoveryCodeRepository {
+	return &mfaRecoveryCodeRepository{db: r.db}
+}
 func (r *Repositories) WithDB(db *gorm.DB) *Repositories { return &Repositories{db: db} }
 
 type userRepository struct{ db *gorm.DB }

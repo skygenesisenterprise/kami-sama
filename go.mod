@@ -11,6 +11,7 @@ require (
 	github.com/gin-gonic/gin v1.12.0
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/uuid v1.6.0
+	github.com/pquerna/otp v1.5.0
 	github.com/redis/go-redis/v9 v9.21.0
 	golang.org/x/crypto v0.49.0
 	golang.org/x/oauth2 v0.36.0
@@ -24,6 +25,7 @@ require (
 	cloud.google.com/go/compute/metadata v0.3.0 // indirect
 	code.gitea.io/gitea-vet v0.2.3 // indirect
 	filippo.io/edwards25519 v1.1.0 // indirect
+	github.com/boombuler/barcode v1.0.1-0.20190219062509-6c824513bacc // indirect
 	github.com/bytedance/gopkg v0.1.3 // indirect
 	github.com/bytedance/sonic v1.15.0 // indirect
 	github.com/bytedance/sonic/loader v0.5.0 // indirect

@@ -64,8 +64,19 @@ func (h *apiHandler) login(c *gin.Context) {
 		utils.Error(c, err)
 		return
 	}
+	hasMfa := false
+	if h.deps.MfaService != nil {
+		hasMfa = h.deps.MfaService.HasMFA(c.Request.Context(), result.User.ID)
+	}
 	h.deps.AuthService.SetRefreshCookie(c, result.RefreshToken)
-	utils.Success(c, http.StatusOK, result)
+	utils.Success(c, http.StatusOK, gin.H{
+		"user":         result.User,
+		"accessToken":  result.AccessToken,
+		"expiresIn":    result.ExpiresIn,
+		"refreshToken": result.RefreshToken,
+		"sessionId":    result.SessionID,
+		"hasMfa":       hasMfa,
+	})
 }
 
 func (h *apiHandler) refresh(c *gin.Context) {
@@ -582,4 +593,116 @@ func (h *apiHandler) ensureUserIsOwner(c *gin.Context) {
 			"permissions": user.Permissions,
 		},
 	})
+}
+
+func (h *apiHandler) mfaSetup(c *gin.Context) {
+	if h.deps.MfaService == nil {
+		utils.Error(c, utils.ErrDependencyUnavailable)
+		return
+	}
+	principal, _ := h.principal(c)
+	result, err := h.deps.MfaService.Setup(c.Request.Context(), principal.UserID)
+	if err != nil {
+		utils.Error(c, err)
+		return
+	}
+	utils.Success(c, http.StatusOK, result)
+}
+
+func (h *apiHandler) mfaVerify(c *gin.Context) {
+	if h.deps.MfaService == nil {
+		utils.Error(c, utils.ErrDependencyUnavailable)
+		return
+	}
+	principal, _ := h.principal(c)
+	var req struct {
+		Code string `json:"code"`
+	}
+	if c.ShouldBindJSON(&req) != nil || strings.TrimSpace(req.Code) == "" {
+		utils.Error(c, utils.ErrValidationFailed)
+		return
+	}
+	result, err := h.deps.MfaService.VerifyAndEnable(c.Request.Context(), principal.UserID, strings.TrimSpace(req.Code))
+	if err != nil {
+		utils.Error(c, err)
+		return
+	}
+	utils.Success(c, http.StatusOK, result)
+}
+
+func (h *apiHandler) mfaDisable(c *gin.Context) {
+	if h.deps.MfaService == nil {
+		utils.Error(c, utils.ErrDependencyUnavailable)
+		return
+	}
+	principal, _ := h.principal(c)
+	var req struct {
+		Code string `json:"code"`
+	}
+	if c.ShouldBindJSON(&req) != nil || strings.TrimSpace(req.Code) == "" {
+		utils.Error(c, utils.ErrValidationFailed)
+		return
+	}
+	result, err := h.deps.MfaService.Disable(c.Request.Context(), principal.UserID, strings.TrimSpace(req.Code))
+	if err != nil {
+		utils.Error(c, err)
+		return
+	}
+	utils.Success(c, http.StatusOK, result)
+}
+
+func (h *apiHandler) mfaValidateLogin(c *gin.Context) {
+	if h.deps.MfaService == nil {
+		utils.Error(c, utils.ErrDependencyUnavailable)
+		return
+	}
+	principal, _ := h.principal(c)
+	var req struct {
+		Code string `json:"code"`
+	}
+	if c.ShouldBindJSON(&req) != nil || strings.TrimSpace(req.Code) == "" {
+		utils.Error(c, utils.ErrValidationFailed)
+		return
+	}
+	result, err := h.deps.MfaService.ValidateLogin(c.Request.Context(), principal.UserID, strings.TrimSpace(req.Code))
+	if err != nil {
+		utils.Error(c, err)
+		return
+	}
+	utils.Success(c, http.StatusOK, result)
+}
+
+func (h *apiHandler) mfaRecoveryCodes(c *gin.Context) {
+	if h.deps.MfaService == nil {
+		utils.Error(c, utils.ErrDependencyUnavailable)
+		return
+	}
+	principal, _ := h.principal(c)
+	result, err := h.deps.MfaService.ValidateRecoveryCode(c.Request.Context(), principal.UserID, c.Query("code"))
+	if err != nil {
+		utils.Error(c, err)
+		return
+	}
+	utils.Success(c, http.StatusOK, result)
+}
+
+func (h *apiHandler) mfaRegenerateRecoveryCodes(c *gin.Context) {
+	if h.deps.MfaService == nil {
+		utils.Error(c, utils.ErrDependencyUnavailable)
+		return
+	}
+	principal, _ := h.principal(c)
+	var req struct {
+		Code string `json:"code"`
+	}
+	if c.ShouldBindJSON(&req) != nil || strings.TrimSpace(req.Code) == "" {
+		utils.Error(c, utils.ErrValidationFailed)
+		return
+	}
+	result, err := h.deps.MfaService.RegenerateRecoveryCodes(c.Request.Context(), principal.UserID, strings.TrimSpace(req.Code))
+	if err != nil {
+		utils.Error(c, err)
+		return
+	}
+	utils.Success(c, http.StatusOK, result)
 }

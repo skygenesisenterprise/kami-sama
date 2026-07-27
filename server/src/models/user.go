@@ -20,6 +20,8 @@ type User struct {
 	EmailVerifiedAt   *time.Time     `gorm:"column:email_verified_at" json:"emailVerifiedAt,omitempty"`
 	PasswordChangedAt *time.Time     `gorm:"column:password_changed_at" json:"passwordChangedAt,omitempty"`
 	DisabledAt        *time.Time     `gorm:"column:disabled_at" json:"disabledAt,omitempty"`
+	MfaEnabled        bool           `gorm:"column:mfa_enabled;not null;default:false" json:"mfaEnabled"`
+	MfaSecret         *string        `gorm:"column:mfa_secret;type:text" json:"-"`
 	DeletedAt         gorm.DeletedAt `gorm:"column:deleted_at;index" json:"-"`
 }
 

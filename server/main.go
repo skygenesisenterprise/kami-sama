@@ -185,6 +185,7 @@ _episodeService := services.NewEpisodeService(repos)
 	settingsAdminService := services.NewSettingsAdminService(db.Gorm(), repos)
 	profileService := services.NewProfileService(db, repos)
 	anilistService := services.NewAnilistService(cfg.Anilist, repos, logger)
+	mfaService := services.NewMfaService(cfg.Auth, db, repos)
 
 	mode, err := parseRuntimeMode(os.Args[1:])
 	if err != nil {
@@ -242,6 +243,7 @@ _episodeService := services.NewEpisodeService(repos)
 		SettingsAdminService:     settingsAdminService,
 		AnilistService:           anilistService,
 		ProfileService:          profileService,
+		MfaService:              mfaService,
 		RuntimeRole:             string(mode),
 	})
 

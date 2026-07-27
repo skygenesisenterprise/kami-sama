@@ -88,11 +88,20 @@ type WorkspaceMemberRepository interface {
 
 type AuthAccountRepository interface {
 	Create(ctx context.Context, account *models.AuthAccount) error
-	GetByProvider(ctx context.Context, provider, providerAccountID string) (*models.AuthAccount, error)
+	GetByProvider(ctx context.Context, provider string, providerAccountID string) (*models.AuthAccount, error)
+	GetByUserIDAndProvider(ctx context.Context, userID string, provider string) (*models.AuthAccount, error)
 	ListByUserID(ctx context.Context, userID string) ([]models.AuthAccount, error)
-	GetByUserIDAndProvider(ctx context.Context, userID, provider string) (*models.AuthAccount, error)
 	Update(ctx context.Context, account *models.AuthAccount) error
 	Delete(ctx context.Context, id string) error
+}
+
+type MfaRecoveryCodeRepository interface {
+	Create(ctx context.Context, code *models.MfaRecoveryCode) error
+	CreateBatch(ctx context.Context, codes []*models.MfaRecoveryCode) error
+	GetByUserID(ctx context.Context, userID string) ([]models.MfaRecoveryCode, error)
+	GetByID(ctx context.Context, id string) (*models.MfaRecoveryCode, error)
+	MarkUsed(ctx context.Context, id string) error
+	DeleteByUserID(ctx context.Context, userID string) error
 }
 
 // Anime repository

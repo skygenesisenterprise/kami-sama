@@ -38,6 +38,14 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import {
   Empty,
   EmptyDescription,
   EmptyHeader,
@@ -87,13 +95,9 @@ import {
   ALL_SERIES_STATUSES,
   ALL_SERIES_TYPES,
   ALL_DATA_SOURCES,
-  AIRING_STATUS_LABEL,
   METADATA_STATUS_LABEL,
   getSeriesStats,
   type SeriesItem,
-  type SeriesType,
-  type DataSource,
-  type PublicationState,
   type MetadataStatus,
 } from '@/lib/series-catalog-data'
 
@@ -125,6 +129,7 @@ export default function SeriesCatalogPage() {
   const [view, setView] = React.useState<'table' | 'grid'>('table')
   const [selected, setSelected] = React.useState<Set<string>>(new Set())
   const [inspecting, setInspecting] = React.useState<SeriesItem | null>(null)
+  const [creating, setCreating] = React.useState(false)
   const [columns, setColumns] = React.useState<Record<string, boolean>>({
     status: true,
     type: true,
@@ -218,7 +223,7 @@ export default function SeriesCatalogPage() {
           <Eye data-icon="inline-start" />
           Preview site
         </Button>
-        <Button size="sm">
+        <Button size="sm" onClick={() => setCreating(true)}>
           <Plus data-icon="inline-start" />
           New series
         </Button>
@@ -682,6 +687,8 @@ export default function SeriesCatalogPage() {
         item={inspecting}
         onClose={() => setInspecting(null)}
       />
+
+      <NewSeriesDialog open={creating} onOpenChange={setCreating} />
     </main>
   )
 }
@@ -1094,5 +1101,300 @@ function SeriesDetailSheet({
         )}
       </SheetContent>
     </Sheet>
+  )
+}
+
+function NewSeriesDialog({
+  open,
+  onOpenChange,
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+}) {
+  const [title, setTitle] = React.useState('')
+  const [titleOriginal, setTitleOriginal] = React.useState('')
+  const [synopsis, setSynopsis] = React.useState('')
+  const [type, setType] = React.useState<string>('anime')
+  const [year, setYear] = React.useState(new Date().getFullYear())
+  const [ageRating, setAgeRating] = React.useState('')
+  const [status, setStatus] = React.useState<string>('Draft')
+  const [airingStatus, setAiringStatus] = React.useState<string>('upcoming')
+  const [provider, setProvider] = React.useState<string>('')
+  const [genres, setGenres] = React.useState<string[]>([])
+  const [genreInput, setGenreInput] = React.useState('')
+  const [studios, setStudios] = React.useState<string[]>([])
+  const [studioInput, setStudioInput] = React.useState('')
+  const [tags, setTags] = React.useState<string[]>([])
+  const [tagInput, setTagInput] = React.useState('')
+
+  const addGenre = () => {
+    const trimmed = genreInput.trim()
+    if (trimmed && !genres.includes(trimmed)) {
+      setGenres((prev) => [...prev, trimmed])
+      setGenreInput('')
+    }
+  }
+
+  const addStudio = () => {
+    const trimmed = studioInput.trim()
+    if (trimmed && !studios.includes(trimmed)) {
+      setStudios((prev) => [...prev, trimmed])
+      setStudioInput('')
+    }
+  }
+
+  const addTag = () => {
+    const trimmed = tagInput.trim()
+    if (trimmed && !tags.includes(trimmed)) {
+      setTags((prev) => [...prev, trimmed])
+      setTagInput('')
+    }
+  }
+
+  const reset = () => {
+    setTitle('')
+    setTitleOriginal('')
+    setSynopsis('')
+    setType('anime')
+    setYear(new Date().getFullYear())
+    setAgeRating('')
+    setStatus('Draft')
+    setAiringStatus('upcoming')
+    setProvider('')
+    setGenres([])
+    setGenreInput('')
+    setStudios([])
+    setStudioInput('')
+    setTags([])
+    setTagInput('')
+  }
+
+  const handleCreate = () => {
+    toast.success('Series created', {
+      description: `"${title}" has been added to the catalog.`,
+    })
+    reset()
+    onOpenChange(false)
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={(v) => { if (!v) reset(); onOpenChange(v) }}>
+      <DialogContent className="sm:max-w-lg max-h-[85vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>New series</DialogTitle>
+          <DialogDescription>
+            Add a new series to your catalog. Fill in the details below.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="flex flex-col gap-4">
+          <div className="grid grid-cols-2 gap-4">
+            <Field>
+              <FieldLabel>Title *</FieldLabel>
+              <Input
+                placeholder="e.g. Attack on Titan"
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+              />
+            </Field>
+            <Field>
+              <FieldLabel>Original title</FieldLabel>
+              <Input
+                placeholder="e.g. 進撃の巨人"
+                value={titleOriginal}
+                onChange={(e) => setTitleOriginal(e.target.value)}
+              />
+            </Field>
+          </div>
+
+          <Field>
+            <FieldLabel>Synopsis</FieldLabel>
+            <Textarea
+              rows={3}
+              placeholder="Brief description of the series..."
+              value={synopsis}
+              onChange={(e) => setSynopsis(e.target.value)}
+            />
+          </Field>
+
+          <div className="grid grid-cols-3 gap-4">
+            <Field>
+              <FieldLabel>Type</FieldLabel>
+              <Select value={type} onValueChange={setType}>
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="anime">Anime</SelectItem>
+                  <SelectItem value="live-action">Live Action</SelectItem>
+                  <SelectItem value="documentary">Documentary</SelectItem>
+                  <SelectItem value="animation">Animation</SelectItem>
+                </SelectContent>
+              </Select>
+            </Field>
+            <Field>
+              <FieldLabel>Year</FieldLabel>
+              <Input
+                type="number"
+                value={year}
+                onChange={(e) => setYear(Number(e.target.value))}
+              />
+            </Field>
+            <Field>
+              <FieldLabel>Age rating</FieldLabel>
+              <Input
+                placeholder="e.g. PG-13"
+                value={ageRating}
+                onChange={(e) => setAgeRating(e.target.value)}
+              />
+            </Field>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <Field>
+              <FieldLabel>Status</FieldLabel>
+              <Select value={status} onValueChange={setStatus}>
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="Draft">Draft</SelectItem>
+                  <SelectItem value="Review">Review</SelectItem>
+                  <SelectItem value="Approved">Approved</SelectItem>
+                  <SelectItem value="Scheduled">Scheduled</SelectItem>
+                  <SelectItem value="Published">Published</SelectItem>
+                </SelectContent>
+              </Select>
+            </Field>
+            <Field>
+              <FieldLabel>Airing status</FieldLabel>
+              <Select value={airingStatus} onValueChange={setAiringStatus}>
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="airing">Airing</SelectItem>
+                  <SelectItem value="completed">Completed</SelectItem>
+                  <SelectItem value="upcoming">Upcoming</SelectItem>
+                  <SelectItem value="hiatus">Hiatus</SelectItem>
+                </SelectContent>
+              </Select>
+            </Field>
+          </div>
+
+          <Field>
+            <FieldLabel>Provider</FieldLabel>
+            <Select value={provider} onValueChange={setProvider}>
+              <SelectTrigger className="w-full">
+                <SelectValue placeholder="Select a provider..." />
+              </SelectTrigger>
+              <SelectContent>
+                {ALL_DATA_SOURCES.filter((s) => s !== 'all').map((s) => (
+                  <SelectItem key={s} value={s}>
+                    {s}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </Field>
+
+          <Field>
+            <FieldLabel>Genres</FieldLabel>
+            <div className="flex flex-wrap gap-1.5">
+              {genres.map((g) => (
+                <Badge key={g} variant="secondary">
+                  {g}
+                  <button
+                    type="button"
+                    className="ml-1 rounded-full hover:bg-muted-foreground/20"
+                    onClick={() => setGenres((prev) => prev.filter((v) => v !== g))}
+                  >
+                    <X className="size-3" />
+                  </button>
+                </Badge>
+              ))}
+            </div>
+            <Input
+              placeholder="Type a genre and press Enter..."
+              value={genreInput}
+              onChange={(e) => setGenreInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault()
+                  addGenre()
+                }
+              }}
+            />
+          </Field>
+
+          <Field>
+            <FieldLabel>Studios</FieldLabel>
+            <div className="flex flex-wrap gap-1.5">
+              {studios.map((s) => (
+                <Badge key={s} variant="secondary">
+                  {s}
+                  <button
+                    type="button"
+                    className="ml-1 rounded-full hover:bg-muted-foreground/20"
+                    onClick={() => setStudios((prev) => prev.filter((v) => v !== s))}
+                  >
+                    <X className="size-3" />
+                  </button>
+                </Badge>
+              ))}
+            </div>
+            <Input
+              placeholder="Type a studio and press Enter..."
+              value={studioInput}
+              onChange={(e) => setStudioInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault()
+                  addStudio()
+                }
+              }}
+            />
+          </Field>
+
+          <Field>
+            <FieldLabel>Tags</FieldLabel>
+            <div className="flex flex-wrap gap-1.5">
+              {tags.map((t) => (
+                <Badge key={t} variant="secondary">
+                  {t}
+                  <button
+                    type="button"
+                    className="ml-1 rounded-full hover:bg-muted-foreground/20"
+                    onClick={() => setTags((prev) => prev.filter((v) => v !== t))}
+                  >
+                    <X className="size-3" />
+                  </button>
+                </Badge>
+              ))}
+            </div>
+            <Input
+              placeholder="Type a tag and press Enter..."
+              value={tagInput}
+              onChange={(e) => setTagInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault()
+                  addTag()
+                }
+              }}
+            />
+          </Field>
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={() => { reset(); onOpenChange(false) }}>
+            Cancel
+          </Button>
+          <Button disabled={!title.trim()} onClick={handleCreate}>
+            Create series
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }

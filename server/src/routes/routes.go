@@ -62,6 +62,7 @@ type Dependencies struct {
 	SettingsAdminService     *services.SettingsAdminService
 	AnilistService           *services.AnilistService
 	ProfileService          *services.ProfileService
+	MfaService              *services.MfaService
 }
 
 func SetupRoutes(router *gin.Engine, deps Dependencies) {
@@ -133,6 +134,17 @@ func SetupRoutes(router *gin.Engine, deps Dependencies) {
 			authProtected.POST("/ensure-first-user-admin", handler.ensureFirstUserIsAdmin)
 			authProtected.GET("/first-user", handler.getFirstUserInfo)
 			authProtected.POST("/ensure-user-owner", handler.ensureUserIsOwner)
+		}
+
+		mfaProtected := auth.Group("/mfa")
+		mfaProtected.Use(middleware.Auth(deps.IdentityProvider))
+		{
+			mfaProtected.POST("/setup", handler.mfaSetup)
+			mfaProtected.POST("/verify", handler.mfaVerify)
+			mfaProtected.POST("/disable", handler.mfaDisable)
+			mfaProtected.POST("/validate-login", handler.mfaValidateLogin)
+			mfaProtected.POST("/recovery-codes", handler.mfaRecoveryCodes)
+			mfaProtected.POST("/regenerate-recovery-codes", handler.mfaRegenerateRecoveryCodes)
 		}
 	}
 

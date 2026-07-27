@@ -11,6 +11,8 @@ services:
         condition: service_started
       worker:
         condition: service_healthy
+      postgres-data:
+        condition: service_started
     networks:
       - kami-sama
 
@@ -46,6 +48,24 @@ services:
       ALLOW_MIGRATION_FAILURE: "true"
     expose:
       - 5432
+    networks:
+      - kami-sama
+
+  postgres-data:
+    image: docker.io/dpage/pgadmin4:latest
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@kami-sama.dev}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-admin}
+      PGADMIN_LISTEN_PORT: "80"
+    volumes:
+      - pgadmin-data:/var/lib/pgadmin
+      - ./infrastructure/docker/pgadmin/servers.json:/pgadmin4/servers.json:ro
+    expose:
+      - 80
+    depends_on:
+      postgresql:
+        condition: service_healthy
     networks:
       - kami-sama
 
@@ -172,7 +192,7 @@ services:
       JWT_SECRET: ${JWT_SECRET:-dev-insecure-secret-change-me}
       JWT_ISSUER: ${JWT_ISSUER:-kami-sama}
       AUTH_COOKIE_DOMAIN: ${AUTH_COOKIE_DOMAIN:-.kami-sama.localhost}
-      CORS_ALLOWED_ORIGINS: http://kami-sama.localhost,http://api.kami-sama.localhost,http://sso.kami-sama.localhost,http://studios.kami-sama.localhost,http://kami-sama.lan,http://api.kami-sama.lan,http://sso.kami-sama.lan,http://studios.kami-sama.lan,http://localhost:3000,http://localhost:8081,http://127.0.0.1:8081,http://localhost:19006,http://127.0.0.1:19006,http://192.168.1.48:8081
+      CORS_ALLOWED_ORIGINS: http://kami-sama.localhost,http://api.kami-sama.localhost,http://sso.kami-sama.localhost,http://studios.kami-sama.localhost,http://data.kami-sama.localhost,http://rabbitmq.kami-sama.localhost,http://search.kami-sama.localhost,http://kami-sama.lan,http://api.kami-sama.lan,http://sso.kami-sama.lan,http://studios.kami-sama.lan,http://data.kami-sama.lan,http://rabbitmq.kami-sama.lan,http://search.kami-sama.lan,http://localhost:3000,http://localhost:8081,http://127.0.0.1:8081,http://localhost:19006,http://127.0.0.1:19006,http://192.168.1.48:8081
       LISTEN__TRUSTED_PROXY_CIDRS: 0.0.0.0/0,::/0
       API_PORT: "8080"
       HOST: ${DOMAIN_HOST:-kami-sama.localhost}
@@ -214,6 +234,7 @@ volumes:
   custom-templates:
   rabbitmq-data:
   meilisearch-data:
+  pgadmin-data:
 
 networks:
   kami-sama:

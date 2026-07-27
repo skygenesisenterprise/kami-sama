@@ -98,6 +98,8 @@ type AuthConfig struct {
 	EmailVerificationTTL   time.Duration
 	PasswordResetTTL       time.Duration
 	RateLimitEnabled       bool
+	TOTPIssuer             string
+	MFARecoveryCodeLength  int
 }
 
 type CORSConfig struct {
@@ -198,6 +200,8 @@ func Load() (Config, error) {
 			EmailVerificationTTL:   getEnvDuration("AUTH_EMAIL_VERIFICATION_TTL", 24*time.Hour),
 			PasswordResetTTL:       getEnvDuration("AUTH_PASSWORD_RESET_TTL", time.Hour),
 			RateLimitEnabled:       getEnvBool("AUTH_RATE_LIMIT_ENABLED", true),
+			TOTPIssuer:             getEnv("AUTH_MFA_TOTP_ISSUER", "Kami-Sama"),
+			MFARecoveryCodeLength:  getEnvInt("AUTH_MFA_RECOVERY_CODE_LENGTH", 8),
 		},
 		OAuth: OAuthConfig{
 			Google: OAuthProviderConfig{
