@@ -66,6 +66,32 @@ function parseUrl(value: string): URL | null {
   }
 }
 
+/**
+ * On the client, derive the API base URL.
+ *
+ * When no explicit env-var is set we use a relative path (/api/v1) so that
+ * every subdomain (sso., studios., main) talks to the same-origin Next.js
+ * server which proxies /api/* → the Go backend at localhost:8080.
+ * This avoids CORS issues entirely and lets the browser send auth cookies
+ * (domain=.kami-sama.localhost) automatically.
+ *
+ * If NEXT_PUBLIC_API_URL is set (e.g. for Expo / staging / production
+ * deployments where the API is on a separate origin), honour it instead.
+ */
+function getClientApiBaseUrl(): string {
+  // Honour an explicit env-var override first (e.g. for Expo / staging).
+  const envUrl =
+    process.env.EXPO_PUBLIC_API_URL ?? process.env.NEXT_PUBLIC_API_URL;
+  if (envUrl && /^https?:\/\//.test(envUrl)) {
+    return normalizeBaseUrl(envUrl, DEFAULT_PUBLIC_API_PATH);
+  }
+
+  // Use a relative path so requests go through the Next.js proxy rewrite
+  // (next.config.ts rewrites /api/* → http://localhost:8080/api/*).
+  // This is same-origin from the browser's perspective — no CORS.
+  return DEFAULT_PUBLIC_API_PATH;
+}
+
 export function getApiBaseUrl(): string {
   if (typeof window === "undefined") {
     return normalizeBaseUrl(
@@ -77,12 +103,7 @@ export function getApiBaseUrl(): string {
     );
   }
 
-  return normalizeBaseUrl(
-    process.env.EXPO_PUBLIC_API_URL ??
-      process.env.NEXT_PUBLIC_API_URL ??
-      (isExpoRuntime() && !isProductionRuntime() ? DEFAULT_EXPO_DEV_API_URL : DEFAULT_PUBLIC_API_PATH),
-    DEFAULT_PUBLIC_API_PATH
-  );
+  return getClientApiBaseUrl();
 }
 
 export function getRealtimeUrl(): string {

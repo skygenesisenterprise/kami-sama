@@ -9,6 +9,7 @@ import { toast } from '@/components/ui/use-toast'
 import { setProfileSelected, saveSelectedProfile } from '@/lib/profile-selection'
 import { profileApi } from '@/lib/api/profiles'
 import { routing } from '@/i18n/routing'
+import { getDomainUrl } from '@/lib/domains'
 
 export default function PinConfirmePage() {
   const router = useRouter()
@@ -102,7 +103,7 @@ export default function PinConfirmePage() {
           const browserLang = navigator.language.split('-')[0]
           return routing.locales.includes(browserLang as any) ? browserLang : routing.defaultLocale
         })()
-        router.push(`/${locale}/discover`)
+        window.location.href = getDomainUrl('main', `/${locale}/discover`)
       } else {
         setError('Code PIN incorrect. Veuillez réessayer.')
         setPin(['', '', '', ''])

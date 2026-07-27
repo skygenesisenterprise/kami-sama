@@ -2,7 +2,6 @@
 
 import * as React from 'react'
 import { use } from 'react'
-import Link from 'next/link'
 import { createPortal } from 'react-dom'
 import { usePathname } from 'next/navigation'
 import { Bookmark, ChevronLeft, ChevronRight, Play, Plus, ThumbsDown, ThumbsUp, Check } from 'lucide-react'
@@ -16,6 +15,7 @@ import {
   getRecentlyAdded,
   getContentPath,
 } from '@/lib/mock-data'
+import { getDomainUrl } from '@/lib/domains'
 import { useAuth } from '@/context/AuthContext'
 import type { Anime } from '@/types/anime'
 
@@ -32,6 +32,7 @@ function DiscoverRail({ title, href, subtitle, ctaLabel, children }: DiscoverRai
   const scrollRef = React.useRef<HTMLDivElement>(null)
   const [canScrollRight, setCanScrollRight] = React.useState(false)
   const [canScrollLeft, setCanScrollLeft] = React.useState(false)
+  const railHref = getDomainUrl('main', href)
 
   React.useEffect(() => {
     const el = scrollRef.current
@@ -65,13 +66,13 @@ function DiscoverRail({ title, href, subtitle, ctaLabel, children }: DiscoverRai
       <div className="mb-3 flex items-center justify-between gap-4 px-4 md:px-8 xl:px-20">
         <h2 className="text-xl font-bold tracking-tight text-white md:text-2xl">{title}</h2>
         {ctaLabel && (
-          <Link
-            href={href}
+          <a
+            href={railHref}
             className="group inline-flex shrink-0 items-center gap-1 text-xs font-semibold uppercase tracking-wide text-white/60 transition-colors hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
           >
             {ctaLabel}
             <ChevronRight className="size-4 transition-transform duration-200 group-hover:translate-x-0.5" aria-hidden="true" />
-          </Link>
+          </a>
         )}
       </div>
       <div className="relative group/rail">
@@ -202,8 +203,8 @@ function DiscoverAnimeTile({ anime, currentLocale, badge, progressPercent, remai
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
     >
-      <Link
-        href={`/${currentLocale}${getContentPath(anime)}/${anime.slug}`}
+      <a
+        href={getDomainUrl('main', `/${currentLocale}${getContentPath(anime)}/${anime.slug}`)}
         className="block overflow-hidden rounded-md"
       >
         <div className="relative aspect-video overflow-hidden bg-[#1a1a1a]">
@@ -233,7 +234,7 @@ function DiscoverAnimeTile({ anime, currentLocale, badge, progressPercent, remai
             </h3>
           </div>
         </div>
-      </Link>
+      </a>
 
       {/* Progress bar below thumbnail for Continue Watching items - 80% centered */}
       {isContinueWatching && progressPercent !== undefined && (
@@ -281,12 +282,12 @@ function DiscoverAnimeTile({ anime, currentLocale, badge, progressPercent, remai
               {/* Play button + Action buttons row */}
               <div className="flex items-center gap-2 mb-2.5">
                 {/* Play button */}
-                <Link
-                  href={`/${currentLocale}/watch/${anime.slug}`}
+                <a
+                  href={getDomainUrl('main', `/${currentLocale}/watch/${anime.slug}`)}
                   className="flex size-8 items-center justify-center rounded-full bg-white text-black transition-transform hover:scale-110 shadow-md"
                 >
                   <Play className="size-3.5 fill-current ml-0.5" />
-                </Link>
+                </a>
 
                 {/* Action buttons */}
                 <button
@@ -325,15 +326,15 @@ function DiscoverAnimeTile({ anime, currentLocale, badge, progressPercent, remai
                 >
                   <ThumbsUp className="size-3.5" />
                 </button>
-                <Link
-                  href={`/${currentLocale}${getContentPath(anime)}/${anime.slug}`}
+                <a
+                  href={getDomainUrl('main', `/${currentLocale}${getContentPath(anime)}/${anime.slug}`)}
                   className="ml-auto flex size-7 items-center justify-center rounded-full border-[1.5px] border-white/40 text-white/70 transition-all hover:border-white hover:text-white hover:scale-110"
                   aria-label={t('episodesAndInfo')}
                 >
                   <svg className="size-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                     <path d="m6 9 6 6 6-6" />
                   </svg>
-                </Link>
+                </a>
               </div>
 
               {/* Metadata line - age, season info, episodes */}
@@ -488,7 +489,7 @@ export default function DiscoverPage({
           asChild
           className="h-10 rounded-sm bg-white px-5 text-xs font-semibold uppercase text-black transition-colors duration-200 hover:bg-white/90 focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-[#141414]"
         >
-          <Link href="/catalog">{t('ctaViewAll')}</Link>
+          <a href={getDomainUrl('main', '/catalog')}>{t('ctaViewAll')}</a>
         </Button>
       </section>
     </div>

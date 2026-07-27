@@ -3,6 +3,7 @@
 import { use, useMemo, useState } from 'react'
 import { useSearchParams, usePathname } from 'next/navigation'
 import Link from 'next/link'
+import { useTranslations } from 'next-intl'
 import {
   CaretDown,
   List,
@@ -10,6 +11,7 @@ import {
   ThumbsDown,
   Share,
 } from 'phosphor-react'
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import { ScrollReveal } from '@/components/kami/scroll-reveal'
 import VideoPlayer from '@/components/video-player'
@@ -25,6 +27,7 @@ export default function WatchPage({
   params: Promise<{ slug: string; locale: string }>
 }) {
   const { slug, locale } = use(params)
+  const t = useTranslations('watch')
   const pathname = usePathname()
   const searchParams = useSearchParams()
   const epId = searchParams.get('ep')
@@ -56,12 +59,12 @@ export default function WatchPage({
     return (
       <div className="flex min-h-dvh items-center justify-center">
         <div className="text-center">
-          <h1 className="font-display text-2xl font-bold">Episode not found</h1>
+          <h1 className="font-display text-2xl font-bold">{t('notFound.title')}</h1>
           <p className="mt-2 text-sm text-muted-foreground">
-            The episode you&apos;re looking for doesn&apos;t exist.
+            {t('notFound.description')}
           </p>
           <Button asChild variant="secondary" className="mt-4">
-            <Link href="/">Go Home</Link>
+            <Link href="/">{t('notFound.goHome')}</Link>
           </Button>
         </div>
       </div>
@@ -69,7 +72,7 @@ export default function WatchPage({
   }
 
   return (
-    <div className="relative min-h-dvh bg-[#141414]">
+    <div className="relative min-h-dvh select-none bg-[#141414]">
       <div className="mesh-gradient-bg" />
 
       {/* ── Video Player ── */}
@@ -102,9 +105,9 @@ export default function WatchPage({
                       {anime.ageRating}
                     </span>
                     <span>•</span>
-                    <span>Sous-titré</span>
+                    <span>{t('meta.subtitled')}</span>
                     <span>•</span>
-                    <span>Disponible depuis le {currentEpisode.releaseDate}</span>
+                    <span>{t('meta.availableSince', { date: currentEpisode.releaseDate })}</span>
                   </div>
 
                   {/* Like / Dislike / Share */}
@@ -140,7 +143,7 @@ export default function WatchPage({
 
                     {/* Audio */}
                     <div className="flex items-baseline justify-between py-4">
-                      <span className="text-sm font-bold text-white">Audio</span>
+                      <span className="text-sm font-bold text-white">{t('meta.audio')}</span>
                       <span className="text-sm text-white/60">Japanese</span>
                     </div>
 
@@ -149,7 +152,7 @@ export default function WatchPage({
 
                     {/* Sous-titres */}
                     <div className="flex items-baseline justify-between py-4">
-                      <span className="text-sm font-bold text-white">Sous-titres</span>
+                      <span className="text-sm font-bold text-white">{t('meta.subtitles')}</span>
                       <span className="max-w-[60%] text-right text-sm text-white/60">
                         Français, English, Deutsch, Español (América Latina), Español (España), Italiano, Polski, Português (Brasil), Русский, العربية
                       </span>
@@ -160,7 +163,7 @@ export default function WatchPage({
 
                     {/* Avertissement lié au contenu */}
                     <div className="flex items-baseline justify-between py-4">
-                      <span className="text-sm font-bold text-white">Avertissement lié au contenu</span>
+                      <span className="text-sm font-bold text-white">{t('meta.contentWarning')}</span>
                       <span className="max-w-[60%] text-right text-sm text-white/60">
                         <span className="mr-2 inline-block rounded bg-white/10 px-1.5 py-0.5 text-[11px] font-bold text-white">
                           {anime.ageRating}
@@ -179,10 +182,197 @@ export default function WatchPage({
                     onClick={() => setShowFullInfo((prev) => !prev)}
                     className="mt-4 text-sm font-semibold text-[#e50914] transition-colors hover:text-[#ff3d47]"
                   >
-                    {showFullInfo ? 'VOIR MOINS' : 'VOIR PLUS'}
+                    {showFullInfo ? t('meta.seeLess') : t('meta.seeMore')}
                   </button>
                 </div>
               </ScrollReveal>
+
+              {/* ── YouTube-style Comments Section ── */}
+              <div className="border-t border-white/10 pt-6">
+                <div className="flex items-center justify-between mb-6">
+                  <h2 className="text-lg font-bold text-white">{t('comments.title')}</h2>
+                  <span className="text-sm text-white/50">{t('comments.count', { count: 8 })}</span>
+                </div>
+
+                {/* ── Comment Input ── */}
+                <div className="flex gap-3 mb-8">
+                  <Avatar className="size-10 shrink-0">
+                    <AvatarImage src="" alt="" />
+                    <AvatarFallback className="bg-white/10 text-xs text-white/70">U</AvatarFallback>
+                  </Avatar>
+                  <div className="flex-1">
+                    <input
+                      type="text"
+                      placeholder={t('comments.addPlaceholder')}
+                      className="w-full bg-transparent border-b border-white/20 pb-2 text-sm text-white placeholder:text-white/40 outline-none transition-colors focus:border-white/50"
+                    />
+                  </div>
+                </div>
+
+                {/* ── Sort ── */}
+                <div className="flex items-center gap-2 mb-6">
+                  <button type="button" className="flex items-center gap-1 text-sm font-semibold text-white">
+                    {t('comments.sortBy')}
+                    <CaretDown className="size-3" weight="light" />
+                  </button>
+                </div>
+
+                {/* ── Comments List ── */}
+                <div className="space-y-5">
+                  {/* Comment 1 */}
+                  <div className="flex gap-3">
+                    <Avatar className="size-10 shrink-0">
+                      <AvatarImage src="" alt="" />
+                      <AvatarFallback className="bg-[#e50914]/20 text-[10px] font-bold text-[#e50914]">AK</AvatarFallback>
+                    </Avatar>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-semibold text-white">AkiraKing92</span>
+                        <span className="text-xs text-white/40">il y a 2 heures</span>
+                      </div>
+                      <p className="mt-1 text-sm text-white/80 leading-relaxed">
+                        L&apos;animation de ce épisode était absolument INCROYABLE. La scène de combat à 12:34 est peut-être la meilleure chose que j&apos;ai vue cette année. MAPPA a vraiment surhumainé cette saison.
+                      </p>
+                      <div className="mt-2 flex items-center gap-4">
+                        <button type="button" className="flex items-center gap-1 text-xs text-white/50 transition-colors hover:text-white">
+                          <ThumbsUp className="size-3.5" weight="light" />
+                          <span>243</span>
+                        </button>
+                        <button type="button" className="flex items-center gap-1 text-xs text-white/50 transition-colors hover:text-white">
+                          <ThumbsDown className="size-3.5" weight="light" />
+                        </button>
+                        <button type="button" className="text-xs text-white/50 transition-colors hover:text-white">
+                          {t('actions.reply')}
+                        </button>
+                      </div>
+
+                      {/* Reply */}
+                      <div className="mt-4 flex gap-3">
+                        <Avatar className="size-8 shrink-0">
+                          <AvatarImage src="" alt="" />
+                          <AvatarFallback className="bg-white/10 text-[9px] text-white/70">LW</AvatarFallback>
+                        </Avatar>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-semibold text-white">LunaWatches</span>
+                            <span className="text-xs text-white/40">il y a 1 heure</span>
+                          </div>
+                          <p className="mt-1 text-sm text-white/80 leading-relaxed">
+                            Tellement d&apos;accord! Et la OST pendant cette scène était parfaite. On dirait qu&apos;ils ont tout donné pour ce dernier arc.
+                          </p>
+                          <div className="mt-2 flex items-center gap-4">
+                            <button type="button" className="flex items-center gap-1 text-xs text-white/50 transition-colors hover:text-white">
+                              <ThumbsUp className="size-3.5" weight="light" />
+                              <span>87</span>
+                            </button>
+                            <button type="button" className="flex items-center gap-1 text-xs text-white/50 transition-colors hover:text-white">
+                              <ThumbsDown className="size-3.5" weight="light" />
+                            </button>
+                            <button type="button" className="text-xs text-white/50 transition-colors hover:text-white">
+                              {t('actions.reply')}
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Comment 2 */}
+                  <div className="flex gap-3">
+                    <Avatar className="size-10 shrink-0">
+                      <AvatarImage src="" alt="" />
+                      <AvatarFallback className="bg-purple-500/20 text-[10px] font-bold text-purple-400">SN</AvatarFallback>
+                    </Avatar>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-semibold text-white">SakuraNoir</span>
+                        <span className="text-xs text-white/40">il y a 5 heures</span>
+                      </div>
+                      <p className="mt-1 text-sm text-white/80 leading-relaxed">
+                        Est-ce que quelqu&apos;un a remarqué le Easter egg à 8:12? On voit le poster du prochain arc sur le mur. Hâte de voir comment ils vont adapter la suite!
+                      </p>
+                      <div className="mt-2 flex items-center gap-4">
+                        <button type="button" className="flex items-center gap-1 text-xs text-white/50 transition-colors hover:text-white">
+                          <ThumbsUp className="size-3.5" weight="light" />
+                          <span>156</span>
+                        </button>
+                        <button type="button" className="flex items-center gap-1 text-xs text-white/50 transition-colors hover:text-white">
+                          <ThumbsDown className="size-3.5" weight="light" />
+                        </button>
+                        <button type="button" className="text-xs text-white/50 transition-colors hover:text-white">
+                          {t('actions.reply')}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Comment 3 */}
+                  <div className="flex gap-3">
+                    <Avatar className="size-10 shrink-0">
+                      <AvatarImage src="" alt="" />
+                      <AvatarFallback className="bg-emerald-500/20 text-[10px] font-bold text-emerald-400">CN</AvatarFallback>
+                    </Avatar>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-semibold text-white">CinemaNerd</span>
+                        <span className="text-xs text-white/40">il y a 8 heures</span>
+                      </div>
+                      <p className="mt-1 text-sm text-white/80 leading-relaxed">
+                        Ce qui me plaît le plus c&apos;est la direction artistique. Chaque plan est comme une peinture. C&apos;est rare d&apos;avoir une qualité constante pareille sur 24 épisodes.
+                      </p>
+                      <div className="mt-2 flex items-center gap-4">
+                        <button type="button" className="flex items-center gap-1 text-xs text-white/50 transition-colors hover:text-white">
+                          <ThumbsUp className="size-3.5" weight="light" />
+                          <span>312</span>
+                        </button>
+                        <button type="button" className="flex items-center gap-1 text-xs text-white/50 transition-colors hover:text-white">
+                          <ThumbsDown className="size-3.5" weight="light" />
+                        </button>
+                        <button type="button" className="text-xs text-white/50 transition-colors hover:text-white">
+                          {t('actions.reply')}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Comment 4 */}
+                  <div className="flex gap-3">
+                    <Avatar className="size-10 shrink-0">
+                      <AvatarImage src="" alt="" />
+                      <AvatarFallback className="bg-amber-500/20 text-[10px] font-bold text-amber-400">MF</AvatarFallback>
+                    </Avatar>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-semibold text-white">MangaFanFR</span>
+                        <span className="text-xs text-white/40">il y a 12 heures</span>
+                      </div>
+                      <p className="mt-1 text-sm text-white/80 leading-relaxed">
+                        Pour ceux qui lisent le manga, cette adaptation est fidèle à 95%. Les scènes ajoutées en plus sont vraiment un bonus. Studio MAPPA ne déçoit jamais.
+                      </p>
+                      <div className="mt-2 flex items-center gap-4">
+                        <button type="button" className="flex items-center gap-1 text-xs text-white/50 transition-colors hover:text-white">
+                          <ThumbsUp className="size-3.5" weight="light" />
+                          <span>98</span>
+                        </button>
+                        <button type="button" className="flex items-center gap-1 text-xs text-white/50 transition-colors hover:text-white">
+                          <ThumbsDown className="size-3.5" weight="light" />
+                        </button>
+                        <button type="button" className="text-xs text-white/50 transition-colors hover:text-white">
+                          {t('actions.reply')}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Load More */}
+                  <button
+                    type="button"
+                    className="w-full py-3 text-sm font-semibold text-white/60 transition-colors hover:text-white"
+                  >
+                    {t('comments.loadMore')}
+                  </button>
+                </div>
+              </div>
             </div>
 
             {/* ═══ Right Column: Episode List ═══ */}
@@ -194,7 +384,7 @@ export default function WatchPage({
                     {nextEpisode && (
                       <div>
                         <h3 className="mb-3 text-xs font-bold uppercase tracking-[0.15em] text-white/60">
-                          Épisode suivant
+                          {t('episodes.nextEpisode')}
                         </h3>
                         <Link
                           href={`/${currentLocale}/watch/${slug}?ep=${nextEpisode.id}`}
@@ -214,7 +404,7 @@ export default function WatchPage({
                             <h4 className="text-sm font-semibold leading-snug text-white">
                               E{nextEpisode.number} – {nextEpisode.title}
                             </h4>
-                            <p className="mt-1 text-xs text-white/50">Sous-titré</p>
+                            <p className="mt-1 text-xs text-white/50">{t('meta.subtitled')}</p>
                           </div>
                         </Link>
                       </div>
@@ -222,7 +412,7 @@ export default function WatchPage({
                     {prevEpisode && (
                       <div>
                         <h3 className="mb-3 text-xs font-bold uppercase tracking-[0.15em] text-white/60">
-                          Épisode précédent
+                          {t('episodes.prevEpisode')}
                         </h3>
                         <Link
                           href={`/${currentLocale}/watch/${slug}?ep=${prevEpisode.id}`}
@@ -240,7 +430,7 @@ export default function WatchPage({
                               E{prevEpisode.number} – {prevEpisode.title}
                             </h4>
                             <p className="mt-1 text-xs text-white/50">
-                              {prevEpisode.number === 1 ? 'Doublage English | Sous-...' : 'Sous-titré'}
+                              {prevEpisode.number === 1 ? t('episodes.dubbed') : t('meta.subtitled')}
                             </p>
                           </div>
                         </Link>
@@ -252,7 +442,7 @@ export default function WatchPage({
                       className="flex w-full items-center justify-center gap-2 rounded-md border border-white/20 bg-transparent py-2.5 text-xs font-bold text-white transition-all duration-300 hover:border-white/40 hover:bg-white/5"
                     >
                       <List className="size-4" weight="light" />
-                      VOIR PLUS D&apos;ÉPISODES
+                      {t('episodes.seeMoreEpisodes')}
                     </button>
                   </>
                 )}
@@ -273,7 +463,7 @@ export default function WatchPage({
                               className="flex w-full items-center justify-between py-2 text-left"
                             >
                               <span className="text-base font-bold text-white">
-                                Saison {season}
+                                {t('episodes.season', { number: season })}
                               </span>
                               <CaretDown
                                 className={`size-4 text-white/60 transition-transform duration-300 ${isOpen ? 'rotate-180' : ''}`}
@@ -302,12 +492,12 @@ export default function WatchPage({
                                         />
                                         {isWatched && (
                                           <span className="absolute inset-0 flex items-center justify-center bg-black/60 text-[10px] font-bold text-white">
-                                            Vu
+                                            {t('episodes.watched')}
                                           </span>
                                         )}
                                         {isWatching && (
                                           <span className="absolute top-1 left-1 rounded bg-[#e50914] px-1.5 py-0.5 text-[9px] font-bold text-white">
-                                            EN COURS
+                                            {t('episodes.watching')}
                                           </span>
                                         )}
                                         {!isWatched && !isWatching && (
@@ -321,7 +511,7 @@ export default function WatchPage({
                                           E{ep.number} – {ep.title}
                                         </h4>
                                         <p className="mt-1 text-xs text-white/50">
-                                          {ep.number === 1 ? 'Doublage English | Sous-...' : 'Sous-titré'}
+                                          {ep.number === 1 ? t('episodes.dubbed') : t('meta.subtitled')}
                                         </p>
                                       </div>
                                     </Link>
@@ -338,7 +528,7 @@ export default function WatchPage({
                       onClick={() => setShowEpisodeList(false)}
                       className="flex w-full items-center justify-center gap-2 rounded-md border border-white/20 bg-transparent py-2.5 text-xs font-bold text-white transition-all duration-300 hover:border-white/40 hover:bg-white/5"
                     >
-                      VOIR MOINS
+                      {t('episodes.seeLess')}
                     </button>
                   </>
                 )}

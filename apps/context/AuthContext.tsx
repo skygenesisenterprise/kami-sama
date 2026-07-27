@@ -4,7 +4,8 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import { authApi, refreshAccessToken } from "@/lib/api/auth";
 import type { RegisterPayload } from "@/lib/api/auth";
-import { DEFAULT_PLATFORM_ROUTE, LOGIN_ROUTE } from "@/lib/routes";
+import { LOGIN_ROUTE } from "@/lib/routes";
+import { setSharedCookie, deleteSharedCookie } from "@/lib/shared-cookie";
 import type { User } from "@/lib/api/types";
 import type { PersistedSession } from "@/lib/api/session-persistence";
 import {
@@ -71,7 +72,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     });
   }, []);
 
-  // Subscribe to session changes from other tabs
+  // Subscribe to session changes from other tabs.
+  // IMPORTANT: skip the initial synchronous callback when status is still
+  // "loading" — the bootstrap effect handles the first auth decision.
+  // Without this guard, navigating to a new subdomain (e.g. studios)
+  // would immediately set "unauthenticated" (localStorage is per-origin)
+  // before the cookie-based refresh has a chance to succeed.
   React.useEffect(() => {
     const unsubscribe = subscribeToSessionChanges((session: PersistedSession | null) => {
       if (session) {
@@ -81,7 +87,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       } else {
         setAccessToken(null);
         setUser(null);
-        setStatus("unauthenticated");
+        setStatus((prev) => (prev === "loading" ? prev : "unauthenticated"));
       }
     });
     
@@ -190,10 +196,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setAccessToken(null);
         setUser(null);
         setStatus("unauthenticated");
-        if (typeof document !== "undefined") {
-          document.cookie = "kami_sama_access_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
-          document.cookie = "kami_sama_refresh=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
-        }
+        deleteSharedCookie('kami_sama_access_token');
+        deleteSharedCookie('kami_sama_refresh');
       }
     }
 
@@ -222,10 +226,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setStatus("unauthenticated");
     
     // Clear cookies
-    if (typeof document !== "undefined") {
-      document.cookie = "kami_sama_access_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
-      document.cookie = "kami_sama_refresh=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
-    }
+    deleteSharedCookie('kami_sama_access_token');
+    deleteSharedCookie('kami_sama_refresh');
   }, []);
 
   function getRedirectTarget(): string {
@@ -252,19 +254,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       );
       
       // Set cookies for server-side authentication
-      if (typeof document !== "undefined") {
-        const expires = new Date();
-        expires.setTime(expires.getTime() + (response.expiresIn ?? 3600) * 1000);
-        
-        // Set access token cookie
-        document.cookie = `kami_sama_access_token=${response.accessToken}; path=/; ${rememberMe ? `expires=${expires.toUTCString()}` : ''}; ${process.env.NODE_ENV === 'production' ? 'Secure; SameSite=Strict' : ''}`;
-        
-        // Set refresh token cookie
-        if (response.refreshToken) {
-          const refreshExpires = new Date();
-          refreshExpires.setTime(refreshExpires.getTime() + 7 * 24 * 60 * 60 * 1000); // 7 days
-          document.cookie = `kami_sama_refresh=${response.refreshToken}; path=/; expires=${refreshExpires.toUTCString()}; ${process.env.NODE_ENV === 'production' ? 'Secure; SameSite=Strict; HttpOnly' : ''}`;
-        }
+      const maxAgeAccess = response.expiresIn ?? 3600;
+      if (rememberMe) {
+        setSharedCookie('kami_sama_access_token', response.accessToken, maxAgeAccess);
+      }
+      if (response.refreshToken) {
+        // 7 days for refresh token
+        setSharedCookie('kami_sama_refresh', response.refreshToken, 7 * 24 * 60 * 60);
       }
       
       setAccessToken(response.accessToken);
@@ -299,19 +295,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       );
       
       // Set cookies for server-side authentication
-      if (typeof document !== "undefined") {
-        const expires = new Date();
-        expires.setTime(expires.getTime() + (response.expiresIn ?? 3600) * 1000);
-        
-        // Set access token cookie
-        document.cookie = `kami_sama_access_token=${response.accessToken}; path=/; ${rememberMe ? `expires=${expires.toUTCString()}` : ''}; ${process.env.NODE_ENV === 'production' ? 'Secure; SameSite=Strict' : ''}`;
-        
-        // Set refresh token cookie
-        if (response.refreshToken) {
-          const refreshExpires = new Date();
-          refreshExpires.setTime(refreshExpires.getTime() + 7 * 24 * 60 * 60 * 1000); // 7 days
-          document.cookie = `kami_sama_refresh=${response.refreshToken}; path=/; expires=${refreshExpires.toUTCString()}; ${process.env.NODE_ENV === 'production' ? 'Secure; SameSite=Strict; HttpOnly' : ''}`;
-        }
+      const maxAgeAccess = response.expiresIn ?? 3600;
+      if (rememberMe) {
+        setSharedCookie('kami_sama_access_token', response.accessToken, maxAgeAccess);
+      }
+      if (response.refreshToken) {
+        setSharedCookie('kami_sama_refresh', response.refreshToken, 7 * 24 * 60 * 60);
       }
       
       setAccessToken(response.accessToken);
@@ -333,10 +322,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     handleClearSession();
     
     // Clear cookies
-    if (typeof document !== "undefined") {
-      document.cookie = "kami_sama_access_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
-      document.cookie = "kami_sama_refresh=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
-    }
+    deleteSharedCookie('kami_sama_access_token');
+    deleteSharedCookie('kami_sama_refresh');
     
     router.push(LOGIN_ROUTE);
     router.refresh();

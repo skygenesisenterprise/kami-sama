@@ -92,7 +92,7 @@ COPY apps/hooks/               ./apps/hooks/
 COPY apps/lib/                 ./apps/lib/
 COPY apps/public/              ./apps/public/
 COPY apps/styles/              ./apps/styles/
-COPY apps/proxy.ts             ./apps/proxy.ts
+COPY ./middleware.ts           ./apps/middleware.ts
 COPY server/prisma/            ./server/prisma/
 RUN cd server/prisma && npm install --no-audit --no-fund
 

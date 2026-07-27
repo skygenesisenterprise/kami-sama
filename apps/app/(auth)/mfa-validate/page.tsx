@@ -14,6 +14,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useAuth } from '@/context/AuthContext'
 import { toast } from '@/components/ui/use-toast'
+import { getDomainUrl } from '@/lib/domains'
 import {
   InputOTP,
   InputOTPGroup,
@@ -79,7 +80,7 @@ export default function MfaValidatePage() {
 
       // Redirect to the intended destination
       const redirect = searchParams.get('redirect') || '/fr/discover'
-      router.push(redirect)
+      window.location.href = redirect.startsWith('http') ? redirect : getDomainUrl('main', redirect)
     } catch (err) {
       const newAttempts = attempts + 1
       setAttempts(newAttempts)
@@ -133,7 +134,7 @@ export default function MfaValidatePage() {
 
       // Redirect to the intended destination
       const redirect = searchParams.get('redirect') || '/fr/discover'
-      router.push(redirect)
+      window.location.href = redirect.startsWith('http') ? redirect : getDomainUrl('main', redirect)
     } catch (err) {
       const newAttempts = attempts + 1
       setAttempts(newAttempts)

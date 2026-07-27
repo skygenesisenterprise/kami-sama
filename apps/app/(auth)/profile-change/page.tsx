@@ -10,10 +10,11 @@ import { useRouter } from 'next/navigation'
 import { setProfileSelected, clearProfileSelection, saveSelectedProfile } from '@/lib/profile-selection'
 import { profileApi, type ProfileData } from '@/lib/api/profiles'
 import { routing } from '@/i18n/routing'
+import { getDomainUrl } from '@/lib/domains'
 
 export default function ProfileChangePage() {
   const router = useRouter()
-  const { user } = useAuth()
+  const { user, isLoading: authLoading } = useAuth()
   const [profiles, setProfiles] = useState<ProfileData[]>([])
   const [loading, setLoading] = useState(true)
   const [isSwitching, setIsSwitching] = useState<string | null>(null)
@@ -30,9 +31,13 @@ export default function ProfileChangePage() {
     clearProfileSelection()
   }, [])
 
-  // Load profiles from API
+  // Load profiles from API — wait for auth bootstrap to finish first
   useEffect(() => {
     async function loadProfiles() {
+      // Still waiting for auth bootstrap — keep spinner, do nothing
+      if (authLoading) return
+
+      // Auth resolved but user is not logged in
       if (!user) {
         setLoading(false)
         return
@@ -46,27 +51,25 @@ export default function ProfileChangePage() {
       } catch (err) {
         console.error('Failed to load profiles:', err)
         setError('Impossible de charger les profils.')
-        // Fallback to mock user profile
-        if (user) {
-          setProfiles([{
-            id: user.id,
-            userId: user.id,
-            displayName: user.displayName,
-            avatarUrl: user.avatarUrl || undefined,
-            pinEnabled: false,
-            isDefault: true,
-            sortOrder: 0,
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-          }])
-        }
+        // Fallback to the authenticated user's own profile
+        setProfiles([{
+          id: user.id,
+          userId: user.id,
+          displayName: user.displayName,
+          avatarUrl: user.avatarUrl || undefined,
+          pinEnabled: false,
+          isDefault: true,
+          sortOrder: 0,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        }])
       } finally {
         setLoading(false)
       }
     }
 
     loadProfiles()
-  }, [user])
+  }, [user, authLoading])
 
   // Create default profile if none exists and we have a user
   useEffect(() => {
@@ -91,10 +94,7 @@ export default function ProfileChangePage() {
         return
       }
 
-      // Select profile via API
-      await profileApi.select(profile.id)
-
-      // Mark profile as selected in localStorage and persist info
+      // Save profile selection locally
       saveSelectedProfile({
         id: profile.id,
         displayName: profile.displayName,
@@ -102,15 +102,24 @@ export default function ProfileChangePage() {
       })
       setProfileSelected(true)
 
+      // Try API select in background (don't block navigation)
+      profileApi.select(profile.id).catch(() => {})
+
       toast({
         title: 'Profil changé',
         description: `Connecté en tant que ${profile.displayName}.`,
         variant: 'default',
       })
 
-      // Redirect to discover page with correct locale
-      const validLocale = routing.locales.includes(locale as any) ? locale : routing.defaultLocale;
-      router.push(`/${validLocale}/discover`)
+      // Redirect: use ?redirect= if present (from studios), else go to discover
+      const params = new URLSearchParams(window.location.search)
+      const redirectUrl = params.get('redirect')
+      if (redirectUrl) {
+        window.location.href = redirectUrl
+      } else {
+        const validLocale = routing.locales.includes(locale as any) ? locale : routing.defaultLocale;
+        window.location.href = getDomainUrl('main', `/${validLocale}/discover`)
+      }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Une erreur est survenue'
       toast({

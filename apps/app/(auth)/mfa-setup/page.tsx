@@ -16,6 +16,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { useAuth } from '@/context/AuthContext'
 import { toast } from '@/components/ui/use-toast'
+import { getDomainUrl } from '@/lib/domains'
 import {
   InputOTP,
   InputOTPGroup,
@@ -489,7 +490,7 @@ export default function MfaSetupPage() {
               </p>
 
               <Button
-                onClick={() => router.push('/fr/discover')}
+                onClick={() => window.location.href = getDomainUrl('main', '/fr/discover')}
                 className="mt-8 h-11 w-full text-sm"
               >
                 Continuer vers l&apos;application

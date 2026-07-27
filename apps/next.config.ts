@@ -13,7 +13,7 @@ const nextConfig: NextConfig = {
   turbopack: {
     root: "../",
   },
-  allowedDevOrigins: ["kami-sama.tv", "192.168.1.3"],
+  allowedDevOrigins: ["kami-sama.tv", "api.kami-sama.tv", "sso.kami-sama.tv", "kami-sama.localhost", "api.kami-sama.localhost", "sso.kami-sama.localhost", "studios.kami-sama.localhost"],
   outputFileTracingExcludes: {
     "*": ["test/**"],
   },

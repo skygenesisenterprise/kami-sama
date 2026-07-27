@@ -23,6 +23,7 @@ import {
   LayoutDashboard,
   Tag,
   Users,
+  Globe,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from '@/components/ui/sheet'
@@ -32,6 +33,7 @@ import { Logo } from '@/components/kami/logo'
 import { useAuth } from '@/context/AuthContext'
 import { cn } from '@/lib/utils'
 import { getSelectedProfile } from '@/lib/profile-selection'
+import { getDomainUrl } from '@/lib/domains'
 import { getAnime } from '@/lib/mock-data'
 
 export function SiteHeader() {
@@ -155,14 +157,14 @@ export function SiteHeader() {
               </Link>
               {/* Lien vers le dashboard pour les administrateurs - version mobile */}
               {user?.roles?.some(role => ['superadmin', 'admin', 'owner'].includes(role)) && (
-                <Link
-                  href="/dash"
+                <a
+                  href={getDomainUrl('studios', '/dash')}
                   onClick={() => setMobileOpen(false)}
                   className="mt-3 flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-muted-foreground hover:bg-accent hover:text-foreground"
                 >
                   <LayoutDashboard className="size-4" />
                   Dashboard
-                </Link>
+                </a>
               )}
             </div>
           </SheetContent>
@@ -438,14 +440,14 @@ export function SiteHeader() {
                       </div>
 
                       <div className="py-1.5">
-                        <Link
-                          href="/profile-change"
+                        <a
+                          href={getDomainUrl('sso', '/profile-change')}
                           onClick={() => setProfileOpen(false)}
                           className="mega-menu-link flex items-center gap-3 px-4 py-2.5 text-sm text-white/70"
                         >
                           <Users className="size-4" />
                           {t('switchProfile')}
-                        </Link>
+                        </a>
                         <Link
                           href={`/${locale}/profile`}
                           onClick={() => setProfileOpen(false)}
@@ -455,14 +457,14 @@ export function SiteHeader() {
                           {t('settings')}
                         </Link>
                         {user?.roles?.some(role => ['superadmin', 'admin', 'owner'].includes(role)) && (
-                          <Link
-                            href="/dash"
+                          <a
+                            href={getDomainUrl('studios', '/dash')}
                             onClick={() => setProfileOpen(false)}
                             className="mega-menu-link flex items-center gap-3 px-4 py-2.5 text-sm text-white/70"
                           >
                             <LayoutDashboard className="size-4" />
                             Dashboard
-                          </Link>
+                          </a>
                         )}
                       </div>
 

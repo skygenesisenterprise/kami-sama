@@ -4,6 +4,7 @@ import { useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/context/AuthContext'
 import { routing } from '@/i18n/routing'
+import { getDomainUrl } from '@/lib/domains'
 
 export default function RootPage() {
   const router = useRouter()
@@ -13,7 +14,7 @@ export default function RootPage() {
     if (isLoading) return
 
     if (isAuthenticated) {
-      router.replace('/profile-change')
+      window.location.href = getDomainUrl('sso', '/profile-change')
     } else {
       router.replace(`/${routing.defaultLocale}/discover`)
     }

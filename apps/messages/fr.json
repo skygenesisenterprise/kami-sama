@@ -682,5 +682,43 @@
       "resultCount": "recommandation(s)",
       "comments": "commentaires"
     }
+  },
+  "watch": {
+    "notFound": {
+      "title": "Épisode introuvable",
+      "description": "L'épisode que vous recherchez n'existe pas.",
+      "goHome": "Retour à l'accueil"
+    },
+    "meta": {
+      "subtitled": "Sous-titré",
+      "availableSince": "Disponible depuis le {date}",
+      "audio": "Audio",
+      "subtitles": "Sous-titres",
+      "contentWarning": "Avertissement lié au contenu",
+      "seeMore": "VOIR PLUS",
+      "seeLess": "VOIR MOINS"
+    },
+    "actions": {
+      "reply": "Répondre",
+      "share": "Partager"
+    },
+    "episodes": {
+      "nextEpisode": "Épisode suivant",
+      "prevEpisode": "Épisode précédent",
+      "seeMoreEpisodes": "VOIR PLUS D'ÉPISODES",
+      "seeLess": "VOIR MOINS",
+      "season": "Saison {number}",
+      "watched": "Vu",
+      "watching": "EN COURS",
+      "duration": "23m",
+      "dubbed": "Doublage English | Sous-..."
+    },
+    "comments": {
+      "title": "Commentaires",
+      "count": "{count} commentaires",
+      "addPlaceholder": "Ajoutez un commentaire...",
+      "sortBy": "Trier par",
+      "loadMore": "Voir plus de commentaires..."
+    }
   }
 }

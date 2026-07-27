@@ -4,6 +4,7 @@ import { useEffect } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { Loader2 } from 'lucide-react'
 import { authApi } from '@/lib/api/auth'
+import { getDomainUrl } from '@/lib/domains'
 
 export default function OAuthCallbackPage() {
   const router = useRouter()
@@ -19,7 +20,7 @@ export default function OAuthCallbackPage() {
     const bootstrap = async () => {
       try {
         await authApi.bootstrap()
-        router.push('/dash')
+        window.location.href = getDomainUrl('studios', '/dash')
       } catch {
         router.push('/login')
       }

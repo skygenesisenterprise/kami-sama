@@ -7,11 +7,12 @@ import { routing } from "@/i18n/routing";
 import { DEFAULT_PLATFORM_ROUTE } from "@/lib/routes";
 import { isProfileSelected } from "@/lib/profile-selection";
 import { RouteTransition } from "@/components/route-transition";
+import { getDomainUrl } from "@/lib/domains";
 
 // Routes accessible to authenticated users within (auth)
 const AUTHENTICATED_ALLOWED_ROUTES = ["/profile-change", "/mfa-validate", "/mfa-setup", "/callback"];
-// Routes accessible to unauthenticated users within (auth)
-const PUBLIC_AUTH_ROUTES = ["/login", "/register"];
+// Routes accessible without authentication within (auth)
+const PUBLIC_AUTH_ROUTES = ["/login", "/register", "/profile-change"];
 
 export function AuthGuard({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -31,7 +32,7 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
 
     // Unauthenticated users: only allow public auth routes (login, register)
     if (!isAuthenticated && !isPublicAuthRoute) {
-      router.replace(`/${routing.defaultLocale}/discover`);
+      window.location.href = getDomainUrl('main', `/${routing.defaultLocale}/discover`);
       return;
     }
 
@@ -40,7 +41,7 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
       if (!isProfileSelected()) {
         router.replace("/profile-change");
       } else {
-        router.replace(DEFAULT_PLATFORM_ROUTE);
+        window.location.href = getDomainUrl('studios', DEFAULT_PLATFORM_ROUTE);
       }
     }
   }, [isAuthenticated, isLoading, router, isAllowedAuthenticatedRoute, isPublicAuthRoute]);
