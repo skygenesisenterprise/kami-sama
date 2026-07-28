@@ -6,7 +6,6 @@ import { useTranslations } from 'next-intl'
 
 import { communityData, type Post, type Comment, type ReactionType } from '@/lib/community-forum-data'
 import { UserAvatar } from '@/components/kami/user-avatar'
-import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
@@ -21,73 +20,292 @@ function timeAgo(dateStr: string): string {
   const seconds = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000)
   if (seconds < 60) return 'just now'
   const minutes = Math.floor(seconds / 60)
-  if (minutes < 60) return `${minutes}m ago`
+  if (minutes < 60) return `${minutes}m`
   const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `${hours}h ago`
+  if (hours < 24) return `${hours}h`
   const days = Math.floor(hours / 24)
-  if (days < 30) return `${days}d ago`
+  if (days < 30) return `${days}d`
   const months = Math.floor(days / 30)
-  return `${months}mo ago`
-}
-
-const reactionEmoji: Record<ReactionType, string> = {
-  like: '👍', love: '❤️', insightful: '💡', funny: '😂',
+  return `${months}mo`
 }
 
 /* -------------------------------------------------------------------------- */
-/*  Comment Component                                                          */
+/*  Vote Arrows                                                                */
+/* -------------------------------------------------------------------------- */
+
+function VoteArrows({ count, direction = 'vertical' }: { count: number; direction?: 'vertical' | 'horizontal' }) {
+  const [vote, setVote] = React.useState<'up' | 'down' | null>(null)
+  const display = vote === 'up' ? count + 1 : vote === 'down' ? count - 1 : count
+
+  return (
+    <div className={cn(
+      'flex items-center gap-0.5',
+      direction === 'vertical' ? 'flex-col' : 'flex-row',
+    )}>
+      <button
+        onClick={(e) => { e.stopPropagation(); setVote(vote === 'up' ? null : 'up') }}
+        className={cn(
+          'p-1 rounded-sm transition-colors',
+          vote === 'up' ? 'text-orange-500 bg-orange-500/10' : 'text-muted-foreground hover:text-orange-500 hover:bg-orange-500/10',
+        )}
+        aria-label="Upvote"
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M12 4l-8 8h5v8h6v-8h5z" />
+        </svg>
+      </button>
+      <span className={cn(
+        'text-xs font-bold tabular-nums min-w-[2ch] text-center',
+        vote === 'up' && 'text-orange-500',
+        vote === 'down' && 'text-blue-500',
+        !vote && 'text-muted-foreground',
+      )}>
+        {display}
+      </span>
+      <button
+        onClick={(e) => { e.stopPropagation(); setVote(vote === 'down' ? null : 'down') }}
+        className={cn(
+          'p-1 rounded-sm transition-colors',
+          vote === 'down' ? 'text-blue-500 bg-blue-500/10' : 'text-muted-foreground hover:text-blue-500 hover:bg-blue-500/10',
+        )}
+        aria-label="Downvote"
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M12 20l8-8h-5V4H9v8H4z" />
+        </svg>
+      </button>
+    </div>
+  )
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Comment — Reddit style                                                     */
 /* -------------------------------------------------------------------------- */
 
 function CommentItem({ comment, depth = 0, t }: { comment: Comment; depth?: number; t: (k: string) => string }) {
   const [showReply, setShowReply] = React.useState(false)
+  const [collapsed, setCollapsed] = React.useState(false)
+
   return (
-    <div className={cn('border-l-2', depth > 0 ? 'ml-6 border-muted' : 'border-transparent')}>
-      <div className="p-3">
-        <div className="flex items-start gap-3">
-          <UserAvatar user={comment.author} className="size-6" />
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2">
-              <span className="font-medium text-sm">{comment.author.displayName}</span>
-              {comment.author.role === 'moderator' && <Badge className="bg-cyan-500/15 text-cyan-600 dark:text-cyan-400 text-xs">Mod</Badge>}
-              {comment.author.role === 'admin' && <Badge className="bg-amber-500/15 text-amber-600 dark:text-amber-400 text-xs">Admin</Badge>}
-              <span className="text-xs text-muted-foreground">{timeAgo(comment.createdAt)}</span>
-              {comment.hasSpoilers && <Badge className="bg-red-500/15 text-red-600 dark:text-red-400 text-xs">⚠ Spoilers</Badge>}
-            </div>
-            <p className="text-sm mt-1 whitespace-pre-wrap">{comment.content}</p>
-            <div className="flex items-center gap-3 mt-2">
-              {comment.reactions.map(r => (
-                <button
-                  key={r.type}
-                  className={cn(
-                    'text-xs px-2 py-0.5 rounded-full border transition-colors',
-                    r.userReacted ? 'bg-primary/10 border-primary/30' : 'hover:bg-muted/50'
-                  )}
-                >
-                  {reactionEmoji[r.type]} {r.count}
-                </button>
-              ))}
+    <div className={cn('flex gap-0', depth > 0 && 'ml-5')}>
+      {/* Thread line */}
+      <div className="flex flex-col items-center">
+        <div className={cn('w-5 h-5 flex items-center justify-center', depth === 0 && 'invisible')}>
+          <div className="w-px h-full bg-line-strong hover:bg-primary cursor-pointer transition-colors" />
+        </div>
+        {depth > 0 && (
+          <button
+            className="flex-1 w-px bg-line-strong hover:bg-primary cursor-pointer transition-colors min-h-5"
+            onClick={() => setCollapsed(!collapsed)}
+            aria-label={collapsed ? 'Expand' : 'Collapse'}
+          />
+        )}
+      </div>
+
+      <div className="flex-1 min-w-0 pb-2">
+        {/* Comment header */}
+        <div className="flex items-center gap-1.5 text-xs py-1">
+          <UserAvatar user={comment.author} className="size-5" />
+          <span className={cn(
+            'font-bold hover:underline cursor-pointer',
+            comment.author.role === 'moderator' && 'text-cyan-500',
+            comment.author.role === 'admin' && 'text-amber-500',
+          )}>
+            {comment.author.displayName}
+          </span>
+          {comment.author.role === 'moderator' && <Badge className="bg-cyan-500/15 text-cyan-500 text-[9px] px-1 py-0 h-3.5 font-semibold">Mod</Badge>}
+          {comment.author.role === 'admin' && <Badge className="bg-amber-500/15 text-amber-500 text-[9px] px-1 py-0 h-3.5 font-semibold">Admin</Badge>}
+          <span className="text-muted-foreground">·</span>
+          <span className="text-muted-foreground">{timeAgo(comment.createdAt)}</span>
+          {comment.hasSpoilers && (
+            <Badge className="bg-red-500/15 text-red-500 text-[9px] px-1 py-0 h-3.5 font-semibold">⚠ Spoilers</Badge>
+          )}
+          {collapsed && (
+            <button
+              onClick={() => setCollapsed(false)}
+              className="text-muted-foreground hover:text-foreground ml-1"
+            >
+              [+] {comment.replies.length} {comment.replies.length === 1 ? 'reply' : 'replies'}
+            </button>
+          )}
+        </div>
+
+        {/* Comment body */}
+        {!collapsed && (
+          <>
+            <p className="text-sm leading-relaxed whitespace-pre-wrap">{comment.content}</p>
+
+            {/* Action bar */}
+            <div className="flex items-center gap-0.5 mt-1 -ml-1">
+              <div className="flex items-center">
+                <VoteArrows count={comment.totalReactions} direction="horizontal" />
+              </div>
               <button
-                className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+                className="flex items-center gap-1 px-2 py-1 rounded-sm text-xs font-medium text-muted-foreground hover:bg-muted transition-colors"
                 onClick={() => setShowReply(!showReply)}
               >
-                {t('detail.reply')}
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                </svg>
+                Reply
+              </button>
+              <button className="flex items-center gap-1 px-2 py-1 rounded-sm text-xs font-medium text-muted-foreground hover:bg-muted transition-colors">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8" />
+                  <polyline points="16 6 12 2 8 6" />
+                  <line x1="12" y1="2" x2="12" y2="15" />
+                </svg>
+                Share
+              </button>
+              <button className="flex items-center gap-1 px-2 py-1 rounded-sm text-xs font-medium text-muted-foreground hover:bg-muted transition-colors">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <circle cx="12" cy="12" r="1" />
+                  <circle cx="19" cy="12" r="1" />
+                  <circle cx="5" cy="12" r="1" />
+                </svg>
               </button>
             </div>
+
+            {/* Reply box */}
             {showReply && (
-              <div className="mt-2">
-                <Textarea placeholder={t('detail.replyPlaceholder')} className="text-sm min-h-15" />
-                <div className="flex justify-end gap-2 mt-1">
-                  <Button variant="ghost" size="sm" onClick={() => setShowReply(false)}>Cancel</Button>
-                  <Button size="sm">{t('detail.postReply')}</Button>
+              <div className="mt-2 pl-2">
+                <div className="border border-line rounded-md overflow-hidden focus-within:border-primary/50 transition-colors">
+                  <Textarea
+                    placeholder={`Comment as u/${communityData.users[0]?.username || 'you'}`}
+                    className="text-sm min-h-20 border-0 focus-visible:ring-0 bg-transparent"
+                  />
+                  <div className="flex justify-end gap-2 p-2 bg-muted/30 border-t border-line">
+                    <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => setShowReply(false)}>Cancel</Button>
+                    <Button size="sm" className="h-7 text-xs">Reply</Button>
+                  </div>
                 </div>
               </div>
             )}
+
+            {/* Nested replies */}
+            {comment.replies.map(reply => (
+              <CommentItem key={reply.id} comment={reply} depth={depth + 1} t={t} />
+            ))}
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Comment Sort Bar                                                           */
+/* -------------------------------------------------------------------------- */
+
+type CommentSort = 'best' | 'top' | 'new' | 'controversial'
+
+function CommentSortBar({ active, onChange }: { active: CommentSort; onChange: (s: CommentSort) => void }) {
+  const options: { key: CommentSort; label: string }[] = [
+    { key: 'best', label: 'Best' },
+    { key: 'top', label: 'Top' },
+    { key: 'new', label: 'New' },
+    { key: 'controversial', label: 'Controversial' },
+  ]
+
+  return (
+    <div className="flex items-center gap-1 text-xs">
+      <span className="text-muted-foreground mr-1">Sort by:</span>
+      {options.map(opt => (
+        <button
+          key={opt.key}
+          onClick={() => onChange(opt.key)}
+          className={cn(
+            'px-2 py-1 rounded-sm font-medium transition-colors',
+            active === opt.key ? 'bg-muted text-foreground' : 'text-muted-foreground hover:bg-muted/50',
+          )}
+        >
+          {opt.label}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Sidebar                                                                    */
+/* -------------------------------------------------------------------------- */
+
+function PostSidebar({ post, categories, locale, t }: {
+  post: Post
+  categories: typeof communityData.categories
+  locale: string
+  t: (k: string) => string
+}) {
+  return (
+    <div className="space-y-4">
+      {/* About Community */}
+      <div className="rounded-md border border-line bg-card overflow-hidden">
+        <div className="bg-primary/20 px-4 py-2">
+          <div className="flex items-center gap-2">
+            <span className="text-base">{post.category.icon}</span>
+            <span className="font-bold text-sm">r/KamiSama</span>
           </div>
         </div>
+        <div className="p-3 text-xs text-muted-foreground leading-relaxed">
+          {post.category.description}
+        </div>
+        <div className="px-3 pb-3">
+          <Button className="w-full" size="sm">Join</Button>
+        </div>
       </div>
-      {comment.replies.map(reply => (
-        <CommentItem key={reply.id} comment={reply} depth={depth + 1} t={t} />
-      ))}
+
+      {/* Rules */}
+      <div className="rounded-md border border-line bg-card overflow-hidden">
+        <div className="px-4 py-2 border-b border-line">
+          <h3 className="font-bold text-xs">r/KamiSama Rules</h3>
+        </div>
+        <div className="p-2">
+          {[
+            'Be respectful and civil',
+            'No piracy or illegal content',
+            'Use spoiler tags appropriately',
+            'No self-promotion spam',
+            'Search before posting',
+          ].map((rule, i) => (
+            <div key={i} className="flex items-start gap-2 px-2 py-1 text-xs">
+              <span className="font-bold text-muted-foreground">{i + 1}.</span>
+              <span>{rule}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Tags */}
+      <div className="rounded-md border border-line bg-card overflow-hidden">
+        <div className="px-4 py-2 border-b border-line">
+          <h3 className="font-bold text-xs">Tags</h3>
+        </div>
+        <div className="p-3 flex flex-wrap gap-1.5">
+          {post.tags.map(tag => (
+            <Badge key={tag} variant="secondary" className="text-xs">#{tag}</Badge>
+          ))}
+        </div>
+      </div>
+
+      {/* Related Categories */}
+      <div className="rounded-md border border-line bg-card overflow-hidden">
+        <div className="px-4 py-2 border-b border-line">
+          <h3 className="font-bold text-xs">Categories</h3>
+        </div>
+        <div className="p-1">
+          {categories.slice(0, 5).map(cat => (
+            <button
+              key={cat.id}
+              className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-muted-foreground hover:bg-muted/50 rounded-sm transition-colors"
+              onClick={() => {}}
+            >
+              <span>{cat.icon}</span>
+              <span className="flex-1 text-left">{cat.name}</span>
+              <span className="opacity-50">{cat.postCount}</span>
+            </button>
+          ))}
+        </div>
+      </div>
     </div>
   )
 }
@@ -100,6 +318,7 @@ export default function DiscussionDetailPage() {
   const t = useTranslations('community')
   const router = useRouter()
   const pathname = usePathname()
+  const locale = pathname.split('/')[1] || 'en'
   const params = useParams()
   const { posts, categories } = communityData
 
@@ -107,21 +326,21 @@ export default function DiscussionDetailPage() {
   const post = posts.find(p => p.slug === slug || p.id === slug)
 
   const [newComment, setNewComment] = React.useState('')
+  const [commentSort, setCommentSort] = React.useState<CommentSort>('best')
 
   if (!post) {
     return (
       <div className="min-h-screen bg-background text-foreground flex items-center justify-center">
         <div className="text-center">
-          <h1 className="text-2xl font-bold mb-2">{t('detail.notFound')}</h1>
-          <Button variant="ghost" onClick={() => router.push('/community/discussions')}>
-            {t('detail.backToDiscussions')}
+          <h1 className="text-2xl font-bold mb-2">Post not found</h1>
+          <Button variant="ghost" onClick={() => router.push(`/${locale}/community/discussions`)}>
+            Back to discussions
           </Button>
         </div>
       </div>
     )
   }
 
-  // Mock replies
   const mockReplies: Comment[] = [
     {
       id: 'c-001', postId: post.id, parentId: null, author: communityData.users[1],
@@ -155,173 +374,130 @@ export default function DiscussionDetailPage() {
     },
   ]
 
-  function switchLocale(locale: 'fr' | 'en') {
-    router.push(`/${locale}${pathname}`)
-  }
-
   return (
-    <div className="min-h-screen bg-background text-foreground font-sans">
-      <header className="sticky top-0 z-50 border-b bg-background/95 backdrop-blur supports-backdrop-filter:bg-background/60">
-        <div className="max-w-5xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <a href="/" className="font-semibold text-lg">{t('siteTitle')}</a>
-            <nav className="hidden md:flex items-center gap-4 text-sm">
-              <a href="/community" className="text-muted-foreground hover:text-foreground transition-colors">{t('nav.community')}</a>
-              <a href="/community/discussions" className="font-medium text-primary">{t('nav.discussions')}</a>
-              <a href="/community/reviews" className="text-muted-foreground hover:text-foreground transition-colors">{t('nav.reviews')}</a>
-              <a href="/community/recommendations" className="text-muted-foreground hover:text-foreground transition-colors">{t('nav.recommendations')}</a>
-            </nav>
-          </div>
-          <div className="flex items-center gap-2">
-            <Button variant="ghost" size="sm" onClick={() => switchLocale('fr')}>🇫🇷 FR</Button>
-            <Button variant="ghost" size="sm" onClick={() => switchLocale('en')}>🇬🇧 EN</Button>
-          </div>
-        </div>
-      </header>
+    <div className="min-h-screen bg-background text-foreground">
+      {/* Content */}
+      <div className="max-w-300 mx-auto px-4 py-4">
+        <div className="flex gap-6">
+          {/* Main */}
+          <main className="flex-1 min-w-0">
+            {/* Breadcrumb */}
+            <div className="flex items-center gap-1.5 text-xs text-muted-foreground mb-3">
+              <button
+                onClick={() => router.push(`/${locale}/community`)}
+                className="hover:text-foreground transition-colors font-medium"
+              >
+                r/KamiSama
+              </button>
+              <span>/</span>
+              <span className="text-foreground">Posts</span>
+            </div>
 
-      <main className="max-w-5xl mx-auto px-4 sm:px-6 py-6">
-        {/* Breadcrumb */}
-        <div className="flex items-center gap-2 text-sm text-muted-foreground mb-4">
-          <button onClick={() => router.push('/community/discussions')} className="hover:text-foreground transition-colors">
-            {t('nav.discussions')}
-          </button>
-          <span>/</span>
-          <span className="text-foreground font-medium truncate">{post.title}</span>
-        </div>
-
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Main Content */}
-          <div className="lg:col-span-2 space-y-4">
             {/* Post */}
-            <Card>
-              <CardContent className="p-5">
-                <div className="flex items-center gap-2 flex-wrap mb-3">
-                  {post.isPinned && <Badge className="bg-indigo-500/15 text-indigo-600 dark:text-indigo-400 text-xs">Pinned</Badge>}
-                  {post.hasSpoilers && <Badge className="bg-red-500/15 text-red-600 dark:text-red-400 text-xs">⚠ Spoilers</Badge>}
-                  <Badge variant="outline" className="text-xs">{post.category.icon} {post.category.name}</Badge>
+            <div className="flex gap-2 p-3 rounded-md border border-line bg-card">
+              <VoteArrows count={post.totalReactions} />
+
+              <div className="flex-1 min-w-0">
+                {/* Meta */}
+                <div className="flex items-center gap-1.5 text-xs text-muted-foreground flex-wrap">
+                  <span className="font-bold text-foreground">{post.category.name}</span>
+                  <span>·</span>
+                  <span>Posted by</span>
+                  <span className="hover:underline cursor-pointer">u/{post.author.username}</span>
+                  <span>{timeAgo(post.createdAt)}</span>
+                </div>
+
+                {/* Title */}
+                <h1 className="text-lg font-bold mt-1 leading-snug">
+                  {post.isPinned && <span className="text-primary mr-1.5">📌</span>}
+                  {post.hasSpoilers && <span className="text-red-500 mr-1.5">⚠</span>}
+                  {post.title}
+                </h1>
+
+                {/* Content */}
+                <div className="mt-2 text-sm leading-relaxed whitespace-pre-wrap text-foreground/90">
+                  {post.content}
+                </div>
+
+                {/* Content link */}
+                {post.contentLink && (
+                  <div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
+                    <span className="px-2 py-0.5 rounded bg-muted border border-line">📎 {post.contentLink.title} ({post.contentLink.year})</span>
+                  </div>
+                )}
+
+                {/* Tags */}
+                <div className="flex items-center gap-1.5 mt-2 flex-wrap">
                   {post.tags.map(tag => (
-                    <Badge key={tag} variant="secondary" className="text-xs">#{tag}</Badge>
+                    <span key={tag} className="text-xs text-primary/80 hover:text-primary cursor-pointer">#{tag}</span>
                   ))}
                 </div>
-                <h1 className="text-xl font-bold">{post.title}</h1>
-                <div className="flex items-center gap-3 mt-2 mb-4">
-                  <UserAvatar user={post.author} className="size-6" />
-                  <div>
-                    <div className="font-medium text-sm">{post.author.displayName}</div>
-                    <div className="text-xs text-muted-foreground">{timeAgo(post.createdAt)}</div>
-                  </div>
-                  {post.contentLink && (
-                    <Badge variant="outline" className="ml-auto text-xs">
-                      📎 {post.contentLink.title} ({post.contentLink.year})
-                    </Badge>
-                  )}
-                </div>
-                <p className="text-sm whitespace-pre-wrap leading-relaxed">{post.content}</p>
-                <Separator className="my-4" />
-                <div className="flex items-center gap-4 text-sm text-muted-foreground">
-                  <span>👁 {post.views} {t('detail.views')}</span>
-                  <span>💬 {post.commentCount} {t('detail.comments')}</span>
-                  <div className="flex items-center gap-2">
-                    {post.reactions.map(r => (
-                      <button
-                        key={r.type}
-                        className={cn(
-                          'text-xs px-2 py-0.5 rounded-full border transition-colors',
-                          r.userReacted ? 'bg-primary/10 border-primary/30' : 'hover:bg-muted/50'
-                        )}
-                      >
-                        {reactionEmoji[r.type]} {r.count}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
 
-            {/* New Comment */}
-            <Card>
-              <CardContent className="p-4">
-                <h3 className="font-semibold text-sm mb-2">{t('detail.leaveComment')}</h3>
+                {/* Action bar */}
+                <div className="flex items-center gap-1 mt-3 -ml-1 border-t border-line pt-2">
+                  <span className="text-xs text-muted-foreground px-2">
+                    💬 {post.commentCount} Comments
+                  </span>
+                  <span className="text-xs text-muted-foreground px-2">
+                    👁 {post.views.toLocaleString()} Views
+                  </span>
+                  <button className="flex items-center gap-1.5 px-2 py-1 rounded-sm text-xs font-medium text-muted-foreground hover:bg-muted transition-colors">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8" />
+                      <polyline points="16 6 12 2 8 6" />
+                      <line x1="12" y1="2" x2="12" y2="15" />
+                    </svg>
+                    Share
+                  </button>
+                  <button className="flex items-center gap-1.5 px-2 py-1 rounded-sm text-xs font-medium text-muted-foreground hover:bg-muted transition-colors">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" />
+                    </svg>
+                    Save
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Comment input */}
+            <div className="mt-3 rounded-md border border-line bg-card p-3">
+              <div className="text-xs text-muted-foreground mb-2">
+                Comment as <span className="text-primary font-medium">u/{communityData.users[0]?.username || 'you'}</span>
+              </div>
+              <div className="border border-line rounded-md overflow-hidden focus-within:border-primary/50 transition-colors">
                 <Textarea
-                  placeholder={t('detail.commentPlaceholder')}
+                  placeholder="What are your thoughts?"
                   value={newComment}
                   onChange={(e) => setNewComment(e.target.value)}
-                  className="min-h-20"
+                  className="text-sm min-h-25 border-0 focus-visible:ring-0 bg-transparent"
                 />
-                <div className="flex items-center justify-between mt-2">
-                  <label className="flex items-center gap-2 text-xs text-muted-foreground">
-                    <input type="checkbox" className="rounded" />
-                    {t('detail.containsSpoilers')}
-                  </label>
-                  <Button size="sm">{t('detail.postComment')}</Button>
+                <div className="flex justify-end p-2 bg-muted/30 border-t border-line">
+                  <Button size="sm" className="h-7 text-xs" disabled={!newComment.trim()}>Comment</Button>
                 </div>
-              </CardContent>
-            </Card>
+              </div>
+            </div>
+
+            {/* Comment sort */}
+            <div className="mt-4 mb-3">
+              <CommentSortBar active={commentSort} onChange={setCommentSort} />
+            </div>
 
             {/* Comments */}
-            <div>
-              <h3 className="font-semibold text-sm mb-3">{t('detail.comments')} ({mockReplies.length})</h3>
-              <Card>
-                <CardContent className="p-0 divide-y">
-                  {mockReplies.map(c => <CommentItem key={c.id} comment={c} t={t} />)}
-                </CardContent>
-              </Card>
+            <div className="space-y-0">
+              {mockReplies.map(c => (
+                <CommentItem key={c.id} comment={c} t={t} />
+              ))}
             </div>
-          </div>
+          </main>
 
           {/* Sidebar */}
-          <div className="space-y-4">
-            {/* Author Card */}
-            <Card>
-              <CardContent className="p-4">
-                <h3 className="text-xs font-medium text-muted-foreground mb-3">{t('detail.author')}</h3>
-                <div
-                  className="flex items-center gap-3 cursor-pointer hover:bg-muted/50 rounded-lg p-2 transition-colors"
-                  onClick={() => router.push(`/community/users/${post.author.id}`)}
-                >
-                  <UserAvatar user={post.author} className="size-9" />
-                  <div>
-                    <div className="font-medium text-sm">{post.author.displayName}</div>
-                    <div className="text-xs text-muted-foreground">@{post.author.username}</div>
-                    <div className="text-xs text-muted-foreground mt-1">⭐ {post.author.reputation.toLocaleString()} {t('detail.reputation')}</div>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* Related Categories */}
-            <Card>
-              <CardContent className="p-4">
-                <h3 className="text-xs font-medium text-muted-foreground mb-3">{t('detail.relatedCategories')}</h3>
-                <div className="space-y-1">
-                  {categories.slice(0, 4).map(cat => (
-                    <button
-                      key={cat.id}
-                      className="w-full px-3 py-1.5 text-left rounded text-sm hover:bg-muted/50 transition-colors text-muted-foreground"
-                      onClick={() => router.push(`/community/discussions?category=${cat.slug}`)}
-                    >
-                      {cat.icon} {cat.name}
-                    </button>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* Guidelines */}
-            <Card className="border-primary/20 bg-primary/5">
-              <CardContent className="p-4">
-                <h3 className="text-xs font-medium text-primary mb-2">{t('detail.communityGuidelines')}</h3>
-                <ul className="text-xs text-muted-foreground space-y-1">
-                  <li>• {t('guidelines.respectful')}</li>
-                  <li>• {t('guidelines.noSpoilers')}</li>
-                  <li>• {t('guidelines.stayOnTopic')}</li>
-                  <li>• {t('guidelines.noSpam')}</li>
-                </ul>
-              </CardContent>
-            </Card>
-          </div>
+          <aside className="hidden lg:block w-77.5 shrink-0">
+            <div className="sticky top-4">
+              <PostSidebar post={post} categories={categories} locale={locale} t={t} />
+            </div>
+          </aside>
         </div>
-      </main>
+      </div>
     </div>
   )
 }

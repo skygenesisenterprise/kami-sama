@@ -128,6 +128,7 @@ export default function RecommendationsPage() {
 
   const [search, setSearch] = React.useState('')
   const [sortBy, setSortBy] = React.useState<'top' | 'recent' | 'discussed'>('top')
+  const locale = pathname.split('/')[1] || 'en'
 
   const filtered = React.useMemo(() => {
     let result = [...recommendations]
@@ -164,12 +165,12 @@ export default function RecommendationsPage() {
       <header className="sticky top-0 z-50 border-b bg-background/95 backdrop-blur supports-backdrop-filter:bg-background/60">
         <div className="max-w-5xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
           <div className="flex items-center gap-4">
-            <a href="/" className="font-semibold text-lg">{t('siteTitle')}</a>
+            <a href={`/${locale}`} className="font-semibold text-lg">{t('siteTitle')}</a>
             <nav className="hidden md:flex items-center gap-4 text-sm">
-              <a href="/community" className="text-muted-foreground hover:text-foreground transition-colors">{t('nav.community')}</a>
-              <a href="/community/discussions" className="text-muted-foreground hover:text-foreground transition-colors">{t('nav.discussions')}</a>
-              <a href="/community/reviews" className="text-muted-foreground hover:text-foreground transition-colors">{t('nav.reviews')}</a>
-              <a href="/community/recommendations" className="font-medium text-primary">{t('nav.recommendations')}</a>
+              <a href={`/${locale}/community`} className="text-muted-foreground hover:text-foreground transition-colors">{t('nav.community')}</a>
+              <a href={`/${locale}/community/discussions`} className="text-muted-foreground hover:text-foreground transition-colors">{t('nav.discussions')}</a>
+              <a href={`/${locale}/community/reviews`} className="text-muted-foreground hover:text-foreground transition-colors">{t('nav.reviews')}</a>
+              <a href={`/${locale}/community/recommendations`} className="font-medium text-primary">{t('nav.recommendations')}</a>
             </nav>
           </div>
           <div className="flex items-center gap-2">

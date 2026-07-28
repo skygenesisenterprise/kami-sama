@@ -38,10 +38,12 @@ type SortMode = 'recent' | 'popular' | 'unanswered'
 
 function PostRow({ post, t }: { post: Post; t: (k: string) => string }) {
   const router = useRouter()
+  const pathname = usePathname()
+  const locale = pathname.split('/')[1] || 'en'
   return (
     <div
       className="flex items-start gap-3 px-4 py-3 hover:bg-muted/50 transition-colors cursor-pointer border-b last:border-b-0"
-      onClick={() => router.push(`/community/discussions/${post.slug}`)}
+      onClick={() => router.push(`/${locale}/community/discussions/${post.slug}`)}
     >
       <UserAvatar user={post.author} className="size-6" />
       <div className="flex-1 min-w-0">
@@ -94,6 +96,7 @@ export default function DiscussionsPage() {
   const t = useTranslations('community')
   const router = useRouter()
   const pathname = usePathname()
+  const locale = pathname.split('/')[1] || 'en'
   const searchParams = useSearchParams()
   const { posts, categories } = communityData
 
@@ -141,12 +144,12 @@ export default function DiscussionsPage() {
       <header className="sticky top-0 z-50 border-b bg-background/95 backdrop-blur supports-backdrop-filter:bg-background/60">
         <div className="max-w-5xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
           <div className="flex items-center gap-4">
-            <a href="/" className="font-semibold text-lg">{t('siteTitle')}</a>
+            <a href={`/${locale}`} className="font-semibold text-lg">{t('siteTitle')}</a>
             <nav className="hidden md:flex items-center gap-4 text-sm">
-              <a href="/community" className="text-muted-foreground hover:text-foreground transition-colors">{t('nav.community')}</a>
-              <a href="/community/discussions" className="font-medium text-primary">{t('nav.discussions')}</a>
-              <a href="/community/reviews" className="text-muted-foreground hover:text-foreground transition-colors">{t('nav.reviews')}</a>
-              <a href="/community/recommendations" className="text-muted-foreground hover:text-foreground transition-colors">{t('nav.recommendations')}</a>
+              <a href={`/${locale}/community`} className="text-muted-foreground hover:text-foreground transition-colors">{t('nav.community')}</a>
+              <a href={`/${locale}/community/discussions`} className="font-medium text-primary">{t('nav.discussions')}</a>
+              <a href={`/${locale}/community/reviews`} className="text-muted-foreground hover:text-foreground transition-colors">{t('nav.reviews')}</a>
+              <a href={`/${locale}/community/recommendations`} className="text-muted-foreground hover:text-foreground transition-colors">{t('nav.recommendations')}</a>
             </nav>
           </div>
           <div className="flex items-center gap-2">
