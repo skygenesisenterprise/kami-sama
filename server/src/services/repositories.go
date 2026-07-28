@@ -130,6 +130,9 @@ func (r *Repositories) Profiles() interfaces.ProfileRepository {
 func (r *Repositories) MfaRecoveryCodes() interfaces.MfaRecoveryCodeRepository {
 	return &mfaRecoveryCodeRepository{db: r.db}
 }
+func (r *Repositories) MfaSecrets() interfaces.MfaSecretRepository {
+	return &mfaSecretRepository{db: r.db}
+}
 func (r *Repositories) WithDB(db *gorm.DB) *Repositories { return &Repositories{db: db} }
 
 type userRepository struct{ db *gorm.DB }
@@ -150,8 +153,6 @@ func (r *userRepository) GetByEmail(ctx context.Context, email string) (*models.
 func (r *userRepository) ListStale(ctx context.Context, before time.Time, limit int) ([]models.User, error) {
 	var items []models.User
 	err := r.db.WithContext(ctx).
-		Where("last_seen_at IS NOT NULL AND last_seen_at < ? AND presence_status <> ?", before, "offline").
-		Order("last_seen_at asc").
 		Limit(limit).
 		Find(&items).Error
 	return items, err
@@ -1748,13 +1749,13 @@ func (r *profileRepository) GetByID(ctx context.Context, id string) (*models.Pro
 
 func (r *profileRepository) GetByUserID(ctx context.Context, userID string) ([]models.Profile, error) {
 	var items []models.Profile
-	err := r.db.WithContext(ctx).Where("user_id = ? AND deleted_at IS NULL", userID).Order("sort_order ASC, created_at ASC").Find(&items).Error
+	err := r.db.WithContext(ctx).Where("user_id = ?", userID).Order("sort_order ASC, created_at ASC").Find(&items).Error
 	return items, err
 }
 
 func (r *profileRepository) GetDefaultByUserID(ctx context.Context, userID string) (*models.Profile, error) {
 	var item models.Profile
-	err := r.db.WithContext(ctx).Where("user_id = ? AND is_default = ? AND deleted_at IS NULL", userID, true).First(&item).Error
+	err := r.db.WithContext(ctx).Where("user_id = ? AND is_default = ?", userID, true).First(&item).Error
 	return &item, normalizeNotFound(err, utils.NewError(404, "DEFAULT_PROFILE_NOT_FOUND", "The default profile was not found.", nil))
 }
 

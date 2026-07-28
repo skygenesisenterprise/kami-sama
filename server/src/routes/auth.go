@@ -513,13 +513,21 @@ func (h *apiHandler) getFirstUserInfo(c *gin.Context) {
 		return
 	}
 	
+	userRoles, _ := h.deps.Repos.UserRoles().ListByUser(c.Request.Context(), firstUser.ID)
+	var roles []string
+	for _, ur := range userRoles {
+		role, err := h.deps.Repos.Roles().GetByID(c.Request.Context(), ur.RoleID)
+		if err == nil {
+			roles = append(roles, role.Slug)
+		}
+	}
+
 	utils.Success(c, http.StatusOK, gin.H{
 		"user": gin.H{
 			"id":          firstUser.ID,
 			"email":       firstUser.Email,
 			"displayName": firstUser.DisplayName,
-			"roles":       firstUser.Roles,
-			"permissions": firstUser.Permissions,
+			"roles":       roles,
 			"createdAt":   firstUser.CreatedAt,
 		},
 	})
@@ -567,30 +575,29 @@ func (h *apiHandler) ensureUserIsOwner(c *gin.Context) {
 		return
 	}
 	
-	// Mettre à jour les rôles
-	user.Roles = []string{"superadmin", "admin", "owner"}
-	// Définir toutes les permissions pour superadmin
-	user.Permissions = []string{
-		"workspace:read", "workspace:write",
-		"meeting:read", "meeting:write",
-		"session:read", "session:write",
-		"admin:read", "admin:write",
-		"platform:read", "platform:write",
+	// Mettre à jour les rôles via UserRoles repository
+	adminSlugs := []string{"superadmin", "admin", "owner"}
+	for _, slug := range adminSlugs {
+		role, err := h.deps.Repos.Roles().GetBySlug(c.Request.Context(), slug)
+		if err != nil {
+			continue
+		}
+		existing, _ := h.deps.Repos.UserRoles().GetByUserAndRole(c.Request.Context(), user.ID, role.ID)
+		if existing == nil {
+			_ = h.deps.Repos.UserRoles().Assign(c.Request.Context(), &models.UserRole{
+				UserID:     user.ID,
+				RoleID:     role.ID,
+				AssignedAt: time.Now().UTC(),
+			})
+		}
 	}
-	user.UpdatedAt = time.Now().UTC()
-	
-	if err := h.deps.Database.Gorm().Save(&user).Error; err != nil {
-		utils.Error(c, err)
-		return
-	}
-	
+
 	utils.Success(c, http.StatusOK, gin.H{
 		"message": "User roles updated to superadmin",
 		"user": gin.H{
-			"id":          user.ID,
-			"email":       user.Email,
-			"roles":       user.Roles,
-			"permissions": user.Permissions,
+			"id":    user.ID,
+			"email": user.Email,
+			"roles": adminSlugs,
 		},
 	})
 }

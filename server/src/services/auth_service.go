@@ -98,27 +98,14 @@ func (s *AuthService) Register(ctx context.Context, req RegisterInput, meta Requ
 	now := time.Now().UTC()
 	userID := utils.NewID()
 	
-	// Déterminer les rôles et permissions pour le premier utilisateur
 	isFirstUser := s.isFirstUser(ctx)
-	var initialRoles []string
-	var initialPermissions []string
-	if isFirstUser {
-		initialRoles = []string{"superadmin", "admin", "owner"}
-		initialPermissions = roleToPermissions("superadmin")
-	} else {
-		initialRoles = []string{"member"}
-		initialPermissions = roleToPermissions("member")
-	}
-	
+
 	user := &models.User{
 		Common:          models.Common{ID: userID, CreatedAt: now, UpdatedAt: now},
 		Email:           email,
 		EmailNormalized: normalized,
 		DisplayName:     strings.TrimSpace(req.DisplayName),
 		Status:          "active",
-		PresenceStatus:  "offline",
-		Roles:           initialRoles,
-		Permissions:     initialPermissions,
 	}
 	credential := &models.LocalCredential{
 		Common:            models.Common{ID: utils.NewID(), CreatedAt: now, UpdatedAt: now},
@@ -197,42 +184,35 @@ func (s *AuthService) isFirstUser(ctx context.Context) bool {
 }
 
 // EnsureFirstUserHasAdminRoles s'assure que le premier utilisateur a les rôles superadmin
-// Cette fonction peut être appelée au démarrage ou lors de la création du premier utilisateur
 func (s *AuthService) EnsureFirstUserHasAdminRoles(ctx context.Context) error {
-	// Trouver le premier utilisateur (le plus ancien)
 	var firstUser models.User
 	if err := s.db.Gorm().
 		Model(&models.User{}).
 		Order("created_at ASC").
 		First(&firstUser).Error; err != nil {
-		return err // Pas d'utilisateurs encore, c'est normal
-	}
-
-	// Vérifier si l'utilisateur a déjà les rôles admin
-	hasSuperAdminRole := false
-	for _, role := range firstUser.Roles {
-		if role == "superadmin" {
-			hasSuperAdminRole = true
-			break
-		}
-	}
-
-	if hasSuperAdminRole {
-		return nil // Déjà superadmin, rien à faire
-	}
-
-	// Mettre à jour les rôles de l'utilisateur
-	firstUser.Roles = []string{"superadmin", "admin", "owner"}
-	firstUser.Permissions = roleToPermissions("superadmin")
-	firstUser.UpdatedAt = time.Now().UTC()
-
-	if err := s.repos.Users().Update(ctx, &firstUser); err != nil {
 		return err
 	}
 
-	// Note: Les workspace members seront mis à jour automatiquement lors de la création
-	// ou via les endpoints admin. Le plus important est que l'utilisateur ait les rôles
-	// et permissions au niveau de la plateforme.
+	userRoles, _ := s.repos.UserRoles().ListByUser(ctx, firstUser.ID)
+	for _, ur := range userRoles {
+		role, err := s.repos.Roles().GetByID(ctx, ur.RoleID)
+		if err == nil && role.Slug == "superadmin" {
+			return nil
+		}
+	}
+
+	adminSlugs := []string{"superadmin", "admin", "owner"}
+	for _, slug := range adminSlugs {
+		role, err := s.repos.Roles().GetBySlug(ctx, slug)
+		if err != nil {
+			continue
+		}
+		_ = s.repos.UserRoles().Assign(ctx, &models.UserRole{
+			UserID:     firstUser.ID,
+			RoleID:     role.ID,
+			AssignedAt: time.Now().UTC(),
+		})
+	}
 
 	return nil
 }
@@ -379,7 +359,7 @@ func (s *AuthService) Refresh(ctx context.Context, refreshToken string, meta Req
 		if txErr != nil {
 			return txErr
 		}
-		roles, permissions := workspaceRoleAndPermissions(user.ID, session.WorkspaceID, txRepos)
+		workspaceID, roles, permissions, _ := s.resolvePrimaryWorkspace(ctx, user.ID)
 		nextToken, nextHash, createErr := issueRefreshToken()
 		if createErr != nil {
 			return createErr
@@ -405,7 +385,6 @@ func (s *AuthService) Refresh(ctx context.Context, refreshToken string, meta Req
 			return err
 		}
 		session.TokenHash = nextHash
-		session.RefreshTokenHash = nextHash
 		session.LastUsedAt = now
 		session.UserAgent = stringPtr(meta.UserAgent)
 		session.IPAddress = stringPtr(meta.IPAddress)
@@ -415,7 +394,7 @@ func (s *AuthService) Refresh(ctx context.Context, refreshToken string, meta Req
 		}
 		accessToken, err := s.identity.IssueToken(ctx, interfaces.Principal{
 			UserID:      user.ID,
-			WorkspaceID: valueOrEmpty(session.WorkspaceID),
+			WorkspaceID: valueOrEmpty(workspaceID),
 			Roles:       roles,
 			Permissions: permissions,
 			SessionID:   session.ID,
@@ -424,7 +403,7 @@ func (s *AuthService) Refresh(ctx context.Context, refreshToken string, meta Req
 			return err
 		}
 		result = &AuthResult{
-			User:         s.toUserDTO(user, session.WorkspaceID, roles, permissions),
+			User:         s.toUserDTO(user, workspaceID, roles, permissions),
 			AccessToken:  accessToken,
 			ExpiresIn:    int64(s.cfg.JWTAccessTTL.Seconds()),
 			RefreshToken: nextToken,
@@ -608,8 +587,6 @@ func (s *AuthService) createAuthenticatedSession(ctx context.Context, user *mode
 		Common:               models.Common{ID: utils.NewID(), CreatedAt: now, UpdatedAt: now},
 		TokenHash:            refreshHash,
 		UserID:               user.ID,
-		WorkspaceID:          workspaceID,
-		RefreshTokenHash:     refreshHash,
 		RefreshTokenFamilyID: utils.NewID(),
 		UserAgent:            stringPtr(meta.UserAgent),
 		IPAddress:            stringPtr(meta.IPAddress),
@@ -698,7 +675,7 @@ func (s *AuthService) toUserDTO(user *models.User, workspaceID *string, roles, p
 		DisplayName:    user.DisplayName,
 		AvatarURL:      user.AvatarURL,
 		Status:         user.Status,
-		PresenceStatus: user.PresenceStatus,
+		PresenceStatus: "offline",
 		WorkspaceID:    workspaceID,
 		Roles:          roles,
 		Permissions:    permissions,

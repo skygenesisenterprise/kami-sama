@@ -58,7 +58,7 @@ func (h *AdminUserHandler) GetByID(c *gin.Context) {
 		"displayName":     user.DisplayName,
 		"avatarUrl":       user.AvatarURL,
 		"status":          user.Status,
-		"presenceStatus":  user.PresenceStatus,
+		"presenceStatus":  "offline",
 		"disabledAt":      user.DisabledAt,
 		"emailVerifiedAt": user.EmailVerifiedAt,
 		"createdAt":       user.CreatedAt,

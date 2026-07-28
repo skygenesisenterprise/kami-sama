@@ -28,7 +28,7 @@ type AdminUserListItem struct {
 	DisplayName       string     `json:"displayName"`
 	AvatarURL         *string    `json:"avatarUrl,omitempty"`
 	Status            string     `json:"status"`
-	PresenceStatus    string     `json:"presenceStatus"`
+
 	DisabledAt        *time.Time `json:"disabledAt,omitempty"`
 	EmailVerifiedAt   *time.Time `json:"emailVerifiedAt,omitempty"`
 	CreatedAt         time.Time  `json:"createdAt"`
@@ -93,7 +93,7 @@ func (s *AdminUserService) List(ctx context.Context, opts ListAdminUsersOpts) ([
 			DisplayName:     u.DisplayName,
 			AvatarURL:       u.AvatarURL,
 			Status:          u.Status,
-			PresenceStatus:  u.PresenceStatus,
+
 			DisabledAt:      u.DisabledAt,
 			EmailVerifiedAt: u.EmailVerifiedAt,
 			CreatedAt:       u.CreatedAt,

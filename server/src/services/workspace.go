@@ -281,7 +281,6 @@ func (s *WorkspaceService) ProvisionWorkspaceUser(
 				EmailNormalized: normalized,
 				DisplayName:     strings.TrimSpace(input.DisplayName),
 				Status:          "active",
-				PresenceStatus:  "offline",
 			}
 			if err := txRepos.Users().Create(ctx, targetUser); err != nil {
 				return err
@@ -415,24 +414,19 @@ func (s *WorkspaceService) toWorkspaceMemberDTOs(ctx context.Context, items []mo
 }
 
 func toWorkspaceMemberDTO(item *models.WorkspaceMember, user *models.User) *WorkspaceMemberDTO {
-	lastSeenAt := item.LastSeenAt
-	if user.LastSeenAt != nil {
-		lastSeenAt = user.LastSeenAt
-	}
-
 	return &WorkspaceMemberDTO{
 		ID:             item.ID,
 		WorkspaceID:    item.WorkspaceID,
 		UserID:         item.UserID,
 		Role:           item.Role,
 		JoinedAt:       item.JoinedAt,
-		LastSeenAt:     lastSeenAt,
+		LastSeenAt:     item.LastSeenAt,
 		CreatedAt:      item.CreatedAt,
 		UpdatedAt:      item.UpdatedAt,
 		DisplayName:    user.DisplayName,
 		Email:          user.Email,
 		AvatarURL:      user.AvatarURL,
 		Status:         user.Status,
-		PresenceStatus: user.PresenceStatus,
+		PresenceStatus: "offline",
 	}
 }

@@ -396,6 +396,14 @@ type UserRoleRepository interface {
 	CountByRole(ctx context.Context, roleID string) (int64, error)
 }
 
+// MfaSecret repository
+type MfaSecretRepository interface {
+	GetByUserID(ctx context.Context, userID string) (*models.MfaSecret, error)
+	Create(ctx context.Context, secret *models.MfaSecret) error
+	Update(ctx context.Context, secret *models.MfaSecret) error
+	DeleteByUserID(ctx context.Context, userID string) error
+}
+
 // Library (SourceConfig) repository
 type LibraryRepository interface {
 	Create(ctx context.Context, library *models.SourceConfig) error

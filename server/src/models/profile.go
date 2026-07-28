@@ -2,8 +2,6 @@ package models
 
 import (
 	"time"
-
-	"gorm.io/gorm"
 )
 
 type Profile struct {
@@ -15,8 +13,7 @@ type Profile struct {
 	PinEnabled  bool           `gorm:"column:pin_enabled;default:false" json:"pinEnabled"`
 	IsDefault   bool           `gorm:"column:is_default;default:false;index:idx_profiles_user_default,priority:2" json:"isDefault"`
 	SortOrder   int            `gorm:"column:sort_order;default:0;index:idx_profiles_user_sort,priority:2" json:"sortOrder"`
-	LastUsedAt  *time.Time     `gorm:"column:last_used_at" json:"lastUsedAt,omitempty"`
-	DeletedAt   gorm.DeletedAt `gorm:"column:deleted_at;index" json:"-"`
+	LastUsedAt  *time.Time `gorm:"column:last_used_at" json:"lastUsedAt,omitempty"`
 }
 
 func (Profile) TableName() string {

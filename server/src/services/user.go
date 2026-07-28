@@ -94,7 +94,6 @@ func (s *UserService) EnsureUser(ctx context.Context, principal interfaces.Princ
 		EmailNormalized: principal.UserID + "@local.aether",
 		DisplayName:     principal.UserID,
 		Status:          "active",
-		PresenceStatus:  "online",
 	}
 	if createErr := s.users.Create(ctx, user); createErr != nil {
 		return nil, createErr
@@ -118,13 +117,6 @@ func (s *UserService) UpdateMe(ctx context.Context, principal interfaces.Princip
 		user.AvatarURL = &trimmed
 	} else {
 		user.AvatarURL = nil
-	}
-	if status != "" {
-		normalizedStatus := normalizePresenceState(status)
-		if normalizedStatus == "" {
-			return nil, utils.ErrValidationFailed
-		}
-		user.PresenceStatus = normalizedStatus
 	}
 	user.UpdatedAt = time.Now().UTC()
 	if err := s.users.Update(ctx, user); err != nil {

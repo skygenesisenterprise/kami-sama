@@ -9,8 +9,13 @@
 #   - computes a SHA-256 of the active Prisma schema file
 #   - compares it to a hash file persisted on the database volume
 #   - if the hashes match, prints "No migration needed" and exits cleanly
-#   - otherwise runs `prisma db push` to bring the database in sync
+#   - otherwise runs `prisma migrate deploy` to apply pending migrations
 #   - persists the new hash on the volume so the next recreate is a no-op
+#
+# Safety:
+#   Uses Prisma Migrate (not db push) so only explicit migration files are
+#   applied. No --accept-data-loss — schema changes that would destroy data
+#   must be written as intentional migration steps.
 #
 # Environment variables (consumed):
 #   SCHEMA_PATH    Path to schema.prisma (default: /prisma/schema.prisma)
@@ -96,7 +101,8 @@ if [ -z "${DATABASE_URL:-}" ]; then
   export DATABASE_URL="postgresql://${PG_USER}:${PG_PASSWORD}@${PG_HOST}:${PG_PORT}/${PG_DATABASE}?schema=public"
 fi
 
-# Print a structural diff summary when possible for human readability.
+  # Print a structural diff summary when possible for human readability.
+  echo "   • mode        : prisma migrate deploy"
 if command -v npx >/dev/null 2>&1 && [ -f "${PRISMA_DIR}/package.json" ]; then
   echo ""
   echo "📐 Diff summary (schema.prisma → database):"
@@ -113,14 +119,12 @@ fi
 
 (
   cd "${PRISMA_DIR}"
-  # Persist the new client first so downstream tools can introspect it later.
+  # Generate the Prisma client first so tools can introspect it later.
   npx --no-install prisma generate >/dev/null 2>&1 || true
-  # Push the schema changes. --accept-data-loss is required only when columns
-  # are removed in the schema; the script will skip this automatically when
-  # the diff is purely additive.
-  npx --no-install prisma db push \
-    --schema "${SCHEMA_PATH}" \
-    --skip-generate
+  # Apply pending migrations safely. Only unapplied migrations from the
+  # migrations/ directory are executed — no data loss, no --accept-data-loss.
+  # If no migrations exist yet this is a no-op.
+  npx --no-install prisma migrate deploy
 )
 
 # ---------------------------------------------------------------------------

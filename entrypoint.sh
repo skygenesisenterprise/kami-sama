@@ -5,9 +5,9 @@ export PATH="/usr/local/go/bin:/go/bin:/root/go/bin:/root/.local/share/corepack:
 export NODE_ENV="${NODE_ENV:-development}"
 export LOG_LEVEL="${LOG_LEVEL:-info}"
 export PRISMA_SCHEMA_DEPLOY="${PRISMA_SCHEMA_DEPLOY:-true}"
-export PRISMA_DB_PUSH="${PRISMA_DB_PUSH:-false}"
+export PRISMA_MIGRATE_DEPLOY="${PRISMA_MIGRATE_DEPLOY:-true}"
 export ALLOW_MIGRATION_FAILURE="${ALLOW_MIGRATION_FAILURE:-true}"
-export PRISMA_HOT_RELOAD="${PRISMA_HOT_RELOAD:-false}"
+export PRISMA_HOT_RELOAD="${PRISMA_HOT_RELOAD:-true}"
 export PRISMA_POLL_INTERVAL="${PRISMA_POLL_INTERVAL:-5}"
 
 # ── Logging ────────────────────────────────────────────────────────────────────
@@ -165,24 +165,26 @@ run_prisma_schema_deploy() {
         return 1
     fi
 
+    if [ "${PRISMA_MIGRATE_DEPLOY:-true}" != "true" ]; then
+        log_info "Prisma migrate deploy disabled"
+        return 0
+    fi
+
     log_info "Generating Prisma client..."
     # shellcheck disable=SC2086
     DATABASE_URL="${DATABASE_URL}" ${prisma_bin} generate
 
-    if [ "${PRISMA_DB_PUSH:-false}" != "true" ]; then
-        log_info "Prisma db push disabled; leaving database schema ownership to Go migrations"
-        return 0
-    fi
-
-    log_info "Synchronizing Prisma schema..."
+    log_info "Applying pending Prisma migrations..."
     # shellcheck disable=SC2086
-    DATABASE_URL="${DATABASE_URL}" ${prisma_bin} db push --accept-data-loss
+    DATABASE_URL="${DATABASE_URL}" ${prisma_bin} migrate deploy
 }
 
 # ── Prisma hot-reload watcher ───────────────────────────────────────────────
 
 start_prisma_watcher() {
     schema_path="${SCHEMA_PATH:-/prisma/schema.prisma}"
+    schema_dir="$(dirname "${schema_path}")"
+    migrations_dir="${schema_dir}/migrations"
     deploy_script="${DEPLOY_SCRIPT:-/usr/local/bin/deploy-schema.sh}"
     poll_interval="${PRISMA_POLL_INTERVAL:-5}"
 
@@ -191,38 +193,50 @@ start_prisma_watcher() {
         return 0
     fi
 
+    compute_combined_hash() {
+        schema_hash=$(sha256sum "${schema_path}" 2>/dev/null | awk '{print $1}' || echo "")
+        mig_hash=""
+        if [ -d "${migrations_dir}" ]; then
+            mig_hash=$(find "${migrations_dir}" -type f -name "*.sql" -o -name "migration_lock.toml" 2>/dev/null \
+                | sort \
+                | xargs -d '\n' sha256sum 2>/dev/null \
+                | sha256sum \
+                | awk '{print $1}' || echo "")
+        fi
+        echo "${schema_hash}|${mig_hash}"
+    }
+
+    run_migration() {
+        log_info "Change detected — deploying migrations..."
+        if [ -x "${deploy_script}" ]; then
+            "${deploy_script}" || log_warn "Migration deploy failed (hot-reload)"
+        else
+            run_prisma_schema_deploy || log_warn "Migration deploy failed (hot-reload)"
+        fi
+    }
+
     if command -v inotifywait >/dev/null 2>&1; then
-        log_info "Watching ${schema_path} for changes (inotify)"
-        prev_hash=""
+        log_info "Watching schema and migrations for changes (inotify)"
+        log_info "  • schema    : ${schema_path}"
+        log_info "  • migrations: ${migrations_dir}"
         while true; do
             inotifywait -qq -e modify,create,delete,move "${schema_path}" 2>/dev/null || {
-                sleep "${poll_interval}"
-                continue
+                inotifywait -qq -e modify,create,delete,move -r "${migrations_dir}" 2>/dev/null || {
+                    sleep "${poll_interval}"
+                    continue
+                }
             }
-            curr_hash=$(sha256sum "${schema_path}" 2>/dev/null | awk '{print $1}' || true)
-            if [ "${curr_hash}" = "${prev_hash}" ]; then
-                continue
-            fi
-            prev_hash="${curr_hash}"
-            log_info "Schema change detected — running migration..."
-            if [ -x "${deploy_script}" ]; then
-                "${deploy_script}" || log_warn "Migration failed (hot-reload)"
-            else
-                run_prisma_schema_deploy || log_warn "Migration failed (hot-reload)"
-            fi
+            run_migration
         done
     else
-        log_info "Watching ${schema_path} for changes (polling every ${poll_interval}s)"
+        log_info "Watching schema and migrations for changes (polling every ${poll_interval}s)"
+        log_info "  • schema    : ${schema_path}"
+        log_info "  • migrations: ${migrations_dir}"
         prev_hash=""
         while true; do
-            curr_hash=$(sha256sum "${schema_path}" 2>/dev/null | awk '{print $1}' || true)
+            curr_hash="$(compute_combined_hash)"
             if [ -n "${prev_hash}" ] && [ "${curr_hash}" != "${prev_hash}" ]; then
-                log_info "Schema change detected — running migration..."
-                if [ -x "${deploy_script}" ]; then
-                    "${deploy_script}" || log_warn "Migration failed (hot-reload)"
-                else
-                    run_prisma_schema_deploy || log_warn "Migration failed (hot-reload)"
-                fi
+                run_migration
             fi
             prev_hash="${curr_hash}"
             sleep "${poll_interval}"

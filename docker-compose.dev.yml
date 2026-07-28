@@ -34,6 +34,7 @@ services:
       - postgres-data:/var/lib/postgresql/data
       - ./server/prisma/schema.prisma:/app/server/prisma/schema.prisma:ro
       - ./server/prisma/package.json:/app/server/prisma/package.json:ro
+      - ./server/prisma/migrations:/app/server/prisma/migrations:ro
       - ./infrastructure/docker/deploy-schema.sh:/usr/local/bin/deploy-schema.sh:ro
       - ./entrypoint.sh:/entrypoint.sh
     environment:
@@ -42,8 +43,8 @@ services:
       POSTGRES_DB: ${PG_DB:-postgres}
       DATABASE_URL: postgresql://${PG_USER:-postgres}:${PG_PASS:-postgres}@localhost:5432/${PG_DB:-postgres}
       PRISMA_SCHEMA_DEPLOY: "true"
-      PRISMA_DB_PUSH: "true"
-      PRISMA_HOT_RELOAD: ${PRISMA_HOT_RELOAD:-false}
+      PRISMA_MIGRATE_DEPLOY: "true"
+      PRISMA_HOT_RELOAD: ${PRISMA_HOT_RELOAD:-true}
       PRISMA_POLL_INTERVAL: ${PRISMA_POLL_INTERVAL:-5}
       ALLOW_MIGRATION_FAILURE: "true"
     expose:

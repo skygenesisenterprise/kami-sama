@@ -23,8 +23,8 @@ type MfaService struct {
 }
 
 type MfaSetupResult struct {
-	Secret      string   `json:"secret"`
-	OtpauthURL  string   `json:"otpauthUrl"`
+	Secret        string   `json:"secret"`
+	OtpauthURL    string   `json:"otpauthUrl"`
 	RecoveryCodes []string `json:"recoveryCodes"`
 }
 
@@ -57,7 +57,9 @@ func (s *MfaService) Setup(ctx context.Context, userID string) (*MfaSetupResult,
 	if err != nil {
 		return nil, err
 	}
-	if user.MfaEnabled {
+
+	existing, err := s.repos.MfaSecrets().GetByUserID(ctx, userID)
+	if err == nil && existing.ConfirmedAt != nil {
 		return nil, utils.NewError(400, "MFA_ALREADY_ENABLED", "MFA is already enabled on this account.", nil)
 	}
 
@@ -71,10 +73,28 @@ func (s *MfaService) Setup(ctx context.Context, userID string) (*MfaSetupResult,
 
 	secret := key.Secret()
 	now := time.Now().UTC()
-	user.MfaSecret = &secret
-	user.UpdatedAt = now
-	if err := s.repos.Users().Update(ctx, user); err != nil {
-		return nil, err
+	otpauthURL := key.URL()
+
+	if existing != nil {
+		existing.Secret = secret
+		existing.OtpauthUrl = &otpauthURL
+		existing.ConfirmedAt = nil
+		existing.UpdatedAt = now
+		if err := s.repos.MfaSecrets().Update(ctx, existing); err != nil {
+			return nil, err
+		}
+	} else {
+		mfaSecret := &models.MfaSecret{
+			ID:         utils.NewID(),
+			UserID:     userID,
+			Secret:     secret,
+			OtpauthUrl: &otpauthURL,
+			CreatedAt:  now,
+			UpdatedAt:  now,
+		}
+		if err := s.repos.MfaSecrets().Create(ctx, mfaSecret); err != nil {
+			return nil, err
+		}
 	}
 
 	recoveryCodes := s.generateRecoveryCodes(s.cfg.MFARecoveryCodeLength)
@@ -90,26 +110,23 @@ func (s *MfaService) Setup(ctx context.Context, userID string) (*MfaSetupResult,
 }
 
 func (s *MfaService) VerifyAndEnable(ctx context.Context, userID string, code string) (*MfaVerifyResult, error) {
-	user, err := s.repos.Users().GetByID(ctx, userID)
+	mfaSecret, err := s.repos.MfaSecrets().GetByUserID(ctx, userID)
 	if err != nil {
-		return nil, err
-	}
-	if user.MfaEnabled {
-		return nil, utils.NewError(400, "MFA_ALREADY_ENABLED", "MFA is already enabled on this account.", nil)
-	}
-	if user.MfaSecret == nil || *user.MfaSecret == "" {
 		return nil, utils.NewError(400, "MFA_NOT_SETUP", "MFA has not been set up. Call /auth/mfa/setup first.", nil)
 	}
+	if mfaSecret.ConfirmedAt != nil {
+		return nil, utils.NewError(400, "MFA_ALREADY_ENABLED", "MFA is already enabled on this account.", nil)
+	}
 
-	valid := totp.Validate(code, *user.MfaSecret)
+	valid := totp.Validate(code, mfaSecret.Secret)
 	if !valid {
 		return nil, utils.NewError(400, "INVALID_MFA_CODE", "The provided MFA code is invalid.", nil)
 	}
 
 	now := time.Now().UTC()
-	user.MfaEnabled = true
-	user.UpdatedAt = now
-	if err := s.repos.Users().Update(ctx, user); err != nil {
+	mfaSecret.ConfirmedAt = &now
+	mfaSecret.UpdatedAt = now
+	if err := s.repos.MfaSecrets().Update(ctx, mfaSecret); err != nil {
 		return nil, err
 	}
 
@@ -117,48 +134,37 @@ func (s *MfaService) VerifyAndEnable(ctx context.Context, userID string, code st
 }
 
 func (s *MfaService) Disable(ctx context.Context, userID string, code string) (*MfaDisableResult, error) {
-	user, err := s.repos.Users().GetByID(ctx, userID)
+	mfaSecret, err := s.repos.MfaSecrets().GetByUserID(ctx, userID)
 	if err != nil {
-		return nil, err
-	}
-	if !user.MfaEnabled {
 		return nil, utils.NewError(400, "MFA_NOT_ENABLED", "MFA is not enabled on this account.", nil)
 	}
-	if user.MfaSecret == nil || *user.MfaSecret == "" {
-		return nil, utils.NewError(400, "MFA_NOT_SETUP", "MFA secret is not set.", nil)
+	if mfaSecret.ConfirmedAt == nil {
+		return nil, utils.NewError(400, "MFA_NOT_ENABLED", "MFA is not enabled on this account.", nil)
 	}
 
-	valid := totp.Validate(code, *user.MfaSecret)
+	valid := totp.Validate(code, mfaSecret.Secret)
 	if !valid {
 		return nil, utils.NewError(400, "INVALID_MFA_CODE", "The provided MFA code is invalid.", nil)
 	}
 
-	now := time.Now().UTC()
-	user.MfaEnabled = false
-	user.MfaSecret = nil
-	user.UpdatedAt = now
-	if err := s.repos.Users().Update(ctx, user); err != nil {
+	if err := s.repos.MfaSecrets().DeleteByUserID(ctx, userID); err != nil {
 		return nil, err
 	}
-
 	_ = s.repos.MfaRecoveryCodes().DeleteByUserID(ctx, userID)
 
 	return &MfaDisableResult{Disabled: true}, nil
 }
 
 func (s *MfaService) ValidateLogin(ctx context.Context, userID string, code string) (*MfaValidateLoginResult, error) {
-	user, err := s.repos.Users().GetByID(ctx, userID)
+	mfaSecret, err := s.repos.MfaSecrets().GetByUserID(ctx, userID)
 	if err != nil {
-		return nil, err
-	}
-	if !user.MfaEnabled {
 		return &MfaValidateLoginResult{Valid: true}, nil
 	}
-	if user.MfaSecret == nil || *user.MfaSecret == "" {
-		return nil, utils.NewError(500, "MFA_SECRET_MISSING", "MFA is enabled but no secret is configured.", nil)
+	if mfaSecret.ConfirmedAt == nil {
+		return &MfaValidateLoginResult{Valid: true}, nil
 	}
 
-	valid := totp.Validate(code, *user.MfaSecret)
+	valid := totp.Validate(code, mfaSecret.Secret)
 	if !valid {
 		return nil, utils.NewError(400, "INVALID_MFA_CODE", "The provided MFA code is invalid.", nil)
 	}
@@ -167,11 +173,11 @@ func (s *MfaService) ValidateLogin(ctx context.Context, userID string, code stri
 }
 
 func (s *MfaService) ValidateRecoveryCode(ctx context.Context, userID string, code string) (*MfaValidateLoginResult, error) {
-	user, err := s.repos.Users().GetByID(ctx, userID)
+	mfaSecret, err := s.repos.MfaSecrets().GetByUserID(ctx, userID)
 	if err != nil {
-		return nil, err
+		return &MfaValidateLoginResult{Valid: true}, nil
 	}
-	if !user.MfaEnabled {
+	if mfaSecret.ConfirmedAt == nil {
 		return &MfaValidateLoginResult{Valid: true}, nil
 	}
 
@@ -184,7 +190,7 @@ func (s *MfaService) ValidateRecoveryCode(ctx context.Context, userID string, co
 	codeHash := hashRecoveryCode(normalizedInput)
 
 	for _, rc := range codes {
-		if !rc.Used && rc.CodeHash == codeHash {
+		if rc.UsedAt == nil && rc.CodeHash == codeHash {
 			_ = s.repos.MfaRecoveryCodes().MarkUsed(ctx, rc.ID)
 			return &MfaValidateLoginResult{Valid: true}, nil
 		}
@@ -194,11 +200,8 @@ func (s *MfaService) ValidateRecoveryCode(ctx context.Context, userID string, co
 }
 
 func (s *MfaService) GetRecoveryCodes(ctx context.Context, userID string) (*MfaRecoveryCodesResult, error) {
-	user, err := s.repos.Users().GetByID(ctx, userID)
-	if err != nil {
-		return nil, err
-	}
-	if !user.MfaEnabled {
+	has, err := s.hasConfirmedMFA(ctx, userID)
+	if err != nil || !has {
 		return nil, utils.NewError(400, "MFA_NOT_ENABLED", "MFA is not enabled on this account.", nil)
 	}
 
@@ -209,7 +212,7 @@ func (s *MfaService) GetRecoveryCodes(ctx context.Context, userID string) (*MfaR
 
 	var remaining []string
 	for _, rc := range codes {
-		if !rc.Used {
+		if rc.UsedAt == nil {
 			remaining = append(remaining, rc.CodeHash)
 		}
 	}
@@ -218,19 +221,17 @@ func (s *MfaService) GetRecoveryCodes(ctx context.Context, userID string) (*MfaR
 }
 
 func (s *MfaService) RegenerateRecoveryCodes(ctx context.Context, userID string, code string) (*MfaRecoveryCodesResult, error) {
-	user, err := s.repos.Users().GetByID(ctx, userID)
+	mfaSecret, err := s.repos.MfaSecrets().GetByUserID(ctx, userID)
 	if err != nil {
-		return nil, err
+		return nil, utils.NewError(400, "MFA_NOT_ENABLED", "MFA is not enabled on this account.", nil)
 	}
-	if !user.MfaEnabled {
+	if mfaSecret.ConfirmedAt == nil {
 		return nil, utils.NewError(400, "MFA_NOT_ENABLED", "MFA is not enabled on this account.", nil)
 	}
 
-	if user.MfaSecret != nil && *user.MfaSecret != "" {
-		valid := totp.Validate(code, *user.MfaSecret)
-		if !valid {
-			return nil, utils.NewError(400, "INVALID_MFA_CODE", "The provided MFA code is invalid.", nil)
-		}
+	valid := totp.Validate(code, mfaSecret.Secret)
+	if !valid {
+		return nil, utils.NewError(400, "INVALID_MFA_CODE", "The provided MFA code is invalid.", nil)
 	}
 
 	_ = s.repos.MfaRecoveryCodes().DeleteByUserID(ctx, userID)
@@ -244,11 +245,16 @@ func (s *MfaService) RegenerateRecoveryCodes(ctx context.Context, userID string,
 }
 
 func (s *MfaService) HasMFA(ctx context.Context, userID string) bool {
-	user, err := s.repos.Users().GetByID(ctx, userID)
+	has, _ := s.hasConfirmedMFA(ctx, userID)
+	return has
+}
+
+func (s *MfaService) hasConfirmedMFA(ctx context.Context, userID string) (bool, error) {
+	mfaSecret, err := s.repos.MfaSecrets().GetByUserID(ctx, userID)
 	if err != nil {
-		return false
+		return false, nil
 	}
-	return user.MfaEnabled
+	return mfaSecret.ConfirmedAt != nil, nil
 }
 
 func (s *MfaService) generateRecoveryCodes(count int) []string {
@@ -276,9 +282,10 @@ func (s *MfaService) storeRecoveryCodes(ctx context.Context, userID string, code
 	batch := make([]*models.MfaRecoveryCode, 0, len(codes))
 	for _, raw := range codes {
 		batch = append(batch, &models.MfaRecoveryCode{
-			Common:   models.Common{ID: utils.NewID(), CreatedAt: now, UpdatedAt: now},
-			UserID:   userID,
-			CodeHash: hashRecoveryCode(strings.ToLower(strings.TrimSpace(raw))),
+			ID:        utils.NewID(),
+			CreatedAt: now,
+			UserID:    userID,
+			CodeHash:  hashRecoveryCode(strings.ToLower(strings.TrimSpace(raw))),
 		})
 	}
 	return s.repos.MfaRecoveryCodes().CreateBatch(ctx, batch)

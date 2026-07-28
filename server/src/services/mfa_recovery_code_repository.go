@@ -3,6 +3,8 @@ package services
 import (
 	"context"
 
+	"time"
+
 	"github.com/skygenesisenterprise/kami-sama/server/src/models"
 	"github.com/skygenesisenterprise/kami-sama/server/src/utils"
 	"gorm.io/gorm"
@@ -34,7 +36,8 @@ func (r *mfaRecoveryCodeRepository) GetByID(ctx context.Context, id string) (*mo
 }
 
 func (r *mfaRecoveryCodeRepository) MarkUsed(ctx context.Context, id string) error {
-	return r.db.WithContext(ctx).Model(&models.MfaRecoveryCode{}).Where("id = ?", id).Update("used", true).Error
+	now := time.Now().UTC()
+	return r.db.WithContext(ctx).Model(&models.MfaRecoveryCode{}).Where("id = ?", id).Update("used_at", now).Error
 }
 
 func (r *mfaRecoveryCodeRepository) DeleteByUserID(ctx context.Context, userID string) error {

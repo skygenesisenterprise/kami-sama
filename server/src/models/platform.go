@@ -108,7 +108,6 @@ func (PrivacySettings) TableName() string { return "privacy_settings" }
 type Device struct {
 	Common
 	UserId        string     `gorm:"column:user_id;type:text;index;not null" json:"userId"`
-	SessionId     *string    `gorm:"column:session_id;type:text" json:"sessionId,omitempty"`
 	Type          string     `gorm:"column:type;type:text;not null" json:"type"`
 	Os            *string    `gorm:"column:os;type:text" json:"os,omitempty"`
 	OsVersion     *string    `gorm:"column:os_version;type:text" json:"osVersion,omitempty"`
@@ -116,13 +115,7 @@ type Device struct {
 	BrowserVersion *string   `gorm:"column:browser_version;type:text" json:"browserVersion,omitempty"`
 	DeviceModel   *string    `gorm:"column:device_model;type:text" json:"deviceModel,omitempty"`
 	Manufacturer  *string    `gorm:"column:manufacturer;type:text" json:"manufacturer,omitempty"`
-	IpAddress     *string    `gorm:"column:ip_address;type:text" json:"ipAddress,omitempty"`
-	UserAgent     *string    `gorm:"column:user_agent;type:text" json:"userAgent,omitempty"`
-	Location      *string    `gorm:"column:location;type:text" json:"location,omitempty"`
-	Country       *string    `gorm:"column:country;type:text" json:"country,omitempty"`
-	City          *string    `gorm:"column:city;type:text" json:"city,omitempty"`
 	LastActive    time.Time  `gorm:"column:last_active;not null" json:"lastActive"`
-	IsCurrent     bool       `gorm:"column:is_current;not null;default:false" json:"isCurrent"`
 	IsTrusted     bool       `gorm:"column:is_trusted;not null;default:false" json:"isTrusted"`
 	PushToken     *string    `gorm:"column:push_token;type:text" json:"pushToken,omitempty"`
 }
@@ -130,7 +123,8 @@ type Device struct {
 func (Device) TableName() string { return "devices" }
 
 type LoginHistory struct {
-	Common
+	ID            string     `gorm:"type:text;primaryKey" json:"id"`
+	CreatedAt     time.Time  `gorm:"not null" json:"createdAt"`
 	UserId        string     `gorm:"column:user_id;type:text;index;not null" json:"userId"`
 	SessionId     *string    `gorm:"column:session_id;type:text" json:"sessionId,omitempty"`
 	Timestamp     time.Time  `gorm:"column:timestamp;not null" json:"timestamp"`
@@ -138,9 +132,6 @@ type LoginHistory struct {
 	Location      *string    `gorm:"column:location;type:text" json:"location,omitempty"`
 	Country       *string    `gorm:"column:country;type:text" json:"country,omitempty"`
 	City          *string    `gorm:"column:city;type:text" json:"city,omitempty"`
-	DeviceType    *string    `gorm:"column:device_type;type:text" json:"deviceType,omitempty"`
-	Browser       *string    `gorm:"column:browser;type:text" json:"browser,omitempty"`
-	Os            *string    `gorm:"column:os;type:text" json:"os,omitempty"`
 	UserAgent     *string    `gorm:"column:user_agent;type:text" json:"userAgent,omitempty"`
 	Status        string     `gorm:"column:status;type:text;not null" json:"status"`
 	FailureReason *string    `gorm:"column:failure_reason;type:text" json:"failureReason,omitempty"`

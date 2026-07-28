@@ -533,9 +533,7 @@ func (s *OAuthService) handleLoginOAuth(ctx context.Context, provider string, us
 		DisplayName:     userInfo.DisplayName,
 		AvatarURL:       &userInfo.AvatarURL,
 		Status:          "active",
-		PresenceStatus:  "offline",
 		EmailVerifiedAt: &now,
-		LastSeenAt:      &now,
 	}
 
 	if err := s.repos.Users().Create(ctx, user); err != nil {
