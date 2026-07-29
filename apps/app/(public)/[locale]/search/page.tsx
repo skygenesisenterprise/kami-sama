@@ -110,54 +110,63 @@ export default function SearchPage() {
               <p className="mt-1 text-sm text-white/30">{t('noResultsHint')}</p>
             </div>
           )
-        ) : (
+        ) : recentSearches.length > 0 ? (
           /* Recent searches */
-          recentSearches.length > 0 && (
-            <div className="mt-6">
-              <div className="flex items-center justify-between">
-                <h2 className="text-sm font-bold tracking-wide text-white">
-                  {t('recentTitle')}
-                </h2>
-                <button
-                  type="button"
-                  onClick={clearRecent}
-                  className="text-xs font-semibold uppercase tracking-wider text-white/40 transition-colors hover:text-white/70"
-                >
-                  {t('clearRecent')}
-                </button>
-              </div>
+          <div className="mt-6">
+            <div className="flex items-center justify-between">
+              <h2 className="text-sm font-bold tracking-wide text-white">
+                {t('recentTitle')}
+              </h2>
+              <button
+                type="button"
+                onClick={clearRecent}
+                className="text-xs font-semibold uppercase tracking-wider text-white/40 transition-colors hover:text-white/70"
+              >
+                {t('clearRecent')}
+              </button>
+            </div>
 
-              <div className="mt-4 flex flex-wrap gap-2">
-                {recentSearches.map((term) => (
-                  <button
-                    key={term}
-                    type="button"
-                    onClick={() => setQuery(term)}
-                    className="group flex items-center gap-2 rounded-md bg-[#1a2e35] px-3.5 py-2 text-sm font-medium text-white/80 transition-colors hover:bg-[#1f3840]"
-                  >
-                    <span className="max-w-52 truncate">{term}</span>
-                    <span
-                      role="button"
-                      tabIndex={0}
-                      onClick={(e) => {
+            <div className="mt-4 flex flex-wrap gap-2">
+              {recentSearches.map((term) => (
+                <button
+                  key={term}
+                  type="button"
+                  onClick={() => setQuery(term)}
+                  className="group flex items-center gap-2 rounded-md bg-[#1a2e35] px-3.5 py-2 text-sm font-medium text-white/80 transition-colors hover:bg-[#1f3840]"
+                >
+                  <span className="max-w-52 truncate">{term}</span>
+                  <span
+                    role="button"
+                    tabIndex={0}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      removeRecent(term)
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
                         e.stopPropagation()
                         removeRecent(term)
-                      }}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter' || e.key === ' ') {
-                          e.stopPropagation()
-                          removeRecent(term)
-                        }
-                      }}
-                      className="ml-0.5 text-white/30 transition-colors hover:text-white/70"
-                    >
-                      <X className="size-3.5" />
-                    </span>
-                  </button>
-                ))}
-              </div>
+                      }
+                    }}
+                    className="ml-0.5 text-white/30 transition-colors hover:text-white/70"
+                  >
+                    <X className="size-3.5" />
+                  </span>
+                </button>
+              ))}
             </div>
-          )
+          </div>
+        ) : (
+          /* Empty state */
+          <div className="flex flex-col items-center justify-center py-24 text-center">
+            <Search className="mb-6 size-16 text-white/10" />
+            <h2 className="text-xl font-semibold text-white/60">
+              {t('emptyTitle')}
+            </h2>
+            <p className="mt-2 max-w-md text-sm text-white/30">
+              {t('emptyDescription')}
+            </p>
+          </div>
         )}
       </div>
     </div>

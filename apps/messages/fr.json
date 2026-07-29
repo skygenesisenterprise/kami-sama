@@ -462,11 +462,13 @@
       "discoverMore": "Découvrir"
     },
     "search": {
-      "placeholder": "Rechercher…",
+      "placeholder": "Entrez le nom d'un film ou série que vous souhaiterez regarder",
       "recentTitle": "Résultats de recherche récente",
       "clearRecent": "Effacer les recherches récentes",
       "noResults": "Aucun résultat trouvé",
-      "noResultsHint": "Essayez avec d'autres mots-clés"
+      "noResultsHint": "Essayez avec d'autres mots-clés",
+      "emptyTitle": "Recherchez votre prochain coup de cœur",
+      "emptyDescription": "Explorez notre catalogue d'anime, de films et de séries. Tapez un titre, un genre ou un studio pour commencer."
     },
     "rankings": {
       "title": "Classements du jour",

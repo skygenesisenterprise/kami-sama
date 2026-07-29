@@ -6,15 +6,12 @@ import { useTranslations } from 'next-intl'
 import Image from 'next/image'
 import Link from 'next/link'
 import {
-  ChevronLeft,
-  ChevronRight,
   Eye,
   Zap,
   Radio,
   Play,
   Info,
   Tv,
-  Clock,
   Film,
   CalendarClock,
   Trophy,
@@ -59,7 +56,6 @@ export default function LivePage({ params }: LivePageProps) {
   const trending = useMemo(() => getTrendingLive(), [])
   const upcoming = useMemo(() => getUpcomingEvents(), [])
   const replays = useMemo(() => getReplays(), [])
-  const continueWatching = useMemo(() => getContinueWatching(), [])
   const recommended = useMemo(() => getRecommendedLive(), [])
   const topStreams = useMemo(() => getTopStreams(), [])
 
@@ -80,18 +76,8 @@ export default function LivePage({ params }: LivePageProps) {
     return () => window.clearInterval(timer)
   }, [isPaused, heroStreams.length])
 
-  const selectSlide = React.useCallback(
-    (index: number) => {
-      setHeroIndex((index + heroStreams.length) % heroStreams.length)
-    },
-    [heroStreams.length],
-  )
-
-  const prevHero = () => selectSlide(heroIndex - 1)
-  const nextHero = () => selectSlide(heroIndex + 1)
-
   return (
-    <main className="relative min-h-screen bg-background pb-24">
+    <main className="relative min-h-screen select-none bg-background pb-24">
       {/* ── Hero Banner ─────────────────────────────────────────────── */}
       {heroItem && (
         <section
@@ -228,54 +214,12 @@ export default function LivePage({ params }: LivePageProps) {
             </div>
           </div>
 
-          {/* Nav arrows */}
-          {heroStreams.length > 1 && (
-            <>
-              <button
-                onClick={prevHero}
-                className="absolute left-4 top-1/2 z-20 -translate-y-1/2 rounded-full bg-black/40 p-2 text-white backdrop-blur-sm transition hover:bg-black/60"
-                aria-label="Précédent"
-              >
-                <ChevronLeft className="h-5 w-5" />
-              </button>
-              <button
-                onClick={nextHero}
-                className="absolute right-4 top-1/2 z-20 -translate-y-1/2 rounded-full bg-black/40 p-2 text-white backdrop-blur-sm transition hover:bg-black/60"
-                aria-label="Suivant"
-              >
-                <ChevronRight className="h-5 w-5" />
-              </button>
-            </>
-          )}
-
           <style>{`
             @keyframes hero-copy-in {
               from { opacity: 0; transform: translateY(1rem); }
               to { opacity: 1; transform: translateY(0); }
             }
           `}</style>
-        </section>
-      )}
-
-      {/* ── Continue watching ────────────────────────────────────────── */}
-      {continueWatching.length > 0 && (
-        <section className="mt-10 px-4 md:px-12">
-          <div className="mb-4 flex items-center justify-between">
-            <h2 className="flex items-center gap-2 font-display text-xl font-bold text-foreground">
-              <Clock className="h-5 w-5 text-blue-400" />
-              Reprendre la lecture
-            </h2>
-            <a href="#" className="text-sm font-medium text-primary hover:underline">
-              VOIR TOUT
-            </a>
-          </div>
-          <div className="flex gap-4 overflow-x-auto pb-4 scrollbar-hide">
-            {continueWatching.map((stream) => (
-              <div key={stream.id} className="min-w-75 max-w-85 shrink-0">
-                <LiveCard stream={stream} />
-              </div>
-            ))}
-          </div>
         </section>
       )}
 

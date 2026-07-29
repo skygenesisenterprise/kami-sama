@@ -1,6 +1,6 @@
 'use client'
 
-import { use, useMemo, useState } from 'react'
+import { use, useEffect, useMemo, useState } from 'react'
 import { useSearchParams, usePathname } from 'next/navigation'
 import Link from 'next/link'
 import { useTranslations } from 'next-intl'
@@ -54,6 +54,12 @@ export default function WatchPage({
   const [showFullInfo, setShowFullInfo] = useState(false)
   const [showEpisodeList, setShowEpisodeList] = useState(false)
   const [openSeason, setOpenSeason] = useState(currentEpisode?.season ?? 1)
+
+  useEffect(() => {
+    if (anime) {
+      document.title = `Kami-Sama: ${anime.title}`
+    }
+  }, [anime])
 
   if (!anime || !currentEpisode) {
     return (
