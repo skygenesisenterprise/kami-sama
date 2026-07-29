@@ -8,7 +8,7 @@ import { Search, X, ChevronLeft, ChevronRight } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { getCatalogItems, CATALOG_TYPES, CATALOG_GENRES, CATALOG_STATUS_MAP, CATALOG_YEARS, CATALOG_STUDIOS } from '@/lib/mock-catalog'
 import { CatalogCard } from '@/components/catalog/catalog-card'
-import type { CatalogFilter, CatalogSort as SortType, CatalogView, CatalogType, CatalogGenre, CatalogStatus } from '@/types/catalog'
+import type { CatalogFilter, CatalogSort as SortType, CatalogType, CatalogGenre, CatalogStatus } from '@/types/catalog'
 
 interface CatalogPageProps {
   params: Promise<{ locale: string }>

@@ -1,9 +1,9 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useMemo } from 'react'
 import Image from 'next/image'
 import Link from 'next/link'
-import { ChevronLeft, ChevronRight, Calendar, Grid } from 'lucide-react'
+import { Filter, Info } from 'lucide-react'
 import { useTranslations } from 'next-intl'
 import { cn } from '@/lib/utils'
 import { getSimulcasts, getEpisodes, getAllAnime } from '@/lib/mock-data'
@@ -14,7 +14,6 @@ function getCurrentWeekDates(): Date[] {
   const dayOfWeek = today.getDay()
   const monday = new Date(today)
   monday.setDate(today.getDate() - (dayOfWeek === 0 ? 6 : dayOfWeek - 1))
-
   return Array.from({ length: 7 }, (_, i) => {
     const date = new Date(monday)
     date.setDate(monday.getDate() + i)
@@ -23,15 +22,24 @@ function getCurrentWeekDates(): Date[] {
 }
 
 function formatDateShort(date: Date): string {
-  const month = date.getMonth() + 1
-  const day = date.getDate()
-  return `${month}/${day}`
+  const d = date.getDate().toString().padStart(2, '0')
+  const m = (date.getMonth() + 1).toString().padStart(2, '0')
+  return `${d}/${m}`
+}
+
+function formatTime(nextAirDate: string): string {
+  const time = nextAirDate.split('T')[1]
+  if (!time) return '--:--'
+  const [h, m] = time.split(':')
+  return `${h}h${m}`
 }
 
 interface DaySchedule {
   day: string
   date: Date
-  anime: (SimulcastItem & { nextEp: Episode; animeData: Anime; airTime: string })[]
+  dayLabel: string
+  dateLabel: string
+  anime: (SimulcastItem & { nextEp: Episode; animeData: Anime })[]
   isToday: boolean
 }
 
@@ -40,6 +48,7 @@ function buildSchedule(): DaySchedule[] {
   const animeList = getAllAnime()
   const weekDates = getCurrentWeekDates()
   const dayNames = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+  const dayLabels = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche']
 
   const dayMap = new Map<string, SimulcastItem[]>()
   for (const item of simulcasts) {
@@ -53,230 +62,141 @@ function buildSchedule(): DaySchedule[] {
 
   return weekDates.map((date, i) => {
     const items = dayMap.get(dayNames[i]) ?? []
-
     return {
       day: dayNames[i],
       date,
+      dayLabel: dayLabels[i],
+      dateLabel: formatDateShort(date),
       isToday: i === todayIndex,
       anime: items
         .map((item) => {
           const eps = getEpisodes(item.anime.id)
           const nextEp = item.nextEpisode ?? eps[eps.length - 1]
           const animeData = animeList.find(a => a.id === item.anime.id) ?? item.anime
-          const airTime = nextEp.releaseDate ? nextEp.releaseDate.split('T')[1]?.split(':').slice(0, 2).join(':') || '12:00' : '12:00'
-          return { ...item, nextEp, animeData, airTime }
+          return { ...item, nextEp, animeData }
         })
-        .filter(Boolean) as (SimulcastItem & { nextEp: Episode; animeData: Anime; airTime: string })[],
+        .filter(Boolean) as (SimulcastItem & { nextEp: Episode; animeData: Anime })[],
     }
   })
 }
 
+function JapaneseFlag() {
+  return (
+    <svg className="h-4 w-4 rounded-full md:h-6 md:w-6" viewBox="0 0 36 36">
+      <circle cx="18" cy="18" r="18" fill="#F0F0F0" />
+      <circle cx="18" cy="18" r="7.5" fill="#D80027" />
+    </svg>
+  )
+}
+
 export default function CalendarPage() {
   const t = useTranslations('Public.calendar')
-  const [selectedDayIndex, setSelectedDayIndex] = useState<number | null>(null)
-  const [activeTab, setActiveTab] = useState<'calendar' | 'program'>('calendar')
-  const [episodeType, setEpisodeType] = useState<'premium' | 'free'>('free')
-
   const schedule = useMemo(() => buildSchedule(), [])
 
-  const todayIndex = schedule.findIndex(d => d.isToday)
-  const activeDayIndex = selectedDayIndex ?? todayIndex
-
-  const handlePrev = () => {
-    setSelectedDayIndex(prev => {
-      if (prev === null) return todayIndex > 0 ? todayIndex - 1 : 6
-      return prev === 0 ? 6 : prev - 1
-    })
-  }
-
-  const handleNext = () => {
-    setSelectedDayIndex(prev => {
-      if (prev === null) return todayIndex < 6 ? todayIndex + 1 : 0
-      return prev === 6 ? 0 : prev + 1
-    })
-  }
-
-  const activeSchedule = schedule[activeDayIndex]
-
-  const dayLabels = [
-    t('dayMon'),
-    t('dayTue'),
-    t('dayWed'),
-    t('dayThu'),
-    t('dayFri'),
-    t('daySat'),
-    t('daySun'),
-  ]
-
   return (
-    <div className="relative min-h-screen bg-paper">
-      {/* Top Tabs */}
-      <div className="flex justify-center gap-4 pt-8 pb-6">
+    <div className="min-h-screen bg-background">
+      {/* ── Page header ──────────────────────────────────────────────── */}
+      <div className="flex items-center justify-center gap-3 pt-8 pb-6">
+        <h1 className="text-center font-display text-2xl font-semibold text-foreground sm:text-3xl">
+          CALENDRIER
+        </h1>
         <button
-          onClick={() => setActiveTab('calendar')}
-          className={cn(
-            'flex items-center gap-2 rounded-md px-6 py-3 font-semibold text-sm transition-all',
-            activeTab === 'calendar'
-              ? 'btn-ink'
-              : 'btn-outline'
-          )}
+          aria-label="Afficher la légende du calendrier"
+          className="flex size-6 items-center justify-center rounded-full bg-red-600 text-white transition-colors hover:bg-red-500"
         >
-          <Calendar className="size-4" />
-          {t('tabCalendar')}
+          <Info className="h-4 w-4" />
         </button>
         <button
-          onClick={() => setActiveTab('program')}
-          className={cn(
-            'flex items-center gap-2 rounded-md px-6 py-3 font-semibold text-sm transition-all',
-            activeTab === 'program'
-              ? 'btn-ink'
-              : 'btn-outline'
-          )}
+          aria-label="Afficher les filtres du calendrier"
+          className="flex items-center gap-2 rounded-md border border-zinc-700 bg-zinc-900 px-3 py-1.5 text-sm text-gray-200 transition-all hover:border-zinc-600 hover:bg-zinc-800"
         >
-          <Grid className="size-4" />
-          {t('tabProgram')}
+          <Filter className="h-4 w-4" />
+          <span className="hidden sm:inline">Filtres</span>
         </button>
       </div>
 
-      {/* Episode Type Radio Buttons */}
-      <div className="flex justify-center gap-8 pb-6">
-        <label className="flex items-center gap-2 cursor-pointer group">
-          <input
-            type="radio"
-            name="episodeType"
-            checked={episodeType === 'premium'}
-            onChange={() => setEpisodeType('premium')}
-            className="size-4 accent-stamp"
-          />
-          <span className="text-sm text-ink-soft group-hover:text-ink transition-colors">
-            {t('radioPremium')}
-          </span>
-        </label>
-        <label className="flex items-center gap-2 cursor-pointer group">
-          <input
-            type="radio"
-            name="episodeType"
-            checked={episodeType === 'free'}
-            onChange={() => setEpisodeType('free')}
-            className="size-4 accent-stamp"
-          />
-          <span className="text-sm text-ink-soft group-hover:text-ink transition-colors">
-            {t('radioFree')}
-          </span>
-        </label>
-      </div>
+      {/* ── Calendar container ────────────────────────────────────────── */}
+      <div className="mx-auto max-w-7xl px-4">
+        <div className="flex flex-row flex-nowrap gap-4">
+          {schedule.map((day, i) => (
+            <div
+              key={i}
+              className="flex min-w-0 flex-1 flex-col"
+            >
+                  {/* Day header */}
+                  <h2
+                    className={cn(
+                      'mb-2 rounded-md pb-2 pt-2 text-center text-lg font-bold',
+                      day.isToday
+                        ? 'bg-red-700/80 text-white'
+                        : 'text-white',
+                    )}
+                  >
+                    {day.dayLabel.toUpperCase()}
+                    <br />
+                    <span className="text-base font-medium">{day.dateLabel}</span>
+                  </h2>
 
-      {/* Premium Banner */}
-      <div className="mx-auto max-w-5xl px-4 pb-6">
-        <div className="card-surface rounded-md px-6 py-3 text-center text-sm text-ink-soft">
-          {t('premiumBanner')}{' '}
-          <Link href="#" className="font-semibold text-stamp hover:text-stamp-dim transition-colors">
-            {t('premiumLink')}
-          </Link>{' '}
-          {t('premiumDuration')}
-        </div>
-      </div>
+                  {/* Anime cards */}
+                  {day.anime.map((item) => (
+                    <Link
+                      key={item.anime.id}
+                      href={`/watch/${item.anime.slug}?ep=${item.nextEp.id}`}
+                      className="mb-4 block w-full"
+                    >
+                      <div className="calendrier-card relative flex h-48 w-full flex-col flex-nowrap items-center justify-between overflow-hidden rounded-lg bg-gray-800 md:h-75">
+                        {/* Poster image (fills entire card) */}
+                        <div className="relative h-full min-h-0 w-full overflow-hidden">
+                          <Image
+                            src={item.anime.cover || '/placeholder.svg'}
+                            alt={item.anime.title}
+                            fill
+                            sizes="(min-width: 768px) 176px, 112px"
+                            className="object-cover object-center md:object-top"
+                          />
 
-      {/* Week Navigation */}
-      <div className="mx-auto max-w-5xl px-4">
-        <div className="relative flex items-center">
-          {/* Left Arrow */}
-          <button
-            onClick={handlePrev}
-            className="absolute left-0 z-10 flex size-10 items-center justify-center rounded-full bg-paper-raised shadow-paper hover:bg-line-strong transition-colors"
-          >
-            <ChevronLeft className="size-5 text-stamp" />
-          </button>
+                          {/* Episode badge (top-left) */}
+                          <div className="absolute left-1 top-1 z-20 flex items-center gap-1 text-sm md:left-2 md:top-2 md:text-base">
+                            <span className="font-bold text-white drop-shadow-md">
+                              E{item.nextEp.number}
+                            </span>
+                            <span className="size-2 rounded-full bg-red-500" />
+                          </div>
 
-          {/* Days Grid */}
-          <div className="grid w-full grid-cols-7 gap-2 px-14">
-            {schedule.map((day, i) => {
-              const isSelected = i === activeDayIndex
-              const hasAnime = day.anime.length > 0
+                          {/* Language flag (top-right) */}
+                          <div className="absolute right-1 top-1 z-20 md:right-2 md:top-2">
+                            <JapaneseFlag />
+                          </div>
 
-              return (
-                <button
-                  key={i}
-                  onClick={() => setSelectedDayIndex(i)}
-                  className={cn(
-                    'relative flex flex-col items-center rounded-lg py-4 px-2 transition-all',
-                    isSelected
-                      ? 'glass-card min-h-40'
-                      : 'bg-transparent hover:bg-paper-raised/50',
-                    day.isToday && !isSelected && 'font-bold'
-                  )}
-                >
-                  <span className="text-xs text-ink-faint">
-                    {formatDateShort(day.date)}
-                  </span>
-                  <span className={cn(
-                    'text-sm font-bold mt-1',
-                    isSelected ? 'text-ink' : 'text-ink-soft',
-                    day.isToday && 'text-stamp'
-                  )}>
-                    {day.isToday ? t('today') : dayLabels[i]}
-                  </span>
-
-                  {/* Content area */}
-                  {isSelected && (
-                    <div className="mt-4 w-full space-y-2">
-                      {hasAnime ? (
-                        day.anime.map((item) => (
-                          <Link
-                            key={item.anime.id}
-                            href={`/watch/${item.anime.slug}?ep=${item.nextEp.id}`}
-                            className="block rounded-md bg-paper-dim p-2 hover:bg-line transition-colors"
-                          >
-                            <div className="flex items-center gap-2">
-                              <div className="relative size-10 shrink-0 overflow-hidden rounded-sm">
-                                <Image
-                                  src={item.anime.cover || '/placeholder.svg'}
-                                  alt={item.anime.title}
-                                  fill
-                                  sizes="40px"
-                                  className="object-cover"
-                                />
-                              </div>
-                              <div className="min-w-0 flex-1">
-                                <p className="truncate text-xs font-semibold text-ink">
-                                  {item.anime.title}
-                                </p>
-                                <p className="text-[10px] text-ink-faint">
-                                  {t('episodeShort')} {item.nextEp.number} • {item.airTime}
-                                </p>
-                              </div>
+                          {/* Time overlay (centered on poster) */}
+                          <div className="absolute inset-0 bg-gray-800/30">
+                            <div className="flex h-full flex-col items-center justify-center">
+                              <span className="select-text rounded-md bg-black/20 px-1 text-center text-xl md:text-3xl">
+                                {formatTime(item.nextAirDate)}
+                              </span>
                             </div>
-                          </Link>
-                        ))
-                      ) : (
-                        <p className="text-xs text-ink-faint text-center mt-4">
-                          {t('emptyDay')}
-                        </p>
-                      )}
-                    </div>
-                  )}
+                          </div>
+                        </div>
 
-                  {/* Non-selected empty state */}
-                  {!isSelected && !hasAnime && (
-                    <p className="text-[10px] text-ink-faint mt-2 text-center leading-tight">
+                        {/* Title bar (bottom) */}
+                        <div className="absolute bottom-0 z-10 flex h-6 w-full items-center justify-center bg-gray-800/90 px-1 md:static md:h-6 md:bg-gray-800 md:px-1">
+                          <h3 className="w-full min-w-0 select-text truncate text-center text-xs md:text-sm">
+                            {item.anime.title}
+                          </h3>
+                        </div>
+                      </div>
+                    </Link>
+                  ))}
+
+                  {day.anime.length === 0 && (
+                    <p className="py-8 text-center text-xs text-gray-500">
                       {t('emptyDay')}
                     </p>
                   )}
-                </button>
-              )
-            })}
-          </div>
-
-          {/* Right Arrow */}
-          <button
-            onClick={handleNext}
-            className="absolute right-0 z-10 flex size-10 items-center justify-center rounded-full bg-paper-raised shadow-paper hover:bg-line-strong transition-colors"
-          >
-            <ChevronRight className="size-5 text-stamp" />
-          </button>
-        </div>
+                </div>
+              ))}
+            </div>
       </div>
-
     </div>
   )
 }
