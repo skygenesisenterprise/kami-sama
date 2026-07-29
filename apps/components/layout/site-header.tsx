@@ -32,7 +32,7 @@ import { CastDeviceSelector } from '@/components/kami/cast-device-selector'
 import { Logo } from '@/components/kami/logo'
 import { useAuth } from '@/context/AuthContext'
 import { cn } from '@/lib/utils'
-import { getSelectedProfile } from '@/lib/profile-selection'
+import { getSelectedProfile, onProfileChange, saveSelectedProfile, setProfileSelected, type SelectedProfileInfo } from '@/lib/profile-selection'
 import { getDomainUrl } from '@/lib/domains'
 import { getAnime } from '@/lib/mock-data'
 
@@ -48,9 +48,67 @@ export function SiteHeader() {
   const profileTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Use selected profile info when available, fall back to user account info
-  const selectedProfile = getSelectedProfile()
+  const [selectedProfile, setSelectedProfile] = useState<SelectedProfileInfo | null>(() => {
+    // Check URL params first (from SSO redirect)
+    if (typeof window !== 'undefined') {
+      const urlParams = new URLSearchParams(window.location.search)
+      const urlProfileId = urlParams.get('profileId')
+      const urlProfileName = urlParams.get('profileName')
+      if (urlProfileId && urlProfileName) {
+        // Clean URL immediately so user never sees the params
+        window.history.replaceState({}, '', window.location.pathname)
+        return { id: urlProfileId, displayName: urlProfileName, avatarUrl: urlParams.get('profileAvatar') || undefined }
+      }
+    }
+    return getSelectedProfile()
+  })
   const displayName = selectedProfile?.displayName || user?.displayName || 'User'
   const avatarUrl = selectedProfile?.avatarUrl || user?.avatarUrl || ''
+
+  // Re-read profile from storage when it changes (cross-subdomain or cross-tab)
+  useEffect(() => {
+    const PROFILE_SELECTED_KEY = 'kami_sama_profile_selected'
+    const SELECTED_PROFILE_ID_KEY = 'kami_sama_selected_profile_id'
+
+    // On mount: save URL profile params to localStorage if present
+    const urlParams = new URLSearchParams(window.location.search)
+    const urlProfileId = urlParams.get('profileId')
+    const urlProfileName = urlParams.get('profileName')
+    if (urlProfileId && urlProfileName) {
+      const urlProfileAvatar = urlParams.get('profileAvatar') || undefined
+      saveSelectedProfile({ id: urlProfileId, displayName: urlProfileName, avatarUrl: urlProfileAvatar })
+      setProfileSelected(true)
+      setSelectedProfile(getSelectedProfile())
+    }
+
+    function refreshProfile() {
+      setSelectedProfile(getSelectedProfile())
+    }
+
+    // storage event fires when localStorage changes in another tab/window
+    function onStorage(e: StorageEvent) {
+      if (e.key === PROFILE_SELECTED_KEY || e.key === SELECTED_PROFILE_ID_KEY) {
+        refreshProfile()
+      }
+    }
+
+    // Also re-read on focus — handles redirect back from SSO subdomain
+    function onFocus() {
+      refreshProfile()
+    }
+
+    window.addEventListener('storage', onStorage)
+    window.addEventListener('focus', onFocus)
+
+    // Also subscribe to in-memory listeners (same-page changes)
+    const unsub = onProfileChange(refreshProfile)
+
+    return () => {
+      window.removeEventListener('storage', onStorage)
+      window.removeEventListener('focus', onFocus)
+      unsub()
+    }
+  }, [])
 
   const locale = useLocale()
   const homeHref = `/${locale}/discover`
@@ -277,6 +335,13 @@ export function SiteHeader() {
                             className="mega-menu-link rounded-md px-2.5 py-1.5 text-[13px] text-white/70"
                           >
                             {t('megaFilms')}
+                          </Link>
+                          <Link
+                            href={`/${locale}/library`}
+                            onClick={() => setDiscoverOpen(false)}
+                            className="mega-menu-link rounded-md px-2.5 py-1.5 text-[13px] text-white/70"
+                          >
+                            {t('navLibrary')}
                           </Link>
                           <Link
                             href={`/${locale}/calendar`}

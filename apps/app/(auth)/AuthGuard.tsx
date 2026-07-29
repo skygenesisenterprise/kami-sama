@@ -4,7 +4,6 @@ import * as React from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
 import { routing } from "@/i18n/routing";
-import { DEFAULT_PLATFORM_ROUTE } from "@/lib/routes";
 import { isProfileSelected } from "@/lib/profile-selection";
 import { RouteTransition } from "@/components/route-transition";
 import { getDomainUrl } from "@/lib/domains";
@@ -41,7 +40,9 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
       if (!isProfileSelected()) {
         router.replace("/profile-change");
       } else {
-        window.location.href = getDomainUrl('studios', DEFAULT_PLATFORM_ROUTE);
+        // Profile already selected — go to discover, not SSO
+        const locale = routing.defaultLocale;
+        window.location.href = getDomainUrl('main', `/${locale}/discover`);
       }
     }
   }, [isAuthenticated, isLoading, router, isAllowedAuthenticatedRoute, isPublicAuthRoute]);

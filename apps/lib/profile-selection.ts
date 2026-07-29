@@ -88,6 +88,7 @@ export function saveSelectedProfile(profile: SelectedProfileInfo): void {
     }
     // Also persist profile id in cookie for cross-subdomain access
     setSharedCookie(PROFILE_ID_COOKIE, profile.id, 30 * 24 * 60 * 60);
+    _notifyListeners();
   } catch {
     // Ignore storage errors
   }
@@ -119,7 +120,29 @@ export function clearProfileSelection(): void {
     deleteSharedCookie(PROFILE_SELECTED_COOKIE);
     deleteSharedCookie(PROFILE_ID_COOKIE);
     _cache = null;
+    _notifyListeners();
   } catch {
     // Ignore storage errors
   }
+}
+
+// ── Profile change listener ────────────────────────────────────────────────
+type ProfileChangeCallback = (profile: SelectedProfileInfo | null) => void;
+const _listeners: Set<ProfileChangeCallback> = new Set();
+
+function _notifyListeners() {
+  const profile = getSelectedProfile();
+  for (const cb of _listeners) {
+    try { cb(profile); } catch { /* swallow */ }
+  }
+}
+
+/**
+ * Subscribe to profile changes.  The callback fires whenever the selected
+ * profile is updated (via `saveSelectedProfile` or `clearProfileSelection`).
+ * Returns an unsubscribe function.
+ */
+export function onProfileChange(callback: ProfileChangeCallback): () => void {
+  _listeners.add(callback);
+  return () => { _listeners.delete(callback); };
 }

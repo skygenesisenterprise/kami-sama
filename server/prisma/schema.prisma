@@ -70,6 +70,25 @@ enum ReactionType {
   funny
 }
 
+enum PostType {
+  discussion
+  review
+  recommendation
+  announcement
+}
+
+enum PostStatus {
+  active
+  hidden
+  deleted
+}
+
+enum CommunityUserRole {
+  user
+  moderator
+  admin
+}
+
 // ═══════════════════════════════════════════════════════════════
 // AUTH & USERS
 // ═══════════════════════════════════════════════════════════════
@@ -78,9 +97,13 @@ model User {
   id                String     @id @default(uuid())
   email             String     @unique
   emailNormalized   String     @unique @map("email_normalized")
+  username          String?    @unique
   displayName       String     @map("display_name")
   avatarUrl         String?    @map("avatar_url")
   status            UserStatus @default(active)
+  communityRole     CommunityUserRole @default(user) @map("community_role")
+  reputation        Int        @default(0)
+  joinedCommunityAt DateTime?  @map("joined_community_at")
   emailVerifiedAt   DateTime?  @map("email_verified_at")
   passwordChangedAt DateTime?  @map("password_changed_at")
   disabledAt        DateTime?  @map("disabled_at")
@@ -104,6 +127,12 @@ model User {
   settings               UserSettings?
   notificationPrefs      NotificationPreference?
   privacySettings        PrivacySettings?
+  communityBadges        UserBadge[]
+  communityPosts         ForumPost[]
+  communityComments      Comment[]
+  communityReviews       Review[]
+  communityRecommendations Recommendation[]
+  communityAnnouncements CommunityAnnouncement[]
 
   @@index([status])
   @@map("users")
@@ -923,6 +952,10 @@ model Category {
   name        String
   slug        String    @unique
   description String?
+  icon        String?
+  color       String?
+  postCount   Int       @default(0) @map("post_count")
+  lastActivity DateTime? @map("last_activity")
   parentId    String?   @map("parent_id")
   sortOrder   Int       @default(0) @map("sort_order")
   isActive    Boolean   @default(true) @map("is_active")
@@ -1009,26 +1042,40 @@ model CdnAsset {
 // ═══════════════════════════════════════════════════════════════
 
 model ForumPost {
-  id           String    @id @default(uuid())
-  slug         String    @unique
-  title        String
-  content      String
-  excerpt      String?
-  authorId     String    @map("author_id")
-  categoryId   String?   @map("category_id")
-  isPinned     Boolean   @default(false) @map("is_pinned")
-  isLocked     Boolean   @default(false) @map("is_locked")
-  viewCount    Int       @default(0) @map("view_count")
-  commentCount Int       @default(0) @map("comment_count")
-  publishedAt  DateTime  @default(now()) @map("published_at")
-  deletedAt    DateTime? @map("deleted_at")
-  createdAt    DateTime  @default(now()) @map("created_at")
-  updatedAt    DateTime  @updatedAt @map("updated_at")
-  category     Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
-  comments     Comment[]
-  reactions    PostReaction[]
+  id              String     @id @default(uuid())
+  slug            String     @unique
+  type            PostType   @default(discussion)
+  title           String
+  content         String
+  excerpt         String?
+  authorId        String     @map("author_id")
+  categoryId      String?    @map("category_id")
+  tags            Json?
+  status          PostStatus @default(active)
+  isPinned        Boolean    @default(false) @map("is_pinned")
+  isLocked        Boolean    @default(false) @map("is_locked")
+  hasSpoilers     Boolean    @default(false) @map("has_spoilers")
+  viewCount       Int        @default(0) @map("view_count")
+  commentCount    Int        @default(0) @map("comment_count")
+  totalReactions  Int        @default(0) @map("total_reactions")
+  contentLinkType String?    @map("content_link_type")
+  contentLinkTitle String?   @map("content_link_title")
+  contentLinkSlug String?    @map("content_link_slug")
+  contentLinkImage String?   @map("content_link_image")
+  contentLinkYear Int?       @map("content_link_year")
+  publishedAt     DateTime   @default(now()) @map("published_at")
+  deletedAt       DateTime?  @map("deleted_at")
+  createdAt       DateTime   @default(now()) @map("created_at")
+  updatedAt       DateTime   @updatedAt @map("updated_at")
+  category        Category?  @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  author          User       @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  comments        Comment[]
+  reactions       PostReaction[]
 
+  @@index([authorId])
   @@index([categoryId])
+  @@index([type])
+  @@index([status])
   @@index([publishedAt])
   @@map("forum_posts")
 }
@@ -1058,6 +1105,7 @@ model Review {
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
   anime     Anime     @relation(fields: [animeId], references: [id], onDelete: Cascade)
+  author    User       @relation(fields: [userId], references: [id], onDelete: Cascade)
   comments  Comment[]
 
   @@unique([userId, animeId])
@@ -1067,20 +1115,24 @@ model Review {
 }
 
 model Comment {
-  id        String    @id @default(uuid())
-  userId    String    @map("user_id")
-  postId    String?   @map("post_id")
-  animeId   String?   @map("anime_id")
-  episodeId String?   @map("episode_id")
-  reviewId  String?   @map("review_id")
-  parentId  String?   @map("parent_id")
-  content   String
-  isSpoiler Boolean   @default(false) @map("is_spoiler")
-  deletedAt DateTime? @map("deleted_at")
-  createdAt DateTime  @default(now()) @map("created_at")
-  updatedAt DateTime  @updatedAt @map("updated_at")
-  post      ForumPost? @relation(fields: [postId], references: [id], onDelete: Cascade)
-  review    Review?   @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  id             String     @id @default(uuid())
+  userId         String     @map("user_id")
+  postId         String?    @map("post_id")
+  animeId        String?    @map("anime_id")
+  episodeId      String?    @map("episode_id")
+  reviewId       String?    @map("review_id")
+  parentId       String?    @map("parent_id")
+  content        String
+  status         PostStatus @default(active)
+  isSpoiler      Boolean    @default(false) @map("is_spoiler")
+  totalReactions Int        @default(0) @map("total_reactions")
+  deletedAt      DateTime?  @map("deleted_at")
+  createdAt      DateTime   @default(now()) @map("created_at")
+  updatedAt      DateTime   @updatedAt @map("updated_at")
+  author         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  post           ForumPost? @relation(fields: [postId], references: [id], onDelete: Cascade)
+  review         Review?    @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  reactions      CommentReaction[]
 
   @@index([postId])
   @@index([userId])
@@ -1109,6 +1161,68 @@ model Report {
   @@map("reports")
 }
 
+model CommentReaction {
+  id        String       @id @default(uuid())
+  commentId String       @map("comment_id")
+  userId    String       @map("user_id")
+  type      ReactionType
+  createdAt DateTime     @default(now()) @map("created_at")
+  comment   Comment      @relation(fields: [commentId], references: [id], onDelete: Cascade)
+
+  @@unique([commentId, userId, type])
+  @@map("comment_reactions")
+}
+
+model CommunityBadge {
+  id          String   @id @default(uuid())
+  name        String
+  icon        String
+  color       String
+  description String?
+  createdAt   DateTime @default(now()) @map("created_at")
+  users       UserBadge[]
+
+  @@map("community_badges")
+}
+
+model UserBadge {
+  id        String        @id @default(uuid())
+  userId    String        @map("user_id")
+  badgeId   String        @map("badge_id")
+  earnedAt  DateTime      @default(now()) @map("earned_at")
+  user      User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  badge     CommunityBadge @relation(fields: [badgeId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, badgeId])
+  @@map("user_badges")
+}
+
+model CommunityAnnouncement {
+  id        String   @id @default(uuid())
+  title     String
+  content   String
+  authorId  String   @map("author_id")
+  isPinned  Boolean  @default(false) @map("is_pinned")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  author    User     @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  reactions AnnouncementReaction[]
+
+  @@map("community_announcements")
+}
+
+model AnnouncementReaction {
+  id             String                @id @default(uuid())
+  announcementId String                @map("announcement_id")
+  userId         String                @map("user_id")
+  type           ReactionType
+  createdAt      DateTime              @default(now()) @map("created_at")
+  announcement   CommunityAnnouncement @relation(fields: [announcementId], references: [id], onDelete: Cascade)
+
+  @@unique([announcementId, userId, type])
+  @@map("announcement_reactions")
+}
+
 model Recommendation {
   id          String    @id @default(uuid())
   fromAnimeId String    @map("from_anime_id")
@@ -1119,6 +1233,7 @@ model Recommendation {
   commentCount Int      @default(0) @map("comment_count")
   createdAt   DateTime  @default(now()) @map("created_at")
   updatedAt   DateTime  @updatedAt @map("updated_at")
+  author    User     @relation(fields: [authorId], references: [id], onDelete: Cascade)
   fromAnime   Anime     @relation("FromAnime", fields: [fromAnimeId], references: [id], onDelete: Cascade)
   toAnime     Anime     @relation("ToAnime", fields: [toAnimeId], references: [id], onDelete: Cascade)
 

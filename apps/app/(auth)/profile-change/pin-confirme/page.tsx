@@ -103,7 +103,14 @@ export default function PinConfirmePage() {
           const browserLang = navigator.language.split('-')[0]
           return routing.locales.includes(browserLang as any) ? browserLang : routing.defaultLocale
         })()
-        window.location.href = getDomainUrl('main', `/${locale}/discover`)
+        const profileParams = new URLSearchParams({
+          profileId,
+          profileName,
+        })
+        if (result.profile.avatarUrl) {
+          profileParams.set('profileAvatar', result.profile.avatarUrl)
+        }
+        window.location.href = getDomainUrl('main', `/${locale}/discover?${profileParams.toString()}`)
       } else {
         setError('Code PIN incorrect. Veuillez réessayer.')
         setPin(['', '', '', ''])

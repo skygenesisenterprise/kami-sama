@@ -7,7 +7,7 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { useAuth } from '@/context/AuthContext'
 import { toast } from '@/components/ui/use-toast'
 import { useRouter } from 'next/navigation'
-import { setProfileSelected, clearProfileSelection, saveSelectedProfile } from '@/lib/profile-selection'
+import { setProfileSelected, saveSelectedProfile } from '@/lib/profile-selection'
 import { profileApi, type ProfileData } from '@/lib/api/profiles'
 import { routing } from '@/i18n/routing'
 import { getDomainUrl } from '@/lib/domains'
@@ -25,11 +25,6 @@ export default function ProfileChangePage() {
     const browserLang = navigator.language.split('-')[0];
     return routing.locales.includes(browserLang as any) ? browserLang : routing.defaultLocale;
   })()
-
-  // Clear profile selection on mount so user must re-select
-  useEffect(() => {
-    clearProfileSelection()
-  }, [])
 
   // Load profiles from API — wait for auth bootstrap to finish first
   useEffect(() => {
@@ -118,7 +113,15 @@ export default function ProfileChangePage() {
         window.location.href = redirectUrl
       } else {
         const validLocale = routing.locales.includes(locale as any) ? locale : routing.defaultLocale;
-        window.location.href = getDomainUrl('main', `/${validLocale}/discover`)
+        // Pass profile data via URL so main domain can pick it up cross-subdomain
+        const profileParams = new URLSearchParams({
+          profileId: profile.id,
+          profileName: profile.displayName,
+        })
+        if (profile.avatarUrl) {
+          profileParams.set('profileAvatar', profile.avatarUrl)
+        }
+        window.location.href = getDomainUrl('main', `/${validLocale}/discover?${profileParams.toString()}`)
       }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Une erreur est survenue'
