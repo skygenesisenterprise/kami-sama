@@ -13,6 +13,7 @@ interface FooterProps {
 }
 
 interface FooterLink {
+  id?: string;
   name: string;
   href: string;
   external?: boolean;
@@ -33,7 +34,7 @@ function LinkColumn({ title, links }: LinkColumnProps) {
         {links.map((link) => {
           const isExternal = link.external ?? link.href.startsWith("https://");
           return (
-            <li key={link.name}>
+            <li key={link.id ?? link.name}>
               <Link
                 href={link.href}
                 className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors duration-200"
@@ -176,27 +177,27 @@ export async function Footer({ locale: initialLocale }: FooterProps) {
   );
 
   const resourcesLinks: FooterLink[] = [
-    { name: t("blog"), href: `${prefix}/blog` },
-    { name: t("caseStudies"), href: `${prefix}/resources/case-studies` },
-    { name: t("whitepapers"), href: `${prefix}/resources/whitepapers` },
-    { name: t("webinars"), href: `${prefix}/resources/webinars` },
-    { name: t("community"), href: "https://forum.skygenesisenterprise.com", external: true },
+    { name: t("blog"), href: `${prefix}/communauty`, id: "resources-blog" },
+    { name: t("changelog"), href: `${prefix}/changelog`, id: "resources-changelog" },
+    { name: t("whitepapers"), href: `${prefix}/resources/whitepapers`, id: "resources-whitepapers" },
+    { name: t("webinars"), href: `${prefix}/resources/webinars`, id: "resources-webinars" },
+    { name: t("community"), href: "https://forum.skygenesisenterprise.com", external: true, id: "resources-community" },
   ];
 
   const companyLinks: FooterLink[] = [
-    { name: t("about"), href: `${prefix}/company/about` },
-    { name: t("careers"), href: "https://jobs.skygenesisenterprise.com", external: true },
-    { name: t("press"), href: `${prefix}/company/press` },
-    { name: t("partners"), href: `${prefix}/company/partners` },
-    { name: t("contact"), href: `${prefix}/company/contact` },
+    { name: t("about"), href: `${prefix}/company/about`, id: "company-about" },
+    { name: t("careers"), href: "https://jobs.skygenesisenterprise.com", external: true, id: "company-careers" },
+    { name: t("press"), href: `${prefix}/company/press`, id: "company-press" },
+    { name: t("partners"), href: `${prefix}/company/partners`, id: "company-partners" },
+    { name: t("contact"), href: `${prefix}/company/contact`, id: "company-contact" },
   ];
 
   const supportLinks: FooterLink[] = [
-    { name: t("helpCenter"), href: "https://support.skygenesisenterprise.com", external: true },
-    { name: t("contact"), href: `${prefix}/company/contact` },
-    { name: t("serviceStatus"), href: "https://status.kami-sama.tv", external: true },
-    { name: t("reportIssue"), href: `${prefix}/support/report` },
-    { name: t("developerSupport"), href: "https://developer.skygenesisenterprise.com", external: true },
+    { name: t("helpCenter"), href: "https://support.skygenesisenterprise.com", external: true, id: "support-help-center" },
+    { name: t("contact"), href: `${prefix}/company/contact`, id: "support-contact" },
+    { name: t("serviceStatus"), href: "https://status.kami-sama.tv", external: true, id: "support-service-status" },
+    { name: t("reportIssue"), href: `${prefix}/support/report`, id: "support-report-issue" },
+    { name: t("developerSupport"), href: "https://developer.skygenesisenterprise.com", external: true, id: "support-developer-support" },
   ];
 
   const legalLinks: FooterLink[] = [

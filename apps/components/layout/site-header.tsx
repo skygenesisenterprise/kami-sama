@@ -12,6 +12,7 @@ import {
   ChevronDown,
   ChevronRight,
   Film,
+  HelpCircle,
   History,
   Library,
   LogOut,
@@ -448,20 +449,6 @@ export function SiteHeader() {
           {/* Notifications */}
           <NotificationsMenu />
 
-          {/* Watchlist */}
-          {isAuthenticated && (
-            <Button
-              variant="ghost"
-              size="icon"
-              className="size-9"
-              asChild
-            >
-              <Link href={`/${locale}/watchlist`} aria-label={t('watchlist')}>
-                <Bookmark className="size-5" />
-              </Link>
-            </Button>
-          )}
-
           {/* Cast */}
           <CastDeviceSelector />
 
@@ -538,12 +525,12 @@ export function SiteHeader() {
 
                       <div className="py-1.5">
                         <Link
-                          href={`/${locale}/watchlist`}
+                          href={`/${locale}/support`}
                           onClick={() => setProfileOpen(false)}
                           className="mega-menu-link flex items-center gap-3 px-4 py-2.5 text-sm text-white/70"
                         >
-                          <Bookmark className="size-4" />
-                          {t('watchlist')}
+                          <HelpCircle className="size-4" />
+                          {t('support')}
                         </Link>
                         <Link
                           href={`/${locale}/history`}
