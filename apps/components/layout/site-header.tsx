@@ -115,6 +115,7 @@ export function SiteHeader() {
 
   // Mobile menu — mirrors the desktop items
   const NAV_LINKS = [
+    { href: `/${locale}/catalog`, label: t('navBrowse'), icon: Search },
     { href: `/${locale}/simulcast`, label: t('navSimulcast'), icon: Calendar },
     { href: `/${locale}/rankings`, label: t('navRankings'), icon: TrendingUp },
     { href: `/${locale}/calendar`, label: t('navCalendar'), icon: Calendar },
@@ -330,11 +331,11 @@ export function SiteHeader() {
                         <SectionHeader>{t('megaQuickLinks')}</SectionHeader>
                         <div className="mt-2.5 flex flex-col gap-0.5">
                           <Link
-                            href={`/${locale}/catalog?type=movie`}
+                            href={`/${locale}/catalog`}
                             onClick={() => setDiscoverOpen(false)}
                             className="mega-menu-link rounded-md px-2.5 py-1.5 text-[13px] text-white/70"
                           >
-                            {t('megaFilms')}
+                            {t('navBrowse')}
                           </Link>
                           <Link
                             href={`/${locale}/library`}
@@ -380,19 +381,19 @@ export function SiteHeader() {
                         <div className="mt-2.5 grid grid-cols-3 gap-x-4 gap-y-0.5">
                           {[
                             { label: t('genreAction'), slug: 'action' },
-                            { label: t('genreAdventure'), slug: 'adventure' },
-                            { label: t('genreComedy'), slug: 'comedy' },
-                            { label: t('genreDrama'), slug: 'drama' },
+                            { label: t('genreAdventure'), slug: 'aventure' },
+                            { label: t('genreComedy'), slug: 'comedie' },
+                            { label: t('genreDrama'), slug: 'drame' },
                             { label: t('genreFantasy'), slug: 'fantasy' },
-                            { label: t('genreMusic'), slug: 'music' },
+                            { label: t('genreMusic'), slug: 'musique' },
                             { label: t('genreRomance'), slug: 'romance' },
-                            { label: t('genreSciFi'), slug: 'sci-fi' },
-                            { label: t('genreSeinen'), slug: 'seinen' },
-                            { label: t('genreShoujo'), slug: 'shoujo' },
-                            { label: t('genreShonen'), slug: 'shonen' },
-                            { label: t('genreSliceOfLife'), slug: 'slice-of-life' },
-                            { label: t('genreSports'), slug: 'sports' },
-                            { label: t('genreSupernatural'), slug: 'supernatural' },
+                            { label: t('genreSciFi'), slug: 'science-fiction' },
+                            { label: t('genreSeinen'), slug: 'psychologique' },
+                            { label: t('genreShoujo'), slug: 'slice-of-life' },
+                            { label: t('genreShonen'), slug: 'isekai' },
+                            { label: t('genreSliceOfLife'), slug: 'mystere' },
+                            { label: t('genreSports'), slug: 'sport' },
+                            { label: t('genreSupernatural'), slug: 'horreur' },
                             { label: t('genreThriller'), slug: 'thriller' },
                           ].map((genre) => (
                             <Link
