@@ -38,7 +38,7 @@ interface AuthContextValue {
   };
   login: (email: string, password: string, rememberMe?: boolean) => Promise<void>;
   register: (payload: RegisterPayload, rememberMe?: boolean) => Promise<void>;
-  logout: () => Promise<void>;
+  logout: (redirectTo?: string) => Promise<void>;
   refresh: () => Promise<string | null>;
   loadCurrentUser: () => Promise<User | null>;
   setSessionPreference: (pref: string, value: boolean) => void;
@@ -317,7 +317,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     [router]
   );
 
-  const logout = React.useCallback(async () => {
+  const logout = React.useCallback(async (redirectTo?: string) => {
     await authApi.logout();
     handleClearSession();
     
@@ -325,7 +325,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     deleteSharedCookie('kami_sama_access_token');
     deleteSharedCookie('kami_sama_refresh');
     
-    router.push(LOGIN_ROUTE);
+    const target = redirectTo || LOGIN_ROUTE;
+    router.push(target);
     router.refresh();
   }, [router, handleClearSession]);
 

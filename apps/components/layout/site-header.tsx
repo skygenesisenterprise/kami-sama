@@ -15,9 +15,11 @@ import {
   HelpCircle,
   History,
   Library,
+  LogIn,
   LogOut,
   Menu,
   Search,
+  User,
   UserRoundCog,
   Sparkles,
   TrendingUp,
@@ -40,7 +42,7 @@ import { getAnime } from '@/lib/mock-data'
 export function SiteHeader() {
   const t = useTranslations('Public.header')
   const pathname = usePathname()
-  const { isAuthenticated, user } = useAuth()
+  const { isAuthenticated, user, logout } = useAuth()
   const [scrolled, setScrolled] = useState(false)
   const [mobileOpen, setMobileOpen] = useState(false)
   const [discoverOpen, setDiscoverOpen] = useState(false)
@@ -449,50 +451,84 @@ export function SiteHeader() {
           {/* Notifications */}
           <NotificationsMenu />
 
+          {/* Watchlist */}
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-9"
+            asChild
+          >
+            <Link href={`/${locale}/watchlist`} aria-label={t('watchlist')}>
+              <Bookmark className="size-5" />
+            </Link>
+          </Button>
+
           {/* Cast */}
           <CastDeviceSelector />
 
-          {/* Profile */}
-          {isAuthenticated ? (
-            <div
-              className="relative"
-              onMouseEnter={() => {
-                if (profileTimer.current) clearTimeout(profileTimer.current)
-                setProfileOpen(true)
-              }}
-              onMouseLeave={() => {
-                profileTimer.current = setTimeout(() => setProfileOpen(false), 200)
-              }}
+          {/* Profile / Guest mode */}
+          <div
+            className="relative"
+            onMouseEnter={() => {
+              if (profileTimer.current) clearTimeout(profileTimer.current)
+              setProfileOpen(true)
+            }}
+            onMouseLeave={() => {
+              profileTimer.current = setTimeout(() => setProfileOpen(false), 200)
+            }}
+          >
+            <button
+              type="button"
+              aria-label={isAuthenticated ? t('profileMenu') : t('guestMode')}
+              className={cn(
+                'ml-1 rounded-full outline-none transition-opacity hover:opacity-80 focus-visible:ring-2 focus-visible:ring-ring',
+                profileOpen && 'ring-2 ring-white/20',
+              )}
             >
-              <button
-                type="button"
-                aria-label={t('profileMenu')}
-                className={cn(
-                  'ml-1 rounded-full outline-none transition-opacity hover:opacity-80 focus-visible:ring-2 focus-visible:ring-ring',
-                  profileOpen && 'ring-2 ring-white/20',
-                )}
-              >
+              {isAuthenticated ? (
                 <UserAvatar user={{ id: user?.id ?? '', username: displayName, displayName, avatar: avatarUrl }} className="size-8" />
-              </button>
+              ) : (
+                <div className="flex size-8 items-center justify-center rounded-full bg-white/10 text-white/60 ring-1 ring-white/10 transition-colors hover:bg-white/15 hover:text-white/80">
+                  <User className="size-4" />
+                </div>
+              )}
+            </button>
 
-              <AnimatePresence>
-                {profileOpen && (
-                  <motion.div
-                    initial={{ opacity: 0, y: 8 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: 8 }}
-                    transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
-                    className="absolute right-0 top-full z-50 pt-2"
-                  >
-                    <div className="w-64 overflow-hidden rounded-lg border border-white/10 bg-[#111] shadow-2xl shadow-black/60">
-                      <div className="h-0.5 bg-linear-to-r from-transparent via-primary to-transparent" />
+            <AnimatePresence>
+              {profileOpen && (
+                <motion.div
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: 8 }}
+                  transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+                  className="absolute right-0 top-full z-50 pt-2"
+                >
+                  <div className="w-64 overflow-hidden rounded-lg border border-white/10 bg-[#111] shadow-2xl shadow-black/60">
+                    <div className="h-0.5 bg-linear-to-r from-transparent via-primary to-transparent" />
 
-                      <div className="flex items-center gap-3 border-b border-white/10 px-4 py-3">
-                        <UserAvatar user={{ id: user?.id ?? '', username: displayName, displayName, avatar: avatarUrl }} className="size-10" />
-                        <span className="min-w-0 flex-1 truncate text-sm font-semibold">{displayName}</span>
-                      </div>
+                    {/* Header */}
+                    <div className="flex items-center gap-3 border-b border-white/10 px-4 py-3">
+                      {isAuthenticated ? (
+                        <>
+                          <UserAvatar user={{ id: user?.id ?? '', username: displayName, displayName, avatar: avatarUrl }} className="size-10" />
+                          <span className="min-w-0 flex-1 truncate text-sm font-semibold">{displayName}</span>
+                        </>
+                      ) : (
+                        <>
+                          <div className="flex size-10 items-center justify-center rounded-full bg-white/10 text-white/60 ring-1 ring-white/10">
+                            <User className="size-5" />
+                          </div>
+                          <div className="flex min-w-0 flex-1 flex-col">
+                            <span className="truncate text-sm font-semibold text-white/80">{t('guestMode')}</span>
+                            <span className="truncate text-xs text-white/40">{t('guestModeSub')}</span>
+                          </div>
+                        </>
+                      )}
+                    </div>
 
-                      <div className="py-1.5">
+                    {/* Menu items */}
+                    <div className="py-1.5">
+                      {isAuthenticated && (
                         <a
                           href={getDomainUrl('sso', '/profile-change')}
                           onClick={() => setProfileOpen(false)}
@@ -501,6 +537,8 @@ export function SiteHeader() {
                           <Users className="size-4" />
                           {t('switchProfile')}
                         </a>
+                      )}
+                      {isAuthenticated && (
                         <Link
                           href={`/${locale}/profile`}
                           onClick={() => setProfileOpen(false)}
@@ -509,61 +547,72 @@ export function SiteHeader() {
                           <UserRoundCog className="size-4" />
                           {t('settings')}
                         </Link>
-                        {user?.roles?.some(role => ['superadmin', 'admin', 'owner'].includes(role)) && (
-                          <a
-                            href={getDomainUrl('studios', '/dash')}
-                            onClick={() => setProfileOpen(false)}
-                            className="mega-menu-link flex items-center gap-3 px-4 py-2.5 text-sm text-white/70"
-                          >
-                            <LayoutDashboard className="size-4" />
-                            Dashboard
-                          </a>
-                        )}
-                      </div>
-
-                      <div className="mx-3 h-px bg-white/10" />
-
-                      <div className="py-1.5">
-                        <Link
-                          href={`/${locale}/support`}
+                      )}
+                      {isAuthenticated && user?.roles?.some(role => ['superadmin', 'admin', 'owner'].includes(role)) && (
+                        <a
+                          href={getDomainUrl('studios', '/dash')}
                           onClick={() => setProfileOpen(false)}
                           className="mega-menu-link flex items-center gap-3 px-4 py-2.5 text-sm text-white/70"
                         >
-                          <HelpCircle className="size-4" />
-                          {t('support')}
-                        </Link>
-                        <Link
-                          href={`/${locale}/history`}
-                          onClick={() => setProfileOpen(false)}
-                          className="mega-menu-link flex items-center gap-3 px-4 py-2.5 text-sm text-white/70"
-                        >
-                          <History className="size-4" />
-                          {t('history')}
-                        </Link>
-                      </div>
+                          <LayoutDashboard className="size-4" />
+                          Dashboard
+                        </a>
+                      )}
+                    </div>
 
-                      <div className="mx-3 h-px bg-white/10" />
+                    {isAuthenticated && <div className="mx-3 h-px bg-white/10" />}
 
-                      <div className="py-1.5">
+                    <div className="py-1.5">
+                      <Link
+                        href={`/${locale}/support`}
+                        onClick={() => setProfileOpen(false)}
+                        className="mega-menu-link flex items-center gap-3 px-4 py-2.5 text-sm text-white/70"
+                      >
+                        <HelpCircle className="size-4" />
+                        {t('support')}
+                      </Link>
+                      <Link
+                        href={`/${locale}/history`}
+                        onClick={() => setProfileOpen(false)}
+                        className="mega-menu-link flex items-center gap-3 px-4 py-2.5 text-sm text-white/70"
+                      >
+                        <History className="size-4" />
+                        {t('history')}
+                      </Link>
+                    </div>
+
+                    {/* Footer: sign out or sign in CTA */}
+                    <div className="mx-3 h-px bg-white/10" />
+
+                    <div className="py-1.5">
+                      {isAuthenticated ? (
                         <button
                           type="button"
-                          onClick={() => setProfileOpen(false)}
+                          onClick={() => {
+                            setProfileOpen(false)
+                            logout(homeHref)
+                          }}
                           className="mega-menu-link flex w-full items-center gap-3 px-4 py-2.5 text-sm text-red-400 hover:text-red-300"
                         >
                           <LogOut className="size-4" />
                           {t('signOut')}
                         </button>
-                      </div>
+                      ) : (
+                        <Link
+                          href="/login"
+                          onClick={() => setProfileOpen(false)}
+                          className="mega-menu-link flex w-full items-center gap-3 px-4 py-2.5 text-sm font-semibold text-primary hover:text-primary/80"
+                        >
+                          <LogIn className="size-4" />
+                          {t('login')}
+                        </Link>
+                      )}
                     </div>
-                  </motion.div>
-                )}
-              </AnimatePresence>
-            </div>
-          ) : (
-            <Button asChild variant="ghost" size="sm" className="ml-1 rounded-lg bg-white/10 px-4 py-2 text-sm font-semibold text-white hover:bg-white/20">
-              <Link href="/login">{t('login')}</Link>
-            </Button>
-          )}
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
         </div>
       </div>
 

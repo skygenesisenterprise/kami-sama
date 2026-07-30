@@ -2,52 +2,27 @@
 
 import * as React from 'react'
 import {
-  Archive,
-  ArrowDownRight,
-  ArrowUpRight,
-  Bookmark,
-  Check,
-  ChevronDown,
-  ChevronLeft,
-  ChevronRight,
-  Clock,
   Copy,
   Crop,
   Download,
   Eye,
   EyeOff,
-  FileImage,
   FileWarning,
-  Filter,
-  Globe,
   Grid3X3,
-  GripVertical,
-  Hash,
   ImageIcon,
-  Info,
   Layers,
   LayoutGrid,
   List,
   Maximize2,
   MoreHorizontal,
-  Paintbrush,
   Pencil,
-  Pin,
-  PinOff,
   Plus,
   RefreshCw,
   Replace,
   Search,
-  Settings,
-  Share2,
-  Shield,
-  Sparkles,
-  Star,
-  Tag,
   Trash2,
   Upload,
   X,
-  ZoomIn,
 } from 'lucide-react'
 import { toast } from 'sonner'
 
@@ -107,13 +82,11 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { Textarea } from '@/components/ui/textarea'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { PageHeader } from '@/components/dash/page-header'
 import { StatusBadge } from '@/components/dash/status-badge'
 import {
   MOCK_POSTERS,
-  MOCK_POSTER_CHARTS,
   MOCK_POSTER_SETTINGS,
   POSTER_MEDIA_TYPES,
   POSTER_MEDIA_TYPE_LABEL,
@@ -131,16 +104,8 @@ import {
   IMPORT_SOURCES,
   IMPORT_SOURCE_LABEL,
   QUALITY_LABEL,
-  QUALITY_TONE,
   formatBytes,
-  formatNumber,
   type Poster,
-  type PosterMediaType,
-  type PosterResolution,
-  type PosterFormat,
-  type PosterStatus,
-  type PosterSource,
-  type PosterLanguage,
   type PosterSettings,
   type ImportSource,
   type ImportPreview,
