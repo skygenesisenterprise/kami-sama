@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       '@capacitor/core':
-        specifier: ^8.0.0
-        version: 8.0.0
+        specifier: ^8.4.2
+        version: 8.4.2
       '@loglayer/transport-pino':
         specifier: ^3.0.2
         version: 3.0.2(pino@10.1.1)
@@ -302,7 +302,7 @@ importers:
         specifier: ^8.3.1
         version: 8.4.2
       '@capacitor/core':
-        specifier: ^8.4.0
+        specifier: ^8.4.2
         version: 8.4.2
       '@capacitor/ios':
         specifier: ^8.4.0
@@ -997,9 +997,6 @@ packages:
     resolution: {integrity: sha512-hE4HmpMdr5T8eQ++kGa1BKkdG2JLEvo1y1cj1kmFK78VB9dBp538oe1EZvzwupNGOl0ZueALotzL5wcXRD9w1Q==}
     engines: {node: '>=22.0.0'}
     hasBin: true
-
-  '@capacitor/core@8.0.0':
-    resolution: {integrity: sha512-250HTVd/W/KdMygoqaedisvNbHbpbQTN2Hy/8ZYGm1nAqE0Fx7sGss4l0nDg33STxEdDhtVRoL2fIaaiukKseA==}
 
   '@capacitor/core@8.4.2':
     resolution: {integrity: sha512-fQPRb3JXRaU2pnufDUvqOjhsrYxDQeFRZyaj/sHydIUxD2NxOGHKMpmKUdI+U4OOmKuGZyvRpi7TSJU+7Bjbmg==}
@@ -8189,10 +8186,6 @@ snapshots:
       xml2js: 0.6.2
     transitivePeerDependencies:
       - supports-color
-
-  '@capacitor/core@8.0.0':
-    dependencies:
-      tslib: 2.8.1
 
   '@capacitor/core@8.4.2':
     dependencies:
