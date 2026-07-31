@@ -68,7 +68,6 @@ import {
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet'
-import { Switch } from '@/components/ui/switch'
 import {
   Dialog,
   DialogContent,
@@ -200,8 +199,8 @@ export default function CollectionsCatalogPage() {
       const matchesDiscover =
         discoverFilter === 'all' ||
         (discoverFilter === 'discover'
-          ? item.discover?.enabled === true
-          : item.discover?.enabled !== true)
+          ? item.status === 'Published'
+          : item.status !== 'Published')
       return matchesQuery && matchesStatus && matchesSource && matchesType && matchesDiscover
     })
 
@@ -237,9 +236,7 @@ export default function CollectionsCatalogPage() {
   }, [query, status, source, collectionType, discoverFilter, sortKey, sortDir, collections])
 
   const handleSaveDiscover = async (item: CollectionItem, draft: DiscoverSection) => {
-    const description = `${item.title} ${
-      draft.enabled ? 'is now shown on the Discover page.' : 'is hidden from the Discover page.'
-    }`
+    const description = `Discover settings updated for ${item.title}.`
     if (apiMode) {
       try {
         const updated = await collectionsApi.update(item.id, { discover: { ...draft } })
@@ -663,10 +660,10 @@ export default function CollectionsCatalogPage() {
                   )}
                   {columns.discover && (
                     <TableCell className="hidden lg:table-cell">
-                      {item.discover?.enabled ? (
+                      {item.status === 'Published' ? (
                         <Badge variant="secondary" className="gap-1 text-xs">
                           <LayoutGrid className="size-3" />
-                          #{item.discover.order}
+                          #{item.discover?.order ?? 1}
                         </Badge>
                       ) : (
                         <span className="text-xs text-muted-foreground">—</span>
@@ -751,7 +748,7 @@ export default function CollectionsCatalogPage() {
               <div className="mt-auto flex items-center justify-between text-xs text-muted-foreground">
                 <span>{item.entries.length} series</span>
                 <div className="flex items-center gap-1.5">
-                  {item.discover?.enabled && (
+                  {item.status === 'Published' && (
                     <StatusBadge tone="info">Discover</StatusBadge>
                   )}
                   <StatusBadge tone={VISIBILITY_TONE[item.visibility]}>
@@ -851,7 +848,7 @@ function CollectionDetailSheet({
   onSaveDiscover: (item: CollectionItem, draft: DiscoverSection) => void | Promise<void>
 }) {
   const [discoverDraft, setDiscoverDraft] = React.useState<DiscoverSection>({
-    enabled: false,
+    enabled: true,
     order: 1,
   })
 
@@ -859,8 +856,8 @@ function CollectionDetailSheet({
     if (!item) return
     setDiscoverDraft(
       item.discover
-        ? { ...item.discover }
-        : { enabled: false, order: nextDiscoverOrder(collections) },
+        ? { ...item.discover, enabled: true }
+        : { enabled: true, order: nextDiscoverOrder(collections) },
     )
   }, [item, collections])
 
@@ -1136,22 +1133,13 @@ function CollectionDetailSheet({
                   <div className="flex items-center justify-between rounded-lg border px-3 py-2.5">
                     <div className="flex flex-col">
                       <span className="text-sm font-medium">
-                        Show on Discover page
+                        Shown automatically when published
                       </span>
                       <span className="text-xs text-muted-foreground">
-                        Display this collection as a section on the public Discover page.
+                        Collections with status Published appear as a section on the public
+                        Discover page.
                       </span>
                     </div>
-                    <Switch
-                      checked={discoverDraft.enabled}
-                      onCheckedChange={(checked) =>
-                        setDiscoverDraft((prev) => ({
-                          ...prev,
-                          enabled: checked === true,
-                        }))
-                      }
-                      aria-label="Show on Discover page"
-                    />
                   </div>
                   <Field>
                     <FieldLabel>Order</FieldLabel>
@@ -1159,7 +1147,6 @@ function CollectionDetailSheet({
                       type="number"
                       min={1}
                       value={discoverDraft.order}
-                      disabled={!discoverDraft.enabled}
                       onChange={(e) =>
                         setDiscoverDraft((prev) => ({
                           ...prev,
@@ -1176,7 +1163,6 @@ function CollectionDetailSheet({
                     <Input
                       value={discoverDraft.title ?? ''}
                       placeholder={item.title}
-                      disabled={!discoverDraft.enabled}
                       onChange={(e) =>
                         setDiscoverDraft((prev) => ({
                           ...prev,
@@ -1193,7 +1179,6 @@ function CollectionDetailSheet({
                     <Input
                       value={discoverDraft.subtitle ?? ''}
                       placeholder={item.description}
-                      disabled={!discoverDraft.enabled}
                       onChange={(e) =>
                         setDiscoverDraft((prev) => ({
                           ...prev,
@@ -1211,7 +1196,6 @@ function CollectionDetailSheet({
                       <Input
                         value={discoverDraft.ctaLabel ?? ''}
                         placeholder="View all"
-                        disabled={!discoverDraft.enabled}
                         onChange={(e) =>
                           setDiscoverDraft((prev) => ({
                             ...prev,
@@ -1225,7 +1209,6 @@ function CollectionDetailSheet({
                       <Input
                         value={discoverDraft.href ?? ''}
                         placeholder={`/catalog?collection=${item.slug}`}
-                        disabled={!discoverDraft.enabled}
                         onChange={(e) =>
                           setDiscoverDraft((prev) => ({
                             ...prev,

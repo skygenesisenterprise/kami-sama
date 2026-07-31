@@ -156,7 +156,7 @@ func (s *CollectionService) List(ctx context.Context, status, collectionType, vi
 		q = q.Where("visibility = ?", visibility)
 	}
 	if discoverOnly {
-		q = q.Where("discover_enabled = ?", true).Order("discover_order ASC")
+		q = q.Order("discover_order ASC").Order("title ASC")
 	} else {
 		q = q.Order("updated_at DESC")
 	}

@@ -447,16 +447,20 @@ export default function DiscoverPage({
   const discoverSections: DiscoverSectionConfig[] =
     apiSections === null
       ? []
-      : apiSections
-          .map((section) => ({
+      : apiSections.map((section, index) => {
+          const animes =
+            section.items.length > 0
+              ? section.items.map(mapApiItemToAnime)
+              : Array.from({ length: 6 }, (_, i) => allAnime[(index * 6 + i) % allAnime.length])
+          return {
             id: section.id,
             title: section.title,
             href: section.ctaHref || '/catalog',
             subtitle: section.subtitle,
             ctaLabel: section.ctaLabel,
-            animes: section.items.map(mapApiItemToAnime),
-          }))
-          .filter((section) => section.animes.length > 0)
+            animes,
+          }
+        })
 
   const apiSectionsGroupA = discoverSections.slice(0, 2)
   const apiSectionsGroupB = discoverSections.slice(2, 5)
