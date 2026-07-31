@@ -8,6 +8,7 @@ const SELECTED_PROFILE_ID_KEY = 'kami_sama_selected_profile_id';
 // Cookie names for cross-subdomain sharing
 const PROFILE_SELECTED_COOKIE = 'kami_sama_profile_selected';
 const PROFILE_ID_COOKIE = 'kami_sama_selected_profile_id';
+const SELECTED_PROFILE_COOKIE = 'kami_sama_selected_profile';
 
 export interface SelectedProfileInfo {
   id: string;
@@ -88,6 +89,8 @@ export function saveSelectedProfile(profile: SelectedProfileInfo): void {
     }
     // Also persist profile id in cookie for cross-subdomain access
     setSharedCookie(PROFILE_ID_COOKIE, profile.id, 30 * 24 * 60 * 60);
+    // Persist the full profile so cross-subdomain pages can restore name/avatar
+    setSharedCookie(SELECTED_PROFILE_COOKIE, JSON.stringify(profile), 30 * 24 * 60 * 60);
     _notifyListeners();
   } catch {
     // Ignore storage errors
@@ -97,14 +100,32 @@ export function saveSelectedProfile(profile: SelectedProfileInfo): void {
 export function getSelectedProfile(): SelectedProfileInfo | null {
   if (typeof window === 'undefined') return null;
   try {
+    // Cross-subdomain source of truth: the shared cookie always holds the
+    // latest selection, no matter which subdomain it was made on. localStorage
+    // is per-origin and can go stale (e.g. a previous switch back-filled it).
+    const raw = getSharedCookie(SELECTED_PROFILE_COOKIE);
+    if (raw) {
+      const parsed = JSON.parse(raw) as SelectedProfileInfo;
+      if (parsed?.id && parsed?.displayName) {
+        // Back-fill localStorage so subsequent reads are fast
+        localStorage.setItem(SELECTED_PROFILE_ID_KEY, parsed.id);
+        localStorage.setItem(SELECTED_PROFILE_NAME_KEY, parsed.displayName);
+        if (parsed.avatarUrl) localStorage.setItem(SELECTED_PROFILE_AVATAR_KEY, parsed.avatarUrl);
+        return { id: parsed.id, displayName: parsed.displayName, avatarUrl: parsed.avatarUrl };
+      }
+    }
+
+    // Fallback when the cookie is absent/expired but localStorage persists
     const id = localStorage.getItem(SELECTED_PROFILE_ID_KEY) ?? getSharedCookie(PROFILE_ID_COOKIE);
     const name = localStorage.getItem(SELECTED_PROFILE_NAME_KEY);
-    if (!id || !name) return null;
-    return {
-      id,
-      displayName: name,
-      avatarUrl: localStorage.getItem(SELECTED_PROFILE_AVATAR_KEY) || undefined,
-    };
+    if (id && name) {
+      return {
+        id,
+        displayName: name,
+        avatarUrl: localStorage.getItem(SELECTED_PROFILE_AVATAR_KEY) || undefined,
+      };
+    }
+    return null;
   } catch {
     return null;
   }
@@ -119,6 +140,7 @@ export function clearProfileSelection(): void {
     localStorage.removeItem(SELECTED_PROFILE_AVATAR_KEY);
     deleteSharedCookie(PROFILE_SELECTED_COOKIE);
     deleteSharedCookie(PROFILE_ID_COOKIE);
+    deleteSharedCookie(SELECTED_PROFILE_COOKIE);
     _cache = null;
     _notifyListeners();
   } catch {

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/skygenesisenterprise/kami-sama/server/src/models"
 	"github.com/skygenesisenterprise/kami-sama/server/src/services"
 	"github.com/skygenesisenterprise/kami-sama/server/src/utils"
 )
@@ -23,20 +24,20 @@ type ApiImage struct {
 }
 
 type ApiImages struct {
-	Poster  ApiImage  `json:"poster"`
-	Backdrop ApiImage `json:"backdrop"`
-	Logo    *ApiImage `json:"logo,omitempty"`
+	Poster   ApiImage  `json:"poster"`
+	Backdrop ApiImage  `json:"backdrop"`
+	Logo     *ApiImage `json:"logo,omitempty"`
 }
 
 type ApiContentMetadata struct {
-	Genres      []string `json:"genres"`
-	Studio      string   `json:"studio"`
-	Rating      float64  `json:"rating"`
-	RatingCount *int     `json:"ratingCount,omitempty"`
-	AgeRating   string   `json:"ageRating,omitempty"`
-	Year        int      `json:"year"`
-	JapaneseTitle string `json:"japaneseTitle,omitempty"`
-	Synopsis    string   `json:"synopsis,omitempty"`
+	Genres        []string `json:"genres"`
+	Studio        string   `json:"studio"`
+	Rating        float64  `json:"rating"`
+	RatingCount   *int     `json:"ratingCount,omitempty"`
+	AgeRating     string   `json:"ageRating,omitempty"`
+	Year          int      `json:"year"`
+	JapaneseTitle string   `json:"japaneseTitle,omitempty"`
+	Synopsis      string   `json:"synopsis,omitempty"`
 }
 
 type ApiContentAvailability struct {
@@ -46,15 +47,15 @@ type ApiContentAvailability struct {
 }
 
 type ApiContentItem struct {
-	ID           string                `json:"id"`
-	Slug         string                `json:"slug"`
-	Title        string                `json:"title"`
-	Type         string                `json:"type"`
-	Format       string                `json:"format"`
-	Status       string                `json:"status"`
-	Year         int                   `json:"year"`
-	Images       ApiImages             `json:"images"`
-	Metadata     ApiContentMetadata    `json:"metadata"`
+	ID           string                 `json:"id"`
+	Slug         string                 `json:"slug"`
+	Title        string                 `json:"title"`
+	Type         string                 `json:"type"`
+	Format       string                 `json:"format"`
+	Status       string                 `json:"status"`
+	Year         int                    `json:"year"`
+	Images       ApiImages              `json:"images"`
+	Metadata     ApiContentMetadata     `json:"metadata"`
 	Availability ApiContentAvailability `json:"availability"`
 }
 
@@ -174,6 +175,37 @@ func (h *DiscoverHandler) GetDiscover(c *gin.Context) {
 	}
 
 	utils.Success(c, http.StatusOK, resp)
+}
+
+// GetDiscoverSections returns the discover sections built from published collections
+// that have the discover flag enabled, ordered by discover_order.
+func (h *DiscoverHandler) GetDiscoverSections(c *gin.Context) {
+	collections, err := h.deps.CollectionService.ListDiscover(c.Request.Context())
+	if err != nil {
+		utils.Error(c, err)
+		return
+	}
+	sections := make([]ApiSection, 0, len(collections))
+	for i := range collections {
+		col := &collections[i]
+		title := coalesceStr(col.DiscoverTitle, col.Title)
+		subtitle := coalesceStr(col.DiscoverSubtitle, col.Description)
+		ctaHref := coalesceStr(col.DiscoverHref, "/catalog")
+		items := make([]ApiContentItem, 0, len(col.Entries))
+		for j := range col.Entries {
+			items = append(items, animeModelToContentItem(&col.Entries[j].Anime))
+		}
+		sections = append(sections, ApiSection{
+			ID:       col.ID,
+			Title:    title,
+			Type:     "carousel",
+			Subtitle: subtitle,
+			CtaLabel: col.DiscoverCta,
+			CtaHref:  ctaHref,
+			Items:    items,
+		})
+	}
+	utils.Success(c, http.StatusOK, gin.H{"sections": sections})
 }
 
 // GetDiscoverContinueWatching returns continue-watching items for the authenticated user.
@@ -319,6 +351,57 @@ func mapAnilistMediaToContentItems(media []services.AnilistMedia) []ApiContentIt
 	return items
 }
 
+func animeModelToContentItem(a *models.Anime) ApiContentItem {
+	genres := make([]string, 0, len(a.Genres))
+	for _, genre := range a.Genres {
+		genres = append(genres, genre.Name)
+	}
+	studioName := ""
+	if len(a.Studios) > 0 {
+		studioName = a.Studios[0].Name
+	}
+	status := a.Status
+	if status == "" {
+		status = "upcoming"
+	}
+	episodes := a.TotalEpisodes
+	seasons := 1
+	if episodes > 12 {
+		seasons = (episodes + 11) / 12
+	}
+	return ApiContentItem{
+		ID:     a.ID,
+		Slug:   a.Slug,
+		Title:  a.Title,
+		Type:   "anime",
+		Format: "TV",
+		Status: status,
+		Year:   a.ReleaseYear,
+		Images: ApiImages{
+			Poster: ApiImage{
+				URL: a.CoverImageUrl,
+			},
+			Backdrop: ApiImage{
+				URL: coalesceStr(a.BannerImageUrl, a.CoverImageUrl),
+			},
+		},
+		Metadata: ApiContentMetadata{
+			Genres:        genres,
+			Studio:        studioName,
+			Rating:        a.Rating,
+			AgeRating:     a.AgeRating,
+			Year:          a.ReleaseYear,
+			JapaneseTitle: a.JapaneseTitle,
+			Synopsis:      a.Synopsis,
+		},
+		Availability: ApiContentAvailability{
+			Watchable: false,
+			Episodes:  episodes,
+			Seasons:   &seasons,
+		},
+	}
+}
+
 // ──────────────────────────────────────────────────────────────
 // Helpers
 // ──────────────────────────────────────────────────────────────
@@ -389,32 +472,32 @@ func buildGenreSections(trending, popular []services.AnilistMedia) []ApiSection 
 
 	sections := make([]ApiSection, 0, len(entries))
 	genreLabels := map[string]string{
-		"Action":       "Action & Aventure",
-		"Adventure":    "Aventure",
-		"Comedy":       "Comédie",
-		"Drama":        "Drames poignants",
-		"Fantasy":      "Fantastique",
-		"Horror":       "Horreur & Suspense",
-		"Romance":      "Romance",
-		"Sci-Fi":       "Science-Fiction",
+		"Action":        "Action & Aventure",
+		"Adventure":     "Aventure",
+		"Comedy":        "Comédie",
+		"Drama":         "Drames poignants",
+		"Fantasy":       "Fantastique",
+		"Horror":        "Horreur & Suspense",
+		"Romance":       "Romance",
+		"Sci-Fi":        "Science-Fiction",
 		"Slice of Life": "Tranche de vie",
-		"Suspense":     "Suspense",
-		"Thriller":     "Thrillers",
-		"Supernatural": "Surnaturel",
-		"Mystery":      "Mystère",
-		"Sports":       "Sports",
-		"Music":        "Musique",
-		"Mecha":        "Mecha",
-		"Seinen":       "Seinen",
-		"Shounen":      "Shounen",
-		"Shoujo":       "Shoujo",
-		"Josei":        "Josei",
-		"Kids":         "Enfants",
-		"Ecchi":        "Ecchi",
-		"Hentai":       "Hentai",
-		"Yuri":         "Yuri",
-		"Yaoi":         "Yaoi",
-		"Isekai":       "Isekai",
+		"Suspense":      "Suspense",
+		"Thriller":      "Thrillers",
+		"Supernatural":  "Surnaturel",
+		"Mystery":       "Mystère",
+		"Sports":        "Sports",
+		"Music":         "Musique",
+		"Mecha":         "Mecha",
+		"Seinen":        "Seinen",
+		"Shounen":       "Shounen",
+		"Shoujo":        "Shoujo",
+		"Josei":         "Josei",
+		"Kids":          "Enfants",
+		"Ecchi":         "Ecchi",
+		"Hentai":        "Hentai",
+		"Yuri":          "Yuri",
+		"Yaoi":          "Yaoi",
+		"Isekai":        "Isekai",
 	}
 	genreQuery := map[string]string{
 		"Action":       "action",

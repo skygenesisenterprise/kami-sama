@@ -113,15 +113,9 @@ export default function ProfileChangePage() {
         window.location.href = redirectUrl
       } else {
         const validLocale = routing.locales.includes(locale as any) ? locale : routing.defaultLocale;
-        // Pass profile data via URL so main domain can pick it up cross-subdomain
-        const profileParams = new URLSearchParams({
-          profileId: profile.id,
-          profileName: profile.displayName,
-        })
-        if (profile.avatarUrl) {
-          profileParams.set('profileAvatar', profile.avatarUrl)
-        }
-        window.location.href = getDomainUrl('main', `/${validLocale}/discover?${profileParams.toString()}`)
+        // Profile data travels via shared cookies (localStorage is not shared
+        // across subdomains), so the destination URL stays clean.
+        window.location.href = getDomainUrl('main', `/${validLocale}/discover`)
       }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Une erreur est survenue'

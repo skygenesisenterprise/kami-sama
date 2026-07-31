@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useLayoutEffect, useEffect, useRef, useState, type ReactNode } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useLocale, useTranslations } from 'next-intl'
@@ -58,8 +58,6 @@ export function SiteHeader() {
       const urlProfileId = urlParams.get('profileId')
       const urlProfileName = urlParams.get('profileName')
       if (urlProfileId && urlProfileName) {
-        // Clean URL immediately so user never sees the params
-        window.history.replaceState({}, '', window.location.pathname)
         return { id: urlProfileId, displayName: urlProfileName, avatarUrl: urlParams.get('profileAvatar') || undefined }
       }
     }
@@ -68,21 +66,28 @@ export function SiteHeader() {
   const displayName = selectedProfile?.displayName || user?.displayName || 'User'
   const avatarUrl = selectedProfile?.avatarUrl || user?.avatarUrl || ''
 
-  // Re-read profile from storage when it changes (cross-subdomain or cross-tab)
-  useEffect(() => {
-    const PROFILE_SELECTED_KEY = 'kami_sama_profile_selected'
-    const SELECTED_PROFILE_ID_KEY = 'kami_sama_selected_profile_id'
-
-    // On mount: save URL profile params to localStorage if present
+  // Persist + strip profile params before paint so the address bar stays clean
+  useLayoutEffect(() => {
     const urlParams = new URLSearchParams(window.location.search)
     const urlProfileId = urlParams.get('profileId')
     const urlProfileName = urlParams.get('profileName')
     if (urlProfileId && urlProfileName) {
-      const urlProfileAvatar = urlParams.get('profileAvatar') || undefined
-      saveSelectedProfile({ id: urlProfileId, displayName: urlProfileName, avatarUrl: urlProfileAvatar })
+      saveSelectedProfile({
+        id: urlProfileId,
+        displayName: urlProfileName,
+        avatarUrl: urlParams.get('profileAvatar') || undefined,
+      })
       setProfileSelected(true)
       setSelectedProfile(getSelectedProfile())
+      // Clean URL so the user never sees the params
+      window.history.replaceState({}, '', window.location.pathname)
     }
+  }, [])
+
+  // Re-read profile from storage when it changes (cross-subdomain or cross-tab)
+  useEffect(() => {
+    const PROFILE_SELECTED_KEY = 'kami_sama_profile_selected'
+    const SELECTED_PROFILE_ID_KEY = 'kami_sama_selected_profile_id'
 
     function refreshProfile() {
       setSelectedProfile(getSelectedProfile())

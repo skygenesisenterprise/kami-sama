@@ -409,7 +409,7 @@ export default function NewVideosPage({
       : t('resultsCountPlural', { count: filteredItems.length })
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen bg-background select-none">
       {/* Header */}
       <div className="mx-auto max-w-7xl px-4 pt-8 md:px-8">
         <div className="flex flex-col gap-6">

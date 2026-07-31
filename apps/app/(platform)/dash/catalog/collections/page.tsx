@@ -44,7 +44,7 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from '@/components/ui/empty'
-import { Field, FieldGroup, FieldLabel } from '@/components/ui/field'
+import { Field, FieldDescription, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import {
   InputGroup,
@@ -68,6 +68,15 @@ import {
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet'
+import { Switch } from '@/components/ui/switch'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import {
   Table,
   TableBody,
@@ -81,6 +90,9 @@ import { Textarea } from '@/components/ui/textarea'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { PageHeader } from '@/components/dash/page-header'
 import { StatusBadge } from '@/components/dash/status-badge'
+import { collectionsApi } from '@/lib/api/collections'
+import type { ApiCollection } from '@/lib/api/collections'
+import { mapApiCollectionToCollectionItem } from '@/lib/collections-api-mappers'
 import {
   COLLECTIONS_MOCK,
   COLLECTION_STATUS_TONE,
@@ -88,11 +100,14 @@ import {
   ALL_COLLECTION_STATUSES,
   ALL_COLLECTION_TYPES,
   ALL_DATA_SOURCES,
+  ALL_DISCOVER_FILTERS,
+  DISCOVER_FILTER_LABEL,
   METADATA_STATUS_LABEL,
   getCollectionStats,
+  setCollectionDiscover,
   type CollectionItem,
   type CollectionType,
-  type DataSource,
+  type DiscoverSection,
   type PublicationState,
   type MetadataStatus,
 } from '@/lib/collections-catalog-data'
@@ -125,6 +140,7 @@ export default function CollectionsCatalogPage() {
   const [status, setStatus] = React.useState<string>('all')
   const [source, setSource] = React.useState<string>('all')
   const [collectionType, setCollectionType] = React.useState<string>('all')
+  const [discoverFilter, setDiscoverFilter] = React.useState<'all' | 'discover' | 'hidden'>('all')
   const [sortKey, setSortKey] = React.useState<SortKey>('title')
   const [sortDir, setSortDir] = React.useState<SortDir>('asc')
   const [view, setView] = React.useState<'table' | 'grid'>('table')
@@ -138,12 +154,40 @@ export default function CollectionsCatalogPage() {
     tags: true,
     metadata: true,
     updated: true,
+    discover: true,
   })
+  const [collections, setCollections] = React.useState<CollectionItem[]>(COLLECTIONS_MOCK)
+  const [apiMode, setApiMode] = React.useState(false)
+  const [loading, setLoading] = React.useState(true)
+  const [newCollectionOpen, setNewCollectionOpen] = React.useState(false)
 
-  const stats = React.useMemo(() => getCollectionStats(COLLECTIONS_MOCK), [])
+  React.useEffect(() => {
+    let cancelled = false
+    async function loadCollections() {
+      try {
+        const items = await collectionsApi.list()
+        if (cancelled) return
+        setCollections(items.map(mapApiCollectionToCollectionItem))
+        setApiMode(true)
+      } catch (error) {
+        if (cancelled) return
+        console.error('Failed to load collections from API', error)
+        setCollections(COLLECTIONS_MOCK)
+        setApiMode(false)
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    }
+    loadCollections()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const stats = React.useMemo(() => getCollectionStats(collections), [collections])
 
   const filtered = React.useMemo(() => {
-    let items = COLLECTIONS_MOCK.filter((item) => {
+    let items = collections.filter((item) => {
       const matchesQuery =
         item.title.toLowerCase().includes(query.toLowerCase()) ||
         item.description.toLowerCase().includes(query.toLowerCase())
@@ -153,7 +197,12 @@ export default function CollectionsCatalogPage() {
         item.sources.some((s) => s.provider === source)
       const matchesType =
         collectionType === 'all' || item.type === collectionType
-      return matchesQuery && matchesStatus && matchesSource && matchesType
+      const matchesDiscover =
+        discoverFilter === 'all' ||
+        (discoverFilter === 'discover'
+          ? item.discover?.enabled === true
+          : item.discover?.enabled !== true)
+      return matchesQuery && matchesStatus && matchesSource && matchesType && matchesDiscover
     })
 
     items.sort((a, b) => {
@@ -185,7 +234,37 @@ export default function CollectionsCatalogPage() {
     })
 
     return items
-  }, [query, status, source, collectionType, sortKey, sortDir])
+  }, [query, status, source, collectionType, discoverFilter, sortKey, sortDir, collections])
+
+  const handleSaveDiscover = async (item: CollectionItem, draft: DiscoverSection) => {
+    const description = `${item.title} ${
+      draft.enabled ? 'is now shown on the Discover page.' : 'is hidden from the Discover page.'
+    }`
+    if (apiMode) {
+      try {
+        const updated = await collectionsApi.update(item.id, { discover: { ...draft } })
+        const mapped = mapApiCollectionToCollectionItem(updated)
+        setCollections((prev) => prev.map((c) => (c.id === item.id ? mapped : c)))
+        toast.success('Changes saved', { description })
+        setInspecting(null)
+      } catch (error) {
+        console.error('Failed to update collection discover settings', error)
+        toast.error('Update failed', {
+          description: 'The API could not update this collection.',
+        })
+      }
+    } else {
+      setCollectionDiscover(item.id, draft)
+      toast.success('Changes saved', { description })
+      setInspecting(null)
+    }
+  }
+
+  const handleCollectionCreated = (created: ApiCollection) => {
+    const mapped = mapApiCollectionToCollectionItem(created)
+    setCollections((prev) => [mapped, ...prev])
+    if (!apiMode) setApiMode(true)
+  }
 
   const allSelected = filtered.length > 0 && selected.size === filtered.length
 
@@ -219,7 +298,10 @@ export default function CollectionsCatalogPage() {
           <Eye data-icon="inline-start" />
           Preview site
         </Button>
-        <Button size="sm">
+        <Button
+          size="sm"
+          onClick={() => setNewCollectionOpen(true)}
+        >
           <Plus data-icon="inline-start" />
           New collection
         </Button>
@@ -301,6 +383,24 @@ export default function CollectionsCatalogPage() {
               {ALL_DATA_SOURCES.map((s) => (
                 <SelectItem key={s} value={s}>
                   {s === 'all' ? 'All sources' : s}
+                </SelectItem>
+              ))}
+            </SelectGroup>
+          </SelectContent>
+        </Select>
+
+        <Select
+          value={discoverFilter}
+          onValueChange={(v) => setDiscoverFilter(v as 'all' | 'discover' | 'hidden')}
+        >
+          <SelectTrigger className="w-36">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectGroup>
+              {ALL_DISCOVER_FILTERS.map((f) => (
+                <SelectItem key={f} value={f}>
+                  {DISCOVER_FILTER_LABEL[f]}
                 </SelectItem>
               ))}
             </SelectGroup>
@@ -418,10 +518,15 @@ export default function CollectionsCatalogPage() {
             <EmptyMedia variant="icon">
               <Search />
             </EmptyMedia>
-            <EmptyTitle>No collections found</EmptyTitle>
+            <EmptyTitle>
+              {loading
+                ? 'Loading collections…'
+                : 'No collections found'}
+            </EmptyTitle>
             <EmptyDescription>
-              No collections match the current filters. Try adjusting your search or
-              create a new collection.
+              {loading
+                ? 'Fetching collections from the API.'
+                : 'No collections match the current filters. Try adjusting your search or create a new collection.'}
             </EmptyDescription>
           </EmptyHeader>
         </Empty>
@@ -465,6 +570,11 @@ export default function CollectionsCatalogPage() {
                 {columns.updated && (
                   <TableHead className="hidden lg:table-cell">
                     Updated
+                  </TableHead>
+                )}
+                {columns.discover && (
+                  <TableHead className="hidden lg:table-cell">
+                    Discover
                   </TableHead>
                 )}
                 <TableHead className="w-10" />
@@ -551,6 +661,18 @@ export default function CollectionsCatalogPage() {
                       {item.updatedAt}
                     </TableCell>
                   )}
+                  {columns.discover && (
+                    <TableCell className="hidden lg:table-cell">
+                      {item.discover?.enabled ? (
+                        <Badge variant="secondary" className="gap-1 text-xs">
+                          <LayoutGrid className="size-3" />
+                          #{item.discover.order}
+                        </Badge>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">—</span>
+                      )}
+                    </TableCell>
+                  )}
                   <TableCell>
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
@@ -628,9 +750,14 @@ export default function CollectionsCatalogPage() {
               </p>
               <div className="mt-auto flex items-center justify-between text-xs text-muted-foreground">
                 <span>{item.entries.length} series</span>
-                <StatusBadge tone={VISIBILITY_TONE[item.visibility]}>
-                  {item.visibility}
-                </StatusBadge>
+                <div className="flex items-center gap-1.5">
+                  {item.discover?.enabled && (
+                    <StatusBadge tone="info">Discover</StatusBadge>
+                  )}
+                  <StatusBadge tone={VISIBILITY_TONE[item.visibility]}>
+                    {item.visibility}
+                  </StatusBadge>
+                </div>
               </div>
             </button>
           ))}
@@ -639,7 +766,8 @@ export default function CollectionsCatalogPage() {
 
       <div className="flex items-center justify-between text-sm text-muted-foreground">
         <span>
-          Showing {filtered.length} of {COLLECTIONS_MOCK.length} collections
+          Showing {filtered.length} of {collections.length} collections
+          {apiMode && ' · synced with API'}
         </span>
         <div className="flex items-center gap-2">
           <Button variant="outline" size="sm" disabled>
@@ -653,7 +781,15 @@ export default function CollectionsCatalogPage() {
 
       <CollectionDetailSheet
         item={inspecting}
+        collections={collections}
         onClose={() => setInspecting(null)}
+        onSaveDiscover={handleSaveDiscover}
+      />
+
+      <NewCollectionDialog
+        open={newCollectionOpen}
+        onOpenChange={setNewCollectionOpen}
+        onCreated={handleCollectionCreated}
       />
     </main>
   )
@@ -699,13 +835,35 @@ function cn(...classes: (string | boolean | undefined)[]) {
   return classes.filter(Boolean).join(' ')
 }
 
+function nextDiscoverOrder(collections: CollectionItem[]): number {
+  return Math.max(0, ...collections.map((c) => c.discover?.order ?? 0)) + 1
+}
+
 function CollectionDetailSheet({
   item,
+  collections,
   onClose,
+  onSaveDiscover,
 }: {
   item: CollectionItem | null
+  collections: CollectionItem[]
   onClose: () => void
+  onSaveDiscover: (item: CollectionItem, draft: DiscoverSection) => void | Promise<void>
 }) {
+  const [discoverDraft, setDiscoverDraft] = React.useState<DiscoverSection>({
+    enabled: false,
+    order: 1,
+  })
+
+  React.useEffect(() => {
+    if (!item) return
+    setDiscoverDraft(
+      item.discover
+        ? { ...item.discover }
+        : { enabled: false, order: nextDiscoverOrder(collections) },
+    )
+  }, [item, collections])
+
   return (
     <Sheet open={item !== null} onOpenChange={(open) => !open && onClose()}>
       <SheetContent side="right" className="flex w-full flex-col gap-0 sm:max-w-xl">
@@ -733,6 +891,7 @@ function CollectionDetailSheet({
                 <TabsTrigger value="metadata">Metadata</TabsTrigger>
                 <TabsTrigger value="assets">Assets</TabsTrigger>
                 <TabsTrigger value="sources">Sources</TabsTrigger>
+                <TabsTrigger value="discover">Discover</TabsTrigger>
               </TabsList>
 
               <TabsContent value="overview" className="pt-4">
@@ -971,15 +1130,119 @@ function CollectionDetailSheet({
                   </Button>
                 </FieldGroup>
               </TabsContent>
+
+              <TabsContent value="discover" className="pt-4">
+                <FieldGroup>
+                  <div className="flex items-center justify-between rounded-lg border px-3 py-2.5">
+                    <div className="flex flex-col">
+                      <span className="text-sm font-medium">
+                        Show on Discover page
+                      </span>
+                      <span className="text-xs text-muted-foreground">
+                        Display this collection as a section on the public Discover page.
+                      </span>
+                    </div>
+                    <Switch
+                      checked={discoverDraft.enabled}
+                      onCheckedChange={(checked) =>
+                        setDiscoverDraft((prev) => ({
+                          ...prev,
+                          enabled: checked === true,
+                        }))
+                      }
+                      aria-label="Show on Discover page"
+                    />
+                  </div>
+                  <Field>
+                    <FieldLabel>Order</FieldLabel>
+                    <Input
+                      type="number"
+                      min={1}
+                      value={discoverDraft.order}
+                      disabled={!discoverDraft.enabled}
+                      onChange={(e) =>
+                        setDiscoverDraft((prev) => ({
+                          ...prev,
+                          order: parseInt(e.target.value, 10) || 1,
+                        }))
+                      }
+                    />
+                    <FieldDescription>
+                      Lower numbers appear first on the Discover page.
+                    </FieldDescription>
+                  </Field>
+                  <Field>
+                    <FieldLabel>Section title</FieldLabel>
+                    <Input
+                      value={discoverDraft.title ?? ''}
+                      placeholder={item.title}
+                      disabled={!discoverDraft.enabled}
+                      onChange={(e) =>
+                        setDiscoverDraft((prev) => ({
+                          ...prev,
+                          title: e.target.value || undefined,
+                        }))
+                      }
+                    />
+                    <FieldDescription>
+                      Leave empty to use the collection title.
+                    </FieldDescription>
+                  </Field>
+                  <Field>
+                    <FieldLabel>Section subtitle</FieldLabel>
+                    <Input
+                      value={discoverDraft.subtitle ?? ''}
+                      placeholder={item.description}
+                      disabled={!discoverDraft.enabled}
+                      onChange={(e) =>
+                        setDiscoverDraft((prev) => ({
+                          ...prev,
+                          subtitle: e.target.value || undefined,
+                        }))
+                      }
+                    />
+                    <FieldDescription>
+                      Leave empty to use the collection description.
+                    </FieldDescription>
+                  </Field>
+                  <div className="grid grid-cols-2 gap-4">
+                    <Field>
+                      <FieldLabel>CTA label</FieldLabel>
+                      <Input
+                        value={discoverDraft.ctaLabel ?? ''}
+                        placeholder="View all"
+                        disabled={!discoverDraft.enabled}
+                        onChange={(e) =>
+                          setDiscoverDraft((prev) => ({
+                            ...prev,
+                            ctaLabel: e.target.value || undefined,
+                          }))
+                        }
+                      />
+                    </Field>
+                    <Field>
+                      <FieldLabel>Destination</FieldLabel>
+                      <Input
+                        value={discoverDraft.href ?? ''}
+                        placeholder={`/catalog?collection=${item.slug}`}
+                        disabled={!discoverDraft.enabled}
+                        onChange={(e) =>
+                          setDiscoverDraft((prev) => ({
+                            ...prev,
+                            href: e.target.value || undefined,
+                          }))
+                        }
+                      />
+                    </Field>
+                  </div>
+                </FieldGroup>
+              </TabsContent>
             </Tabs>
             <SheetFooter className="flex-row border-t">
               <Button
                 className="flex-1"
                 onClick={() => {
-                  toast.success('Changes saved', {
-                    description: `${item.title} was updated.`,
-                  })
-                  onClose()
+                  void onSaveDiscover(item, discoverDraft)
                 }}
               >
                 Save changes
@@ -992,5 +1255,197 @@ function CollectionDetailSheet({
         )}
       </SheetContent>
     </Sheet>
+  )
+}
+
+function slugify(input: string): string {
+  return input
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '')
+}
+
+function NewCollectionDialog({
+  open,
+  onOpenChange,
+  onCreated,
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  onCreated: (collection: ApiCollection) => void
+}) {
+  const [title, setTitle] = React.useState('')
+  const [slug, setSlug] = React.useState('')
+  const [description, setDescription] = React.useState('')
+  const [type, setType] = React.useState<CollectionType>('editorial')
+  const [visibility, setVisibility] = React.useState<'public' | 'private' | 'unlisted'>('private')
+  const [status, setStatus] = React.useState<PublicationState>('Draft')
+  const [tags, setTags] = React.useState('')
+  const [slugTouched, setSlugTouched] = React.useState(false)
+  const [submitting, setSubmitting] = React.useState(false)
+
+  React.useEffect(() => {
+    if (open) {
+      setTitle('')
+      setSlug('')
+      setDescription('')
+      setType('editorial')
+      setVisibility('private')
+      setStatus('Draft')
+      setTags('')
+      setSlugTouched(false)
+      setSubmitting(false)
+    }
+  }, [open])
+
+  const handleSubmit = async () => {
+    if (!title.trim() || submitting) return
+    setSubmitting(true)
+    try {
+      const created = await collectionsApi.create({
+        title: title.trim(),
+        slug: slug.trim() || undefined,
+        description: description.trim(),
+        type,
+        visibility,
+        status,
+        tags: tags
+          .split(',')
+          .map((t) => t.trim())
+          .filter(Boolean),
+      })
+      onCreated(created)
+      toast.success('Collection created', {
+        description: `${created.title} was created successfully.`,
+      })
+      onOpenChange(false)
+    } catch (error) {
+      console.error('Failed to create collection', error)
+      toast.error('Creation failed', {
+        description: 'The API could not create this collection.',
+      })
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>New collection</DialogTitle>
+          <DialogDescription>
+            Create a curated collection that can be displayed on the Discover page.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-4">
+          <FieldGroup>
+            <Field>
+              <FieldLabel>Title</FieldLabel>
+              <Input
+                value={title}
+                placeholder="e.g. Best Anime of 2025"
+                onChange={(e) => {
+                  setTitle(e.target.value)
+                  if (!slugTouched) {
+                    setSlug(slugify(e.target.value))
+                  }
+                }}
+              />
+            </Field>
+            <Field>
+              <FieldLabel>Slug</FieldLabel>
+              <Input
+                value={slug}
+                placeholder="auto-generated from title"
+                onChange={(e) => {
+                  setSlugTouched(true)
+                  setSlug(e.target.value)
+                }}
+              />
+              <FieldDescription>
+                Used in URLs. Leave empty to auto-generate from the title.
+              </FieldDescription>
+            </Field>
+            <Field>
+              <FieldLabel>Description</FieldLabel>
+              <Textarea
+                rows={3}
+                value={description}
+                placeholder="Short description of the collection"
+                onChange={(e) => setDescription(e.target.value)}
+              />
+            </Field>
+            <div className="grid grid-cols-2 gap-4">
+              <Field>
+                <FieldLabel>Type</FieldLabel>
+                <Select value={type} onValueChange={(v) => setType(v as CollectionType)}>
+                  <SelectTrigger className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {Object.entries(COLLECTION_TYPE_LABEL).map(([value, label]) => (
+                      <SelectItem key={value} value={value}>
+                        {label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </Field>
+              <Field>
+                <FieldLabel>Visibility</FieldLabel>
+                <Select
+                  value={visibility}
+                  onValueChange={(v) => setVisibility(v as 'public' | 'private' | 'unlisted')}
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="public">Public</SelectItem>
+                    <SelectItem value="unlisted">Unlisted</SelectItem>
+                    <SelectItem value="private">Private</SelectItem>
+                  </SelectContent>
+                </Select>
+              </Field>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <Field>
+                <FieldLabel>Status</FieldLabel>
+                <Select value={status} onValueChange={(v) => setStatus(v as PublicationState)}>
+                  <SelectTrigger className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {ALL_COLLECTION_STATUSES.filter((s) => s !== 'all').map((s) => (
+                      <SelectItem key={s} value={s}>
+                        {s}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </Field>
+              <Field>
+                <FieldLabel>Tags</FieldLabel>
+                <Input
+                  value={tags}
+                  placeholder="editorial, best-of, 2025"
+                  onChange={(e) => setTags(e.target.value)}
+                />
+                <FieldDescription>Comma-separated tags.</FieldDescription>
+              </Field>
+            </div>
+          </FieldGroup>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button onClick={() => void handleSubmit()} disabled={submitting || !title.trim()}>
+            {submitting ? 'Creating…' : 'Create collection'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }

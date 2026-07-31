@@ -33,7 +33,7 @@ export default function RankingsPage() {
   ]
 
   return (
-    <div className="min-h-screen bg-paper">
+    <div className="min-h-screen bg-paper select-none">
       <div className="mx-auto max-w-5xl px-4 pt-10 pb-16 md:px-8">
         {/* Header */}
         <div className="flex flex-col gap-6 sm:flex-row sm:items-center sm:justify-between">

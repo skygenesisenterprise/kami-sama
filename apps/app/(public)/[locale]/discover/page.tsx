@@ -12,12 +12,24 @@ import {
   getAnime,
   getAllAnime,
   getContinueWatching,
-  getRecentlyAdded,
   getContentPath,
 } from '@/lib/mock-data'
+import { collectionsApi } from '@/lib/api/collections'
+import { mapApiItemToAnime } from '@/lib/api/discover-adapter'
 import { getDomainUrl } from '@/lib/domains'
 import { useAuth } from '@/context/AuthContext'
 import type { Anime } from '@/types/anime'
+import type { ApiSection } from '@/types/api/discover'
+
+interface DiscoverSectionConfig {
+  id: string
+  title: string
+  href: string
+  subtitle?: string
+  ctaLabel?: string
+  animes: Anime[]
+  isResume?: boolean
+}
 
 interface DiscoverRailProps {
   title: string
@@ -411,35 +423,78 @@ export default function DiscoverPage({
   const continueWatchingAnimes = continueWatching.map((item) => item.anime)
   const username = user?.displayName || ''
   const allAnime = getAllAnime()
-  const sections: Array<{
-    title: string
-    href: string
-    animes: Anime[]
-    subtitle?: string
-    ctaLabel?: string
-  }> = [
-    { title: t('sectionExclusive'), href: '/catalog?sort=exclusive', animes: allAnime.slice(0, 8), subtitle: t('sectionExclusiveSub') },
-    ...(isAuthenticated && username ? [{ title: t('sectionResumeUsername', { username }), href: '/library', animes: [] as Anime[], subtitle: t('sectionResumeSub') }] : []),
-    { title: t('sectionThrillers'), href: '/catalog?genre=thriller', animes: allAnime.slice(2, 10), subtitle: t('sectionThrillersSub') },
-    { title: t('sectionRecentlyAdded'), href: '/catalog?sort=new', animes: getRecentlyAdded().map((item) => item.anime), subtitle: t('sectionRecentlyAddedSub') },
-    ...(isAuthenticated ? [{
-      title: t('sectionWatchlist'),
-      href: '/library',
-      ctaLabel: t('sectionWatchlistCta'),
-      animes: continueWatchingAnimes,
-      subtitle: t('sectionWatchlistSub'),
-    }] : []),
-    { title: t('sectionDailyPick'), href: '/catalog?sort=daily', animes: allAnime.slice(4, 12), subtitle: t('sectionDailyPickSub') },
-    { title: t('sectionRewatch'), href: '/catalog?sort=rewatch', animes: allAnime.slice(1, 7), subtitle: t('sectionRewatchSub') },
-    { title: t('sectionFilms'), href: '/catalog?type=movie', animes: allAnime.slice(6, 14), subtitle: t('sectionFilmsSub') },
-    { title: t('sectionTimeTravel'), href: '/catalog?genre=scifi', animes: allAnime.slice(3, 11), subtitle: t('sectionTimeTravelSub') },
-    { title: t('sectionActionAdventure'), href: '/catalog?genre=action', animes: allAnime.slice(5, 13), subtitle: t('sectionActionAdventureSub') },
-    { title: t('sectionBlockbusters'), href: '/catalog?genre=revenge', animes: allAnime.slice(0, 6), subtitle: t('sectionBlockbustersSub') },
-    { title: t('sectionMultiverse'), href: '/catalog?genre=multiverse', animes: allAnime.slice(7, 15), subtitle: t('sectionMultiverseSub') },
-    { title: t('sectionEspionage'), href: '/catalog?genre=espionage', animes: allAnime.slice(2, 8), subtitle: t('sectionEspionageSub') },
-    { title: t('sectionSpaceOpera'), href: '/catalog?genre=space', animes: allAnime.slice(4, 12), subtitle: t('sectionSpaceOperaSub') },
-    { title: t('sectionTop10', { country: 'France' }), href: '/catalog?sort=top10', animes: allAnime.slice(0, 10), subtitle: t('sectionTop10Sub') },
-    { title: t('sectionWarPolitics'), href: '/catalog?genre=war', animes: allAnime.slice(6, 14), subtitle: t('sectionWarPoliticsSub') },
+
+  const [apiSections, setApiSections] = React.useState<ApiSection[] | null>(null)
+
+  React.useEffect(() => {
+    let cancelled = false
+    async function loadSections() {
+      try {
+        const sections = await collectionsApi.listDiscoverSections()
+        if (!cancelled) setApiSections(sections)
+      } catch (error) {
+        if (cancelled) return
+        console.error('Failed to load discover sections from API', error)
+        setApiSections([])
+      }
+    }
+    loadSections()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const discoverSections: DiscoverSectionConfig[] =
+    apiSections === null
+      ? []
+      : apiSections
+          .map((section) => ({
+            id: section.id,
+            title: section.title,
+            href: section.ctaHref || '/catalog',
+            subtitle: section.subtitle,
+            ctaLabel: section.ctaLabel,
+            animes: section.items.map(mapApiItemToAnime),
+          }))
+          .filter((section) => section.animes.length > 0)
+
+  const apiSectionsGroupA = discoverSections.slice(0, 2)
+  const apiSectionsGroupB = discoverSections.slice(2, 5)
+  const apiSectionsGroupC = discoverSections.slice(5, 7)
+  const apiSectionsRest = discoverSections.slice(7)
+
+  const sections: DiscoverSectionConfig[] = [
+    ...apiSectionsGroupA,
+    ...(isAuthenticated && username
+      ? [{
+          id: 'continue-watching',
+          title: t('sectionResumeUsername', { username }),
+          href: '/library',
+          subtitle: t('sectionResumeSub'),
+          animes: [] as Anime[],
+          isResume: true,
+        }]
+      : []),
+    ...apiSectionsGroupB,
+    {
+      id: 'rewatch',
+      title: t('sectionRewatch'),
+      href: '/catalog?sort=rewatch',
+      subtitle: t('sectionRewatchSub'),
+      animes: allAnime.slice(1, 7),
+    },
+    ...apiSectionsGroupC,
+    ...(isAuthenticated
+      ? [{
+          id: 'watchlist',
+          title: t('sectionWatchlist'),
+          href: '/library',
+          subtitle: t('sectionWatchlistSub'),
+          ctaLabel: t('sectionWatchlistCta'),
+          animes: continueWatchingAnimes,
+        }]
+      : []),
+    ...apiSectionsRest,
   ]
 
   return (
@@ -448,8 +503,8 @@ export default function DiscoverPage({
 
       <main id="main-content" className="relative z-10 pb-12">
         {sections.map((section) =>
-          (section.title === t('sectionResumeUsername', { username }) || section.title === t('sectionResume')) ? (
-            <DiscoverRail key={section.title} title={section.title} href={section.href} subtitle={section.subtitle}>
+          section.isResume ? (
+            <DiscoverRail key={section.id} title={section.title} href={section.href} subtitle={section.subtitle}>
               {continueWatching.map((item) => (
                 <DiscoverAnimeTile
                   key={`reprendre-${item.anime.id}`}
@@ -466,14 +521,14 @@ export default function DiscoverPage({
             </DiscoverRail>
           ) : (
             <DiscoverRail
-              key={section.title}
+              key={section.id}
               title={section.title}
               href={section.href}
               subtitle={section.subtitle}
               ctaLabel={section.ctaLabel}
             >
               {section.animes.map((anime) => (
-                <DiscoverAnimeTile key={`${section.title}-${anime.id}`} anime={anime} currentLocale={currentLocale} />
+                <DiscoverAnimeTile key={`${section.id}-${anime.id}`} anime={anime} currentLocale={currentLocale} />
               ))}
             </DiscoverRail>
           ),

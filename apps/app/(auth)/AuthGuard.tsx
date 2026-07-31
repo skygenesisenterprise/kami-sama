@@ -9,9 +9,9 @@ import { RouteTransition } from "@/components/route-transition";
 import { getDomainUrl } from "@/lib/domains";
 
 // Routes accessible to authenticated users within (auth)
-const AUTHENTICATED_ALLOWED_ROUTES = ["/profile-change", "/mfa-validate", "/mfa-setup", "/callback"];
+const AUTHENTICATED_ALLOWED_ROUTES = ["/profile-change", "/mfa-validate", "/mfa-setup", "/callback", "/verify-email"];
 // Routes accessible without authentication within (auth)
-const PUBLIC_AUTH_ROUTES = ["/login", "/register", "/profile-change"];
+const PUBLIC_AUTH_ROUTES = ["/login"];
 
 export function AuthGuard({ children }: { children: React.ReactNode }) {
   const router = useRouter();

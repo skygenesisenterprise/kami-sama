@@ -21,6 +21,15 @@ export type DataSource = 'TMDB' | 'IMDb' | 'AniList' | 'Manual'
 
 export type MetadataStatus = 'synced' | 'stale' | 'error' | 'missing'
 
+export interface DiscoverSection {
+  enabled: boolean
+  order: number
+  title?: string
+  subtitle?: string
+  ctaLabel?: string
+  href?: string
+}
+
 export interface CollectionEntry {
   seriesId: string
   seriesTitle: string
@@ -55,6 +64,7 @@ export interface CollectionItem {
   metadataStatus: MetadataStatus
   updatedAt: string
   updatedBy: string
+  discover?: DiscoverSection
 }
 
 export const COLLECTION_STATUS_TONE: Record<PublicationState, StatusTone> = {
@@ -112,6 +122,20 @@ export const ALL_DATA_SOURCES: Array<DataSource | 'all'> = [
   'Manual',
 ]
 
+export type DiscoverFilter = 'all' | 'discover' | 'hidden'
+
+export const ALL_DISCOVER_FILTERS: DiscoverFilter[] = [
+  'all',
+  'discover',
+  'hidden',
+]
+
+export const DISCOVER_FILTER_LABEL: Record<DiscoverFilter, string> = {
+  all: 'All discover',
+  discover: 'On Discover',
+  hidden: 'Hidden',
+}
+
 export const COLLECTIONS_MOCK: CollectionItem[] = [
   {
     id: 'col-001',
@@ -140,6 +164,11 @@ export const COLLECTIONS_MOCK: CollectionItem[] = [
     metadataStatus: 'synced',
     updatedAt: '2h ago',
     updatedBy: 'admin',
+    discover: {
+      enabled: true,
+      order: 1,
+      title: 'Les meilleurs anime de 2024',
+    },
   },
   {
     id: 'col-002',
@@ -167,6 +196,10 @@ export const COLLECTIONS_MOCK: CollectionItem[] = [
     metadataStatus: 'synced',
     updatedAt: '1d ago',
     updatedBy: 'admin',
+    discover: {
+      enabled: true,
+      order: 2,
+    },
   },
   {
     id: 'col-003',
@@ -197,6 +230,11 @@ export const COLLECTIONS_MOCK: CollectionItem[] = [
     metadataStatus: 'synced',
     updatedAt: '4h ago',
     updatedBy: 'auto-import',
+    discover: {
+      enabled: true,
+      order: 3,
+      title: 'La saison hiver 2025',
+    },
   },
   {
     id: 'col-004',
@@ -222,6 +260,10 @@ export const COLLECTIONS_MOCK: CollectionItem[] = [
     metadataStatus: 'synced',
     updatedAt: '3d ago',
     updatedBy: 'admin',
+    discover: {
+      enabled: true,
+      order: 4,
+    },
   },
   {
     id: 'col-005',
@@ -248,6 +290,10 @@ export const COLLECTIONS_MOCK: CollectionItem[] = [
     metadataStatus: 'stale',
     updatedAt: '5d ago',
     updatedBy: 'admin',
+    discover: {
+      enabled: true,
+      order: 5,
+    },
   },
   {
     id: 'col-006',
@@ -280,6 +326,11 @@ export const COLLECTIONS_MOCK: CollectionItem[] = [
     metadataStatus: 'synced',
     updatedAt: '1d ago',
     updatedBy: 'auto-import',
+    discover: {
+      enabled: true,
+      order: 6,
+      title: 'Les mieux notés',
+    },
   },
   {
     id: 'col-007',
@@ -353,5 +404,25 @@ export function getCollectionStats(collections: CollectionItem[]) {
     inReview,
     archived,
     totalEntries,
+  }
+}
+
+export function getDiscoverCollections(): CollectionItem[] {
+  return COLLECTIONS_MOCK.filter(
+    (c) => c.discover?.enabled === true && c.status === 'Published',
+  ).sort((a, b) => (a.discover?.order ?? 0) - (b.discover?.order ?? 0))
+}
+
+export function setCollectionDiscover(
+  id: string,
+  patch: Partial<DiscoverSection>,
+) {
+  const item = COLLECTIONS_MOCK.find((c) => c.id === id)
+  if (!item) return
+  item.discover = {
+    enabled: false,
+    order: 1,
+    ...item.discover,
+    ...patch,
   }
 }

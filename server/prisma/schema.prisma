@@ -89,6 +89,38 @@ enum CommunityUserRole {
   admin
 }
 
+enum PublicationState {
+  Draft
+  Review
+  Approved
+  Scheduled
+  Published
+  Archived
+}
+
+enum CollectionType {
+  editorial
+  genre
+  seasonal
+  thematic
+  franchise
+  ranking
+  custom
+}
+
+enum CollectionVisibility {
+  public
+  unlisted
+  private
+}
+
+enum MetadataStatus {
+  synced
+  stale
+  error
+  missing
+}
+
 // ═══════════════════════════════════════════════════════════════
 // AUTH & USERS
 // ═══════════════════════════════════════════════════════════════
@@ -133,6 +165,7 @@ model User {
   communityReviews       Review[]
   communityRecommendations Recommendation[]
   communityAnnouncements CommunityAnnouncement[]
+  updatedCollections      Collection[]
 
   @@index([status])
   @@map("users")
@@ -812,6 +845,7 @@ model Anime {
   scheduleEntries  ScheduleEntry[]
   watchProgresses  WatchProgress[]
   watchlistItems   WatchlistItem[]
+  collectionEntries CollectionEntry[]
   recommendationsFrom Recommendation[] @relation("FromAnime")
   recommendationsTo   Recommendation[] @relation("ToAnime")
 
@@ -967,6 +1001,81 @@ model Category {
 
   @@index([parentId])
   @@map("categories")
+}
+
+// ═══════════════════════════════════════════════════════════════
+// COLLECTIONS
+// ═══════════════════════════════════════════════════════════════
+
+model Collection {
+  id             String               @id @default(uuid())
+  slug           String               @unique
+  title          String
+  description    String?
+  type           CollectionType       @default(editorial)
+  status         PublicationState     @default(Draft)
+  visibility     CollectionVisibility @default(private)
+  posterUrl      String?              @map("poster_url")
+  bannerUrl      String?              @map("banner_url")
+  metadataStatus MetadataStatus       @default(missing) @map("metadata_status")
+  tags           String[]             @default([])
+  updatedById    String?              @map("updated_by_id")
+  deletedAt      DateTime?            @map("deleted_at")
+  createdAt      DateTime             @default(now()) @map("created_at")
+  updatedAt      DateTime             @updatedAt @map("updated_at")
+
+  discoverEnabled  Boolean  @default(false) @map("discover_enabled")
+  discoverOrder    Int      @default(0) @map("discover_order")
+  discoverTitle    String?  @map("discover_title")
+  discoverSubtitle String?  @map("discover_subtitle")
+  discoverCta      String?  @map("discover_cta")
+  discoverHref     String?  @map("discover_href")
+
+  entries   CollectionEntry[]
+  sources   CollectionSource[]
+  updatedBy User?            @relation(fields: [updatedById], references: [id], onDelete: SetNull)
+
+  @@index([status])
+  @@index([type])
+  @@index([visibility])
+  @@index([updatedById])
+  @@index([discoverEnabled])
+  @@index([discoverOrder])
+  @@map("collections")
+}
+
+model CollectionEntry {
+  id           String     @id @default(uuid())
+  collectionId String     @map("collection_id")
+  animeId      String     @map("anime_id")
+  position     Int        @default(0)
+  createdAt    DateTime   @default(now()) @map("created_at")
+  updatedAt    DateTime   @updatedAt @map("updated_at")
+
+  collection Collection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  anime      Anime      @relation(fields: [animeId], references: [id], onDelete: Cascade)
+
+  @@unique([collectionId, animeId])
+  @@index([animeId])
+  @@index([collectionId, position])
+  @@map("collection_entries")
+}
+
+model CollectionSource {
+  id           String    @id @default(uuid())
+  collectionId String    @map("collection_id")
+  provider     String
+  externalId   String?   @map("external_id")
+  status       String    @default("active")
+  lastSyncedAt DateTime? @map("last_synced_at")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  collection Collection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+
+  @@unique([collectionId, provider])
+  @@index([provider])
+  @@map("collection_sources")
 }
 
 // ═══════════════════════════════════════════════════════════════

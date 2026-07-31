@@ -52,7 +52,7 @@ export default function SimulcastPage() {
   }
 
   return (
-    <div className="min-h-screen bg-paper">
+    <div className="min-h-screen bg-paper select-none">
       {/* Header */}
       <div className="mx-auto max-w-6xl px-4 pt-10 pb-6 md:px-8">
         <div className="flex items-center justify-between">

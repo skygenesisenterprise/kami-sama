@@ -147,16 +147,16 @@ func main() {
 	userService := services.NewUserService(repos.Users(), repos.UserSettings(), repos.NotificationPreferences(), presence)
 	workspaceService := services.NewWorkspaceService(db, cfg.Auth, repos.Users(), repos)
 	authService := services.NewAuthService(cfg.Auth, db, repos, identityProvider, authLimiter, workspaceService)
-	
+
 	// S'assurer que le premier utilisateur a les rôles superadmin
 	if err := authService.EnsureFirstUserHasAdminRoles(context.Background()); err != nil {
 		logger.Warn("failed to ensure first user has admin roles", "error", err)
 	}
-	
+
 	oauthService := services.NewOAuthService(cfg.OAuth, repos, authService, identityProvider, workspaceService, nil)
 
 	animeService := services.NewAnimeService(repos)
-_episodeService := services.NewEpisodeService(repos)
+	_episodeService := services.NewEpisodeService(repos)
 	genreService := services.NewGenreService(repos)
 	studioService := services.NewStudioService(repos)
 	characterService := services.NewCharacterService(repos)
@@ -169,6 +169,7 @@ _episodeService := services.NewEpisodeService(repos)
 	settingsService := services.NewSettingsService(repos)
 	mediaSourceService := services.NewMediaSourceService(db.Gorm(), cfg.MediaSource)
 	dashboardService := services.NewDashboardService(db.Gorm())
+	collectionService := services.NewCollectionService(db.Gorm())
 	analyticsService := services.NewAnalyticsService(db.Gorm())
 	adminUserService := services.NewAdminUserService(repos)
 	adminProfileService := services.NewAdminProfileService(repos)
@@ -202,49 +203,50 @@ _episodeService := services.NewEpisodeService(repos)
 		_ = router.SetTrustedProxies(cfg.App.TrustedProxies)
 	}
 	routes.SetupRoutes(router, routes.Dependencies{
-		Config:              cfg,
-		Logger:              logger,
-		Database:            db,
-		Redis:               redis,
-		EventBus:            eventBus,
-		IdentityProvider:    identityProvider,
-		AuthService:         authService,
-		OAuthService:        oauthService,
-		UserService:         userService,
-		WorkspaceService:    workspaceService,
-		Repos:               repos,
-		AnimeService:        animeService,
-		EpisodeService:      _episodeService,
-		GenreService:        genreService,
-		StudioService:       studioService,
-		CharacterService:    characterService,
-		MediaService:        mediaService,
-		CommunityService:    communityService,
-		WatchService:        watchService,
-		SchedulingService:   schedulingService,
-		NotificationService: notificationService,
-		SearchService:       searchService,
-		SettingsService:     settingsService,
-		MediaSourceService:  mediaSourceService,
-		DashboardService:    dashboardService,
-		AnalyticsService:    analyticsService,
-		AdminUserService:        adminUserService,
-		AdminProfileService:     adminProfileService,
-		AdminRoleService:        adminRoleService,
-		AdminPermissionService:  adminPermissionService,
-		CalendarService:         calendarService,
-		PremiereService:         premiereService,
-		SystemService:           systemService,
-		SupportService:          supportService,
-		ContactAdminService:     contactAdminService,
-		FAQService:              faqService,
-		ModerationService:       moderationService,
+		Config:                   cfg,
+		Logger:                   logger,
+		Database:                 db,
+		Redis:                    redis,
+		EventBus:                 eventBus,
+		IdentityProvider:         identityProvider,
+		AuthService:              authService,
+		OAuthService:             oauthService,
+		UserService:              userService,
+		WorkspaceService:         workspaceService,
+		Repos:                    repos,
+		AnimeService:             animeService,
+		EpisodeService:           _episodeService,
+		GenreService:             genreService,
+		StudioService:            studioService,
+		CharacterService:         characterService,
+		MediaService:             mediaService,
+		CommunityService:         communityService,
+		WatchService:             watchService,
+		SchedulingService:        schedulingService,
+		NotificationService:      notificationService,
+		SearchService:            searchService,
+		SettingsService:          settingsService,
+		MediaSourceService:       mediaSourceService,
+		DashboardService:         dashboardService,
+		CollectionService:        collectionService,
+		AnalyticsService:         analyticsService,
+		AdminUserService:         adminUserService,
+		AdminProfileService:      adminProfileService,
+		AdminRoleService:         adminRoleService,
+		AdminPermissionService:   adminPermissionService,
+		CalendarService:          calendarService,
+		PremiereService:          premiereService,
+		SystemService:            systemService,
+		SupportService:           supportService,
+		ContactAdminService:      contactAdminService,
+		FAQService:               faqService,
+		ModerationService:        moderationService,
 		NotificationAdminService: notificationAdminService,
 		SettingsAdminService:     settingsAdminService,
 		AnilistService:           anilistService,
-		ProfileService:          profileService,
-		MfaService:              mfaService,
-		RuntimeRole:             string(mode),
+		ProfileService:           profileService,
+		MfaService:               mfaService,
+		RuntimeRole:              string(mode),
 	})
 
 	if err := runHTTPServer(ctx, logger, cfg, router, mode); err != nil {

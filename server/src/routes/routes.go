@@ -17,52 +17,53 @@ import (
 )
 
 type Dependencies struct {
-	Config              config.Config
-	Logger              *slog.Logger
-	RuntimeRole         string
-	Database            interfaces.Database
-	Redis               *redisclient.Client
-	EventBus            interfaces.EventBus
-	IdentityProvider    interfaces.IdentityProvider
-	AuthService         *services.AuthService
-	OAuthService        *services.OAuthService
-	UserService         *services.UserService
-	WorkspaceService    *services.WorkspaceService
-	Repos               *services.Repositories
-	AnimeService        *services.AnimeService
-	EpisodeService      *services.EpisodeService
-	GenreService        *services.GenreService
-	StudioService       *services.StudioService
-	CharacterService    *services.CharacterService
-	MediaService        *services.MediaService
-	CommunityService    *services.CommunityService
-	WatchService        *services.WatchService
-	SchedulingService   *services.SchedulingService
-	NotificationService *services.NotificationService
-	SearchService       *services.SearchService
-	SettingsService     *services.SettingsService
-	MediaSourceService  *services.MediaSourceService
-	TagService          *services.TagService
-	CategoryService     *services.CategoryService
-	LibraryService      *services.LibraryService
-	DashboardService    *services.DashboardService
-	AnalyticsService    *services.AnalyticsService
-	AdminUserService        *services.AdminUserService
-	AdminProfileService     *services.AdminProfileService
-	AdminRoleService        *services.AdminRoleService
-	AdminPermissionService  *services.AdminPermissionService
-	CalendarService         *services.CalendarService
-	PremiereService         *services.PremiereService
-	SystemService           *services.SystemService
-	SupportService          *services.SupportService
-	ContactAdminService     *services.ContactAdminService
-	FAQService              *services.FAQService
-	ModerationService       *services.ModerationService
+	Config                   config.Config
+	Logger                   *slog.Logger
+	RuntimeRole              string
+	Database                 interfaces.Database
+	Redis                    *redisclient.Client
+	EventBus                 interfaces.EventBus
+	IdentityProvider         interfaces.IdentityProvider
+	AuthService              *services.AuthService
+	OAuthService             *services.OAuthService
+	UserService              *services.UserService
+	WorkspaceService         *services.WorkspaceService
+	Repos                    *services.Repositories
+	AnimeService             *services.AnimeService
+	EpisodeService           *services.EpisodeService
+	GenreService             *services.GenreService
+	StudioService            *services.StudioService
+	CharacterService         *services.CharacterService
+	MediaService             *services.MediaService
+	CommunityService         *services.CommunityService
+	WatchService             *services.WatchService
+	SchedulingService        *services.SchedulingService
+	NotificationService      *services.NotificationService
+	SearchService            *services.SearchService
+	SettingsService          *services.SettingsService
+	MediaSourceService       *services.MediaSourceService
+	TagService               *services.TagService
+	CategoryService          *services.CategoryService
+	CollectionService        *services.CollectionService
+	LibraryService           *services.LibraryService
+	DashboardService         *services.DashboardService
+	AnalyticsService         *services.AnalyticsService
+	AdminUserService         *services.AdminUserService
+	AdminProfileService      *services.AdminProfileService
+	AdminRoleService         *services.AdminRoleService
+	AdminPermissionService   *services.AdminPermissionService
+	CalendarService          *services.CalendarService
+	PremiereService          *services.PremiereService
+	SystemService            *services.SystemService
+	SupportService           *services.SupportService
+	ContactAdminService      *services.ContactAdminService
+	FAQService               *services.FAQService
+	ModerationService        *services.ModerationService
 	NotificationAdminService *services.NotificationAdminService
 	SettingsAdminService     *services.SettingsAdminService
 	AnilistService           *services.AnilistService
-	ProfileService          *services.ProfileService
-	MfaService              *services.MfaService
+	ProfileService           *services.ProfileService
+	MfaService               *services.MfaService
 }
 
 func SetupRoutes(router *gin.Engine, deps Dependencies) {
@@ -84,6 +85,7 @@ func SetupRoutes(router *gin.Engine, deps Dependencies) {
 	settingsAdmin := NewSettingsAdminHandler(deps)
 	tag := NewTagHandler(deps)
 	category := NewCategoryHandler(deps)
+	collection := NewCollectionHandler(deps)
 	library := NewLibraryHandler(deps)
 	dashboard := NewDashboardHandler(deps)
 	analytics := NewAnalyticsHandler(deps)
@@ -357,21 +359,21 @@ func SetupRoutes(router *gin.Engine, deps Dependencies) {
 			searchGroup.GET("/suggestions", search.Suggestions)
 		}
 
-	profile := NewProfileHandler(deps)
-	profileGroup := protected.Group("/profiles")
-	{
-		profileGroup.GET("", profile.List)
-		profileGroup.POST("", profile.Create)
-		profileGroup.GET("/:profileId", profile.GetByID)
-		profileGroup.PATCH("/:profileId", profile.Update)
-		profileGroup.DELETE("/:profileId", profile.Delete)
-		profileGroup.POST("/:profileId/select", profile.Select)
-		profileGroup.POST("/:profileId/pin", profile.SetPin)
-		profileGroup.POST("/verify-pin", profile.VerifyPin)
-	}
+		profile := NewProfileHandler(deps)
+		profileGroup := protected.Group("/profiles")
+		{
+			profileGroup.GET("", profile.List)
+			profileGroup.POST("", profile.Create)
+			profileGroup.GET("/:profileId", profile.GetByID)
+			profileGroup.PATCH("/:profileId", profile.Update)
+			profileGroup.DELETE("/:profileId", profile.Delete)
+			profileGroup.POST("/:profileId/select", profile.Select)
+			profileGroup.POST("/:profileId/pin", profile.SetPin)
+			profileGroup.POST("/verify-pin", profile.VerifyPin)
+		}
 
-	anilist := NewAnilistHandler(deps)
-	anilistGroup := protected.Group("/integrations/anilist")
+		anilist := NewAnilistHandler(deps)
+		anilistGroup := protected.Group("/integrations/anilist")
 		{
 			anilistGroup.GET("/search", anilist.Search)
 			anilistGroup.GET("/trending", anilist.Trending)
@@ -384,8 +386,8 @@ func SetupRoutes(router *gin.Engine, deps Dependencies) {
 			anilistGroup.POST("/:anilistId/import", anilist.ImportMedia)
 		}
 
-	plex := NewPlexHandler(deps)
-	plexGroup := protected.Group("/integrations/plex")
+		plex := NewPlexHandler(deps)
+		plexGroup := protected.Group("/integrations/plex")
 		{
 			plexGroup.GET("/health", plex.HealthCheck)
 			plexGroup.GET("/identity", plex.GetIdentity)
@@ -408,6 +410,7 @@ func SetupRoutes(router *gin.Engine, deps Dependencies) {
 		discoverGroup := api.Group("/discover")
 		{
 			discoverGroup.GET("", discover.GetDiscover)
+			discoverGroup.GET("/sections", discover.GetDiscoverSections)
 			discoverGroup.GET("/continue-watching", discover.GetDiscoverContinueWatching)
 			discoverGroup.GET("/content/:anilistId", discover.GetContentDetail)
 		}
@@ -513,6 +516,16 @@ func SetupRoutes(router *gin.Engine, deps Dependencies) {
 			categoryGroup.GET("/slug/:slug", category.GetBySlug)
 			categoryGroup.PATCH("/:categoryId", category.Update)
 			categoryGroup.DELETE("/:categoryId", category.Delete)
+		}
+
+		collectionGroup := protected.Group("/collections")
+		{
+			collectionGroup.GET("", collection.List)
+			collectionGroup.POST("", collection.Create)
+			collectionGroup.GET("/:collectionId", collection.GetByID)
+			collectionGroup.GET("/slug/:slug", collection.GetBySlug)
+			collectionGroup.PATCH("/:collectionId", collection.Update)
+			collectionGroup.DELETE("/:collectionId", collection.Delete)
 		}
 
 		libraryGroup := protected.Group("/libraries")

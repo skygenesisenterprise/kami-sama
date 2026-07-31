@@ -412,7 +412,7 @@ export default function CommunityPage() {
   }
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
+    <div className="min-h-screen bg-background text-foreground select-none">
       {/* Content */}
       <div className="max-w-300 mx-auto px-4 py-4">
         <div className="flex gap-6">
