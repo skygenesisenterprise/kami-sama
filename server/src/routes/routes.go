@@ -64,6 +64,7 @@ type Dependencies struct {
 	AnilistService           *services.AnilistService
 	ProfileService           *services.ProfileService
 	MfaService               *services.MfaService
+	RecommendationService    *services.RecommendationService
 }
 
 func SetupRoutes(router *gin.Engine, deps Dependencies) {
@@ -101,6 +102,8 @@ func SetupRoutes(router *gin.Engine, deps Dependencies) {
 	faq := NewFAQHandler(deps)
 	moderation := NewModerationHandler(deps)
 	notificationAdmin := NewNotificationAdminHandler(deps)
+
+	recommendation := NewRecommendationHandler(deps)
 
 	router.GET("/health/live", handler.live)
 	router.GET("/health/ready", handler.ready)
@@ -307,6 +310,11 @@ func SetupRoutes(router *gin.Engine, deps Dependencies) {
 			watchGroup.GET("/continue", watch.ContinueWatching)
 			watchGroup.GET("/history", watch.ListHistory)
 			watchGroup.POST("/history", watch.AddHistory)
+		}
+
+		recommendationGroup := protected.Group("/recommendations")
+		{
+			recommendationGroup.GET("", recommendation.GetRecommendations)
 		}
 
 		schedulingGroup := protected.Group("/scheduling")

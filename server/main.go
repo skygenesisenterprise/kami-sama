@@ -187,6 +187,7 @@ func main() {
 	profileService := services.NewProfileService(db, repos)
 	anilistService := services.NewAnilistService(cfg.Anilist, repos, logger)
 	mfaService := services.NewMfaService(cfg.Auth, db, repos)
+	recommendationService := services.NewRecommendationService(db.Gorm())
 
 	mode, err := parseRuntimeMode(os.Args[1:])
 	if err != nil {
@@ -246,6 +247,7 @@ func main() {
 		AnilistService:           anilistService,
 		ProfileService:           profileService,
 		MfaService:               mfaService,
+		RecommendationService:    recommendationService,
 		RuntimeRole:              string(mode),
 	})
 
