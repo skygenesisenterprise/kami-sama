@@ -9,7 +9,7 @@ import { RouteTransition } from "@/components/route-transition";
 import { getDomainUrl } from "@/lib/domains";
 
 // Routes accessible to authenticated users within (auth)
-const AUTHENTICATED_ALLOWED_ROUTES = ["/profile-change", "/mfa-validate", "/mfa-setup", "/callback", "/verify-email"];
+const AUTHENTICATED_ALLOWED_ROUTES = ["/profile-change", "/mfa-validate", "/mfa-setup", "/callback", "/verify-email", "/callback"];
 // Routes accessible without authentication within (auth)
 const PUBLIC_AUTH_ROUTES = ["/login"];
 
