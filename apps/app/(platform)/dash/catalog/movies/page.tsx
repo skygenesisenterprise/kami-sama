@@ -1,6 +1,7 @@
 'use client'
 
 import * as React from 'react'
+import Link from 'next/link'
 import {
   AlertTriangle,
   Archive,
@@ -10,6 +11,7 @@ import {
   Image,
   LayoutGrid,
   List,
+  Loader2,
   MoreHorizontal,
   Pencil,
   Plus,
@@ -17,6 +19,7 @@ import {
   Rocket,
   Search,
   Star,
+  Tv,
   X,
 } from 'lucide-react'
 import { toast } from 'sonner'
@@ -35,6 +38,14 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import {
   Empty,
   EmptyDescription,
@@ -78,9 +89,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { PageHeader } from '@/components/dash/page-header'
+import { PlexImportDialog } from '@/components/dash/plex-import-dialog'
+import { SourceResultCard, type SourceResultItem } from '@/components/dash/source-result-card'
 import { StatusBadge } from '@/components/dash/status-badge'
 import {
-  MOVIES_MOCK,
   MOVIE_STATUS_TONE,
   ALL_MOVIE_STATUSES,
   ALL_MOVIE_GENRES,
@@ -89,7 +101,12 @@ import {
   getMovieStats,
   type MovieItem,
   type MetadataStatus,
+  type DataSource,
+  type PublicationState,
 } from '@/lib/movies-catalog-data'
+import { ApiError } from '@/lib/api/errors'
+import { plexApi, type PlexImportResult } from '@/lib/api/plex'
+import { plexItemToSourceItem } from '@/lib/source-search'
 
 type SortKey = 'title' | 'year' | 'rating' | 'duration' | 'updated'
 type SortDir = 'asc' | 'desc'
@@ -135,11 +152,14 @@ export default function MoviesCatalogPage() {
     metadata: true,
     updated: true,
   })
+  const [items, setItems] = React.useState<MovieItem[]>([])
+  const [importOpen, setImportOpen] = React.useState(false)
+  const [creating, setCreating] = React.useState(false)
 
-  const stats = React.useMemo(() => getMovieStats(MOVIES_MOCK), [])
+  const stats = React.useMemo(() => getMovieStats(items), [items])
 
   const filtered = React.useMemo(() => {
-    let items = MOVIES_MOCK.filter((item) => {
+    let next = [...items].filter((item) => {
       const matchesQuery =
         item.title.toLowerCase().includes(query.toLowerCase()) ||
         item.titleOriginal.toLowerCase().includes(query.toLowerCase())
@@ -151,7 +171,7 @@ export default function MoviesCatalogPage() {
       return matchesQuery && matchesStatus && matchesSource && matchesGenre
     })
 
-    items.sort((a, b) => {
+    next.sort((a, b) => {
       let cmp = 0
       switch (sortKey) {
         case 'title':
@@ -182,8 +202,8 @@ export default function MoviesCatalogPage() {
       return sortDir === 'asc' ? cmp : -cmp
     })
 
-    return items
-  }, [query, status, source, genre, sortKey, sortDir])
+    return next
+  }, [items, query, status, source, genre, sortKey, sortDir])
 
   const allSelected = filtered.length > 0 && selected.size === filtered.length
 
@@ -207,6 +227,56 @@ export default function MoviesCatalogPage() {
     setSelected(new Set())
   }
 
+  const handleImported = (result: PlexImportResult) => {
+    const item = result.item
+    const ratingKey = item.sourceId ?? item.id ?? item.ratingKey ?? `plex-${result.sourceId}`
+    const sourceId = result.sourceId || ratingKey
+    const title = result.title || item.name || item.title || 'Untitled'
+    const importedItem: MovieItem = {
+      id: `plex-${ratingKey}`,
+      slug: title
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/(^-|-$)/g, ''),
+      title,
+      titleOriginal: item.originalTitle || title,
+      synopsis: item.overview ?? '',
+      status: 'Draft',
+      genres: item.genres ?? [],
+      director: '',
+      writers: [],
+      cast: [],
+      tags: [],
+      year: item.year ?? new Date().getFullYear(),
+      rating: typeof item.rating === 'number' ? item.rating : 0,
+      duration: typeof item.duration === 'number' ? Math.round(item.duration / 60) : 0,
+      ageRating: 'Unknown',
+      assets: {
+        poster: item.imageUrl ?? '',
+        banner: item.artUrl ?? '',
+        backdrop: item.artUrl ?? '',
+      },
+      externalIds: { plex: sourceId },
+      sources: [
+        {
+          provider: 'Plex',
+          externalId: sourceId,
+          lastSyncedAt: new Date().toISOString(),
+          status: 'active',
+        },
+      ],
+      relations: [],
+      metadataStatus: 'synced',
+      updatedAt: 'just now',
+      updatedBy: 'Plex import',
+    }
+    setItems((prev) => [importedItem, ...prev.filter((m) => m.id !== importedItem.id)])
+  }
+
+  const handleCreatedFromDialog = (item: MovieItem) => {
+    setItems((prev) => [item, ...prev.filter((m) => m.id !== item.id)])
+  }
+
   return (
     <main className="flex flex-col gap-6">
       <PageHeader
@@ -217,7 +287,11 @@ export default function MoviesCatalogPage() {
           <Eye data-icon="inline-start" />
           Preview site
         </Button>
-        <Button size="sm">
+        <Button variant="outline" size="sm" onClick={() => setImportOpen(true)}>
+          <Tv data-icon="inline-start" />
+          Import from Plex
+        </Button>
+        <Button size="sm" onClick={() => setCreating(true)}>
           <Plus data-icon="inline-start" />
           New movie
         </Button>
@@ -416,12 +490,30 @@ export default function MoviesCatalogPage() {
             <EmptyMedia variant="icon">
               <Search />
             </EmptyMedia>
-            <EmptyTitle>No movies found</EmptyTitle>
-            <EmptyDescription>
-              No movies match the current filters. Try adjusting your search or
-              create a new movie.
-            </EmptyDescription>
+            {items.length === 0 ? (
+              <>
+                <EmptyTitle>No movies yet</EmptyTitle>
+                <EmptyDescription>
+                  Search Plex to find a movie by title and add it to your
+                  catalog, or create a new movie manually.
+                </EmptyDescription>
+              </>
+            ) : (
+              <>
+                <EmptyTitle>No movies found</EmptyTitle>
+                <EmptyDescription>
+                  No movies match the current filters. Try adjusting your
+                  search or import another movie from Plex.
+                </EmptyDescription>
+              </>
+            )}
           </EmptyHeader>
+          {items.length === 0 ? (
+            <Button onClick={() => setImportOpen(true)}>
+              <Tv data-icon="inline-start" />
+              Search Plex
+            </Button>
+          ) : null}
         </Empty>
       ) : view === 'table' ? (
         <div className="overflow-hidden rounded-lg border">
@@ -653,7 +745,7 @@ export default function MoviesCatalogPage() {
 
       <div className="flex items-center justify-between text-sm text-muted-foreground">
         <span>
-          Showing {filtered.length} of {MOVIES_MOCK.length} movies
+          Showing {filtered.length} of {items.length} movies
         </span>
         <div className="flex items-center gap-2">
           <Button variant="outline" size="sm" disabled>
@@ -668,6 +760,19 @@ export default function MoviesCatalogPage() {
       <MovieDetailSheet
         item={inspecting}
         onClose={() => setInspecting(null)}
+      />
+
+      <NewMovieDialog
+        open={creating}
+        onOpenChange={setCreating}
+        onCreated={handleCreatedFromDialog}
+      />
+
+      <PlexImportDialog
+        open={importOpen}
+        onOpenChange={setImportOpen}
+        kind="movie"
+        onImported={handleImported}
       />
     </main>
   )
@@ -1033,5 +1138,534 @@ function MovieDetailSheet({
         )}
       </SheetContent>
     </Sheet>
+  )
+}
+
+function formatApiError(err: unknown): string {
+  if (err instanceof ApiError) {
+    return err.code ? `${err.code}: ${err.message}` : err.message
+  }
+  return err instanceof Error ? err.message : 'Unknown error'
+}
+
+function slugify(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/(^-|-$)/g, '')
+}
+
+function NewMovieDialog({
+  open,
+  onOpenChange,
+  onCreated,
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  onCreated: (item: MovieItem) => void
+}) {
+  const [title, setTitle] = React.useState('')
+  const [titleOriginal, setTitleOriginal] = React.useState('')
+  const [synopsis, setSynopsis] = React.useState('')
+  const [year, setYear] = React.useState(new Date().getFullYear())
+  const [ageRating, setAgeRating] = React.useState('')
+  const [status, setStatus] = React.useState<string>('Draft')
+  const [provider, setProvider] = React.useState<string>('')
+  const [director, setDirector] = React.useState('')
+  const [genres, setGenres] = React.useState<string[]>([])
+  const [genreInput, setGenreInput] = React.useState('')
+  const [writers, setWriters] = React.useState<string[]>([])
+  const [writerInput, setWriterInput] = React.useState('')
+  const [cast, setCast] = React.useState<string[]>([])
+  const [castInput, setCastInput] = React.useState('')
+  const [tags, setTags] = React.useState<string[]>([])
+  const [tagInput, setTagInput] = React.useState('')
+
+  const [searchSource, setSearchSource] = React.useState<string>('Plex')
+  const [sourceQuery, setSourceQuery] = React.useState('')
+  const [sourceResults, setSourceResults] = React.useState<SourceResultItem[]>([])
+  const [sourceSearching, setSourceSearching] = React.useState(false)
+  const [sourceError, setSourceError] = React.useState<string | null>(null)
+  const [sourceUnavailable, setSourceUnavailable] = React.useState<string | null>(null)
+  const [selectedSourceId, setSelectedSourceId] = React.useState<string | null>(null)
+  const [externalId, setExternalId] = React.useState<string | null>(null)
+
+  const addGenre = () => {
+    const trimmed = genreInput.trim()
+    if (trimmed && !genres.includes(trimmed)) {
+      setGenres((prev) => [...prev, trimmed])
+      setGenreInput('')
+    }
+  }
+
+  const addWriter = () => {
+    const trimmed = writerInput.trim()
+    if (trimmed && !writers.includes(trimmed)) {
+      setWriters((prev) => [...prev, trimmed])
+      setWriterInput('')
+    }
+  }
+
+  const addCast = () => {
+    const trimmed = castInput.trim()
+    if (trimmed && !cast.includes(trimmed)) {
+      setCast((prev) => [...prev, trimmed])
+      setCastInput('')
+    }
+  }
+
+  const addTag = () => {
+    const trimmed = tagInput.trim()
+    if (trimmed && !tags.includes(trimmed)) {
+      setTags((prev) => [...prev, trimmed])
+      setTagInput('')
+    }
+  }
+
+  React.useEffect(() => {
+    if (!open) return
+    const q = sourceQuery.trim()
+    if (!q) {
+      setSourceResults([])
+      return
+    }
+    let cancelled = false
+    const timeout = setTimeout(async () => {
+      setSourceSearching(true)
+      setSourceError(null)
+      setSourceUnavailable(null)
+      try {
+        const res = await plexApi.search(q, { type: 'movie', limit: 8 })
+        const wanted = ['Movie', 'movie']
+        const items = res.items
+          .filter((i) => wanted.includes(i.type ?? ''))
+          .map(plexItemToSourceItem)
+        if (!cancelled) setSourceResults(items)
+      } catch (err) {
+        if (cancelled) return
+        if (err instanceof ApiError && err.code === 'PLEX_DISABLED') {
+          setSourceUnavailable(err.message)
+        } else {
+          setSourceError(formatApiError(err))
+        }
+        setSourceResults([])
+      } finally {
+        if (!cancelled) setSourceSearching(false)
+      }
+    }, 350)
+    return () => {
+      cancelled = true
+      clearTimeout(timeout)
+    }
+  }, [open, sourceQuery, searchSource])
+
+  const selectResult = (item: SourceResultItem) => {
+    setSelectedSourceId(item.id)
+    setExternalId(item.id)
+    setProvider(searchSource)
+    setTitle(item.title)
+    setTitleOriginal(item.subtitle ?? '')
+    setSynopsis(item.overview ?? '')
+    if (item.year) setYear(item.year)
+    if (item.genres && item.genres.length > 0) setGenres(item.genres)
+  }
+
+  const reset = () => {
+    setTitle('')
+    setTitleOriginal('')
+    setSynopsis('')
+    setYear(new Date().getFullYear())
+    setAgeRating('')
+    setStatus('Draft')
+    setProvider('')
+    setDirector('')
+    setGenres([])
+    setGenreInput('')
+    setWriters([])
+    setWriterInput('')
+    setCast([])
+    setCastInput('')
+    setTags([])
+    setTagInput('')
+    setSourceQuery('')
+    setSourceResults([])
+    setSourceSearching(false)
+    setSourceError(null)
+    setSourceUnavailable(null)
+    setSelectedSourceId(null)
+    setExternalId(null)
+  }
+
+  const handleCreate = async () => {
+    if (selectedSourceId && searchSource === 'Plex') {
+      try {
+        await plexApi.importItem(selectedSourceId)
+      } catch (err) {
+        toast.error(`Could not reach Plex: ${formatApiError(err)}`)
+        return
+      }
+    }
+    const selected = sourceResults.find((r) => r.id === selectedSourceId) ?? null
+    const source = searchSource
+    const item: MovieItem = {
+      id: selected ? `${source.toLowerCase()}-${selected.id}` : `manual-${Date.now()}`,
+      slug: slugify(selected?.title ?? title),
+      title: selected?.title ?? title,
+      titleOriginal: selected?.subtitle || titleOriginal || title,
+      synopsis: selected?.overview ?? synopsis,
+      status: status as PublicationState,
+      genres: selected?.genres && selected.genres.length > 0 ? selected.genres : genres,
+      director,
+      writers,
+      cast,
+      tags,
+      year: selected?.year ?? year,
+      rating: selected?.rating ?? 0,
+      duration: 0,
+      ageRating: ageRating || 'Unknown',
+      assets: {
+        poster: selected?.imageUrl ?? '',
+        banner: selected?.artUrl ?? '',
+        backdrop: selected?.artUrl ?? '',
+      },
+      externalIds: selected ? { plex: selected.id } : {},
+      sources: selected
+        ? [
+            {
+              provider: source as DataSource,
+              externalId: selected.id,
+              lastSyncedAt: new Date().toISOString(),
+              status: 'active',
+            },
+          ]
+        : [],
+      relations: [],
+      metadataStatus: selected ? 'synced' : 'missing',
+      updatedAt: 'just now',
+      updatedBy: 'New movie',
+    }
+    onCreated(item)
+    toast.success('Movie created', {
+      description: `"${item.title}" has been added to the catalog.`,
+    })
+    reset()
+    onOpenChange(false)
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={(v) => { if (!v) reset(); onOpenChange(v) }}>
+      <DialogContent className="sm:max-w-xl max-h-[85vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>New movie</DialogTitle>
+          <DialogDescription>
+            Search a title in a connected source to verify it exists and prefill
+            the details, or create the movie manually.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="flex flex-col gap-3 rounded-lg border bg-card p-3">
+          <div className="flex items-center gap-2">
+            <Select
+              value={searchSource}
+              onValueChange={(v) => {
+                setSearchSource(v)
+                setSelectedSourceId(null)
+                setExternalId(null)
+                setSourceResults([])
+              }}
+            >
+              <SelectTrigger className="w-40">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  <SelectItem value="Plex">Plex</SelectItem>
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+            <div className="relative flex-1">
+              <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                className="pl-9"
+                placeholder={`Search ${searchSource} by title...`}
+                value={sourceQuery}
+                onChange={(e) => setSourceQuery(e.target.value)}
+              />
+            </div>
+          </div>
+
+          {selectedSourceId ? (
+            <p className="rounded-md bg-primary/10 px-3 py-1.5 text-xs text-primary">
+              Using{' '}
+              <span className="font-medium">
+                {sourceResults.find((r) => r.id === selectedSourceId)?.title ?? title}
+              </span>{' '}
+              from {searchSource} — it will be linked as an external source.
+            </p>
+          ) : null}
+
+          {sourceUnavailable ? (
+            <div className="flex items-center justify-between gap-2 rounded-md border bg-warning/10 px-3 py-2 text-xs text-warning">
+              <span>{sourceUnavailable}</span>
+              {searchSource === 'Plex' ? (
+                <Link
+                  href="/dash/sources/plex"
+                  className="shrink-0 font-medium underline underline-offset-2"
+                >
+                  Open Plex settings
+                </Link>
+              ) : null}
+            </div>
+          ) : sourceError ? (
+            <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+              Search failed: {sourceError}
+            </div>
+          ) : sourceSearching ? (
+            <div className="flex items-center justify-center gap-2 py-4 text-xs text-muted-foreground">
+              <Loader2 className="size-3.5 animate-spin" />
+              Searching {searchSource}…
+            </div>
+          ) : sourceQuery.trim() === '' ? (
+            <p className="py-2 text-center text-xs text-muted-foreground">
+              Search a title to verify it is available in {searchSource}.
+            </p>
+          ) : sourceResults.length === 0 ? (
+            <p className="py-2 text-center text-xs text-muted-foreground">
+              No results for “{sourceQuery.trim()}” in {searchSource}.
+            </p>
+          ) : (
+            <div className="flex max-h-72 flex-col gap-3 overflow-y-auto pr-1">
+              {sourceResults.map((item) => (
+                <SourceResultCard
+                  key={item.id}
+                  item={item}
+                  icon="movie"
+                  actionLabel="Select"
+                  doneLabel="Selected"
+                  done={item.id === selectedSourceId}
+                  onAction={(it) => selectResult(it)}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="flex flex-col gap-4">
+          <div className="grid grid-cols-2 gap-4">
+            <Field>
+              <FieldLabel>Title *</FieldLabel>
+              <Input
+                placeholder="e.g. Inception"
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+              />
+            </Field>
+            <Field>
+              <FieldLabel>Original title</FieldLabel>
+              <Input
+                placeholder="e.g. The English title"
+                value={titleOriginal}
+                onChange={(e) => setTitleOriginal(e.target.value)}
+              />
+            </Field>
+          </div>
+
+          <Field>
+            <FieldLabel>Synopsis</FieldLabel>
+            <Textarea
+              rows={3}
+              placeholder="Brief description of the movie..."
+              value={synopsis}
+              onChange={(e) => setSynopsis(e.target.value)}
+            />
+          </Field>
+
+          <div className="grid grid-cols-3 gap-4">
+            <Field>
+              <FieldLabel>Year</FieldLabel>
+              <Input
+                type="number"
+                value={year}
+                onChange={(e) => setYear(Number(e.target.value))}
+              />
+            </Field>
+            <Field>
+              <FieldLabel>Director</FieldLabel>
+              <Input
+                placeholder="e.g. Christopher Nolan"
+                value={director}
+                onChange={(e) => setDirector(e.target.value)}
+              />
+            </Field>
+            <Field>
+              <FieldLabel>Age rating</FieldLabel>
+              <Input
+                placeholder="e.g. PG-13"
+                value={ageRating}
+                onChange={(e) => setAgeRating(e.target.value)}
+              />
+            </Field>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <Field>
+              <FieldLabel>Status</FieldLabel>
+              <Select value={status} onValueChange={setStatus}>
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="Draft">Draft</SelectItem>
+                  <SelectItem value="Review">Review</SelectItem>
+                  <SelectItem value="Approved">Approved</SelectItem>
+                  <SelectItem value="Scheduled">Scheduled</SelectItem>
+                  <SelectItem value="Published">Published</SelectItem>
+                </SelectContent>
+              </Select>
+            </Field>
+            <Field>
+              <FieldLabel>Provider</FieldLabel>
+              <Select value={provider} onValueChange={setProvider}>
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="Select a provider..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {ALL_DATA_SOURCES.filter((s) => s !== 'all').map((s) => (
+                    <SelectItem key={s} value={s}>
+                      {s}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </Field>
+          </div>
+
+          <Field>
+            <FieldLabel>Genres</FieldLabel>
+            <div className="flex flex-wrap gap-1.5">
+              {genres.map((g) => (
+                <Badge key={g} variant="secondary">
+                  {g}
+                  <button
+                    type="button"
+                    className="ml-1 rounded-full hover:bg-muted-foreground/20"
+                    onClick={() => setGenres((prev) => prev.filter((v) => v !== g))}
+                  >
+                    <X className="size-3" />
+                  </button>
+                </Badge>
+              ))}
+            </div>
+            <Input
+              placeholder="Type a genre and press Enter..."
+              value={genreInput}
+              onChange={(e) => setGenreInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault()
+                  addGenre()
+                }
+              }}
+            />
+          </Field>
+
+          <Field>
+            <FieldLabel>Writers</FieldLabel>
+            <div className="flex flex-wrap gap-1.5">
+              {writers.map((w) => (
+                <Badge key={w} variant="secondary">
+                  {w}
+                  <button
+                    type="button"
+                    className="ml-1 rounded-full hover:bg-muted-foreground/20"
+                    onClick={() => setWriters((prev) => prev.filter((v) => v !== w))}
+                  >
+                    <X className="size-3" />
+                  </button>
+                </Badge>
+              ))}
+            </div>
+            <Input
+              placeholder="Type a writer and press Enter..."
+              value={writerInput}
+              onChange={(e) => setWriterInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault()
+                  addWriter()
+                }
+              }}
+            />
+          </Field>
+
+          <Field>
+            <FieldLabel>Cast</FieldLabel>
+            <div className="flex flex-wrap gap-1.5">
+              {cast.map((c) => (
+                <Badge key={c} variant="secondary">
+                  {c}
+                  <button
+                    type="button"
+                    className="ml-1 rounded-full hover:bg-muted-foreground/20"
+                    onClick={() => setCast((prev) => prev.filter((v) => v !== c))}
+                  >
+                    <X className="size-3" />
+                  </button>
+                </Badge>
+              ))}
+            </div>
+            <Input
+              placeholder="Type an actor and press Enter..."
+              value={castInput}
+              onChange={(e) => setCastInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault()
+                  addCast()
+                }
+              }}
+            />
+          </Field>
+
+          <Field>
+            <FieldLabel>Tags</FieldLabel>
+            <div className="flex flex-wrap gap-1.5">
+              {tags.map((t) => (
+                <Badge key={t} variant="secondary">
+                  {t}
+                  <button
+                    type="button"
+                    className="ml-1 rounded-full hover:bg-muted-foreground/20"
+                    onClick={() => setTags((prev) => prev.filter((v) => v !== t))}
+                  >
+                    <X className="size-3" />
+                  </button>
+                </Badge>
+              ))}
+            </div>
+            <Input
+              placeholder="Type a tag and press Enter..."
+              value={tagInput}
+              onChange={(e) => setTagInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault()
+                  addTag()
+                }
+              }}
+            />
+          </Field>
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={() => { reset(); onOpenChange(false) }}>
+            Cancel
+          </Button>
+          <Button disabled={!title.trim()} onClick={handleCreate}>
+            Create movie
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }

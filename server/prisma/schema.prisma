@@ -1699,6 +1699,61 @@ model SourceSyncLog {
   @@map("source_sync_logs")
 }
 
+model MediaMapping {
+  id            String   @id @default(uuid())
+  sourceType    String   @map("source_type")
+  libraryId     String   @map("library_id")
+  kamiId        String   @map("kami_id")
+  kamiTitle     String   @map("kami_title")
+  plexRatingKey String   @map("plex_rating_key")
+  plexTitle     String   @map("plex_title")
+  type          String
+  tmdbId        String?  @map("tmdb_id")
+  imdbId        String?  @map("imdb_id")
+  tvdbId        String?  @map("tvdb_id")
+  anilistId     String?  @map("anilist_id")
+  matchScore    Float    @default(0) @map("match_score")
+  lastSyncedAt  DateTime @map("last_synced_at")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  @@unique([sourceType, plexRatingKey])
+  @@index([libraryId])
+  @@index([kamiId])
+  @@map("media_mappings")
+}
+
+model SourceCapability {
+  id          String   @id @default(uuid())
+  sourceType  String   @map("source_type")
+  key         String
+  name        String
+  description String?
+  supported   Boolean  @default(false)
+  enabled     Boolean  @default(false)
+  version     String?
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@unique([sourceType, key])
+  @@map("source_capabilities")
+}
+
+model SourceLog {
+  id         String   @id @default(uuid())
+  sourceType String   @map("source_type")
+  level      String
+  message    String
+  source     String
+  details    String?
+  timestamp  DateTime @default(now())
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@index([sourceType, timestamp])
+  @@index([level])
+  @@map("source_logs")
+}
+
 // ═══════════════════════════════════════════════════════════════
 // MEDIA CATALOGUE — METADATA-ONLY INDEX FROM EXTERNAL SOURCES
 // ═══════════════════════════════════════════════════════════════

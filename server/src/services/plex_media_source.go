@@ -131,40 +131,7 @@ func (s *PlexMediaSource) GetStreamURL(ctx context.Context, itemID string, profi
 	if err := s.enabled(); err != nil {
 		return "", err
 	}
-	if itemID == "" {
-		return "", fmt.Errorf("itemID required")
-	}
-	item, err := s.client.GetItemMetadata(ctx, itemID)
-	if err != nil {
-		return "", err
-	}
-	media := firstMedia(item)
-	if media == nil {
-		return "", fmt.Errorf("no media part available for %s", itemID)
-	}
-	part := firstPart(media)
-	if part == nil {
-		return "", fmt.Errorf("no part available for %s", itemID)
-	}
-	path := toString(part["key"])
-	if path == "" {
-		return "", fmt.Errorf("part has no key")
-	}
-	u, err := url.Parse(s.client.BaseURL())
-	if err != nil {
-		return "", err
-	}
-	q := u.Query()
-	q.Set("path", path)
-	q.Set("mediaIndex", "0")
-	q.Set("partIndex", "0")
-	q.Set("protocol", "http")
-	if profile == "" {
-		profile = "native"
-	}
-	q.Set("X-Plex-Token", s.client.Token())
-	u.RawQuery = q.Encode()
-	return u.String(), nil
+	return BuildPlexStreamURL(ctx, s.client, itemID, profile)
 }
 
 // GetStreamURLForItem is a thin alias exposed for symmetry with the legacy
@@ -342,6 +309,122 @@ func (s *PlexMediaSource) GetSyncStatus(ctx context.Context, libraryID string) (
 	}, nil
 }
 
+// BuildPlexStreamURL produces the standard /video/:/transcode/universal/start
+// URL for a ratingKey using any resolved PlexClient (env-configured or loaded
+// from a persisted source_configs row).
+func BuildPlexStreamURL(ctx context.Context, client *PlexClient, ratingKey string, profile string) (string, error) {
+	if client == nil || !client.Enabled() {
+		return "", plexDisabledError()
+	}
+	if ratingKey == "" {
+		return "", fmt.Errorf("itemID required")
+	}
+	item, err := client.GetItemMetadata(ctx, ratingKey)
+	if err != nil {
+		return "", err
+	}
+	media := firstMedia(item)
+	if media == nil {
+		return "", fmt.Errorf("no media part available for %s", ratingKey)
+	}
+	part := firstPart(media)
+	if part == nil {
+		return "", fmt.Errorf("no part available for %s", ratingKey)
+	}
+	path := toString(part["key"])
+	if path == "" {
+		return "", fmt.Errorf("part has no key")
+	}
+	u, err := url.Parse(client.BaseURL())
+	if err != nil {
+		return "", err
+	}
+	q := u.Query()
+	q.Set("path", path)
+	q.Set("mediaIndex", "0")
+	q.Set("partIndex", "0")
+	q.Set("protocol", "http")
+	if profile == "" {
+		profile = "native"
+	}
+	q.Set("X-Plex-Token", client.Token())
+	u.RawQuery = q.Encode()
+	return u.String(), nil
+}
+
+// ImportPlexItem fetches a single Plex item by ratingKey and upserts it into
+// the local anime index (deduplicated by source + metadata->>'sourceId').
+// It returns the canonical MediaSourceItem shape plus import metadata so the
+// UI can reflect the result immediately.
+func ImportPlexItem(ctx context.Context, db *gorm.DB, client *PlexClient, ratingKey string) (map[string]interface{}, error) {
+	if client == nil || !client.Enabled() {
+		return nil, plexDisabledError()
+	}
+	if db == nil {
+		return nil, fmt.Errorf("database unavailable")
+	}
+	if ratingKey == "" {
+		return nil, fmt.Errorf("ratingKey required")
+	}
+	raw, err := client.GetItemMetadata(ctx, ratingKey)
+	if err != nil {
+		return nil, err
+	}
+	mapped := mapPlexItem(raw)
+	sourceID := getStringFromMap(mapped, "sourceId")
+	if sourceID == "" {
+		sourceID = ratingKey
+	}
+	rawMeta, _ := json.Marshal(mapped)
+	now := time.Now().UTC()
+
+	existing := models.Anime{}
+	tx := db.Where("source = ? AND metadata->>'sourceId' = ?", "plex", sourceID).First(&existing)
+	if tx.Error == gorm.ErrRecordNotFound {
+		row := models.Anime{
+			Common:        models.Common{ID: sourceID, CreatedAt: now, UpdatedAt: now},
+			Slug:          sourceID,
+			Title:         getStringFromMap(mapped, "name"),
+			JapaneseTitle: getStringFromMap(mapped, "originalTitle"),
+			Synopsis:      getStringFromMap(mapped, "overview"),
+			Status:        "released",
+			Rating:        getFloat64FromMap(mapped, "rating"),
+			ReleaseYear:   getIntFromMap(mapped, "year"),
+			Source:        "plex",
+			Metadata:      datatypes.JSON(rawMeta),
+		}
+		if err := db.Create(&row).Error; err != nil {
+			return nil, err
+		}
+		return map[string]interface{}{
+			"item":     mapped,
+			"animeId":  row.ID,
+			"created":  true,
+			"updated":  false,
+			"sourceId": sourceID,
+			"title":    row.Title,
+		}, nil
+	}
+	if tx.Error != nil {
+		return nil, tx.Error
+	}
+
+	existing.Title = getStringFromMap(mapped, "name")
+	existing.UpdatedAt = now
+	existing.Metadata = datatypes.JSON(rawMeta)
+	if err := db.Save(&existing).Error; err != nil {
+		return nil, err
+	}
+	return map[string]interface{}{
+		"item":     mapped,
+		"animeId":  existing.ID,
+		"created":  false,
+		"updated":  true,
+		"sourceId": sourceID,
+		"title":    existing.Title,
+	}, nil
+}
+
 // ---- Helpers --------------------------------------------------------------
 
 // mapPlexLibrary converts a Plex Directory into a MediaSourceLibrary map.
@@ -414,6 +497,13 @@ func convertPlexItems(items []map[string]interface{}) []map[string]interface{} {
 	return out
 }
 
+// MapPlexItems normalizes raw Plex metadata items into the canonical
+// MediaSourceItem shape (id, name, imageUrl, artUrl, overview, genres, ...)
+// so routes and the front-end never touch provider-specific field names.
+func MapPlexItems(items []map[string]interface{}) []map[string]interface{} {
+	return convertPlexItems(items)
+}
+
 func jsonRawFromItem(item map[string]interface{}) datatypes.JSON {
 	raw, err := json.Marshal(item)
 	if err != nil {
@@ -448,8 +538,6 @@ func plexTypeToCanonical(t string) string {
 		return strings.Title(t)
 	}
 }
-
-
 
 func plexGenres(item map[string]interface{}) []string {
 	raw, ok := item["Genre"].([]interface{})
@@ -559,6 +647,7 @@ func mediaStreams(media map[string]interface{}) []map[string]interface{} {
 // streamKindMatches accepts Plex's streamType which can be:
 //   - numeric (1=video, 2=audio, 3=subtitle)
 //   - string ("Video", "Audio", "Subtitle", "video", "audio", "subtitle")
+//
 // Other forms are returned as not matching so the caller can default to "".
 func streamKindMatches(stream map[string]interface{}, want string) bool {
 	if stream == nil {

@@ -62,6 +62,7 @@ export interface CollectionItem {
   assets: CollectionAsset
   sources: CollectionSource[]
   metadataStatus: MetadataStatus
+  createdAt: string
   updatedAt: string
   updatedBy: string
   discover?: DiscoverSection
@@ -162,6 +163,7 @@ export const COLLECTIONS_MOCK: CollectionItem[] = [
       { provider: 'Manual', externalId: 'manual-001', lastSyncedAt: '2h ago', status: 'active' },
     ],
     metadataStatus: 'synced',
+    createdAt: '2026-07-12T10:00:00Z',
     updatedAt: '2h ago',
     updatedBy: 'admin',
     discover: {
@@ -194,6 +196,7 @@ export const COLLECTIONS_MOCK: CollectionItem[] = [
       { provider: 'Manual', externalId: 'manual-002', lastSyncedAt: '1d ago', status: 'active' },
     ],
     metadataStatus: 'synced',
+    createdAt: '2026-07-14T10:00:00Z',
     updatedAt: '1d ago',
     updatedBy: 'admin',
     discover: {
@@ -228,6 +231,7 @@ export const COLLECTIONS_MOCK: CollectionItem[] = [
       { provider: 'Manual', externalId: 'manual-003', lastSyncedAt: '4h ago', status: 'active' },
     ],
     metadataStatus: 'synced',
+    createdAt: '2026-07-17T10:00:00Z',
     updatedAt: '4h ago',
     updatedBy: 'auto-import',
     discover: {
@@ -258,6 +262,7 @@ export const COLLECTIONS_MOCK: CollectionItem[] = [
       { provider: 'Manual', externalId: 'manual-004', lastSyncedAt: '3d ago', status: 'active' },
     ],
     metadataStatus: 'synced',
+    createdAt: '2026-07-20T10:00:00Z',
     updatedAt: '3d ago',
     updatedBy: 'admin',
     discover: {
@@ -288,6 +293,7 @@ export const COLLECTIONS_MOCK: CollectionItem[] = [
       { provider: 'Manual', externalId: 'manual-005', lastSyncedAt: '5d ago', status: 'active' },
     ],
     metadataStatus: 'stale',
+    createdAt: '2026-07-23T10:00:00Z',
     updatedAt: '5d ago',
     updatedBy: 'admin',
     discover: {
@@ -324,6 +330,7 @@ export const COLLECTIONS_MOCK: CollectionItem[] = [
       { provider: 'Manual', externalId: 'manual-006', lastSyncedAt: '1d ago', status: 'active' },
     ],
     metadataStatus: 'synced',
+    createdAt: '2026-07-25T10:00:00Z',
     updatedAt: '1d ago',
     updatedBy: 'auto-import',
     discover: {
@@ -354,6 +361,7 @@ export const COLLECTIONS_MOCK: CollectionItem[] = [
       { provider: 'Manual', externalId: 'manual-007', lastSyncedAt: '7d ago', status: 'active' },
     ],
     metadataStatus: 'missing',
+    createdAt: '2026-07-28T10:00:00Z',
     updatedAt: '7d ago',
     updatedBy: 'admin',
   },
@@ -380,6 +388,7 @@ export const COLLECTIONS_MOCK: CollectionItem[] = [
       { provider: 'Manual', externalId: 'manual-008', lastSyncedAt: '2d ago', status: 'active' },
     ],
     metadataStatus: 'stale',
+    createdAt: '2026-07-30T10:00:00Z',
     updatedAt: '2d ago',
     updatedBy: 'admin',
   },

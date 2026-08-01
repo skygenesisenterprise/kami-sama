@@ -1,6 +1,7 @@
 package routes
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -24,13 +25,14 @@ import (
 type PlexHandler struct {
 	deps   Dependencies
 	client *services.PlexClient
+	dbKey  string
+	dbNone bool
 }
 
-// NewPlexHandler prefers the dedicated Plex media source (if the
-// multiplexer was configured for Plex) and falls back to building a client
-// from the raw configuration. This lets dedicated routes keep working even
-// when the active provider is Jellyfin or local — the Plex section becomes
-// exploratory rather than authoritative.
+// NewPlexHandler seeds the handler with the env-configured client (if any)
+// so that requests still work when no persisted source_configs row exists.
+// resolveClient is authoritative afterwards — it prefers a DB row so the UI
+// can (re)configure the server without a restart.
 func NewPlexHandler(deps Dependencies) *PlexHandler {
 	h := &PlexHandler{deps: deps}
 	if deps.MediaSourceService != nil && deps.MediaSourceService.Plex() != nil {
@@ -49,18 +51,69 @@ func NewPlexHandler(deps Dependencies) *PlexHandler {
 	return h
 }
 
-// requireClient makes the handler fail-fast with PLEX_DISABLED when the
-// integration is not configured.
-func (h *PlexHandler) requireClient() (*services.PlexClient, error) {
-	if h.client == nil || !h.client.Enabled() {
-		return nil, utils.NewError(http.StatusServiceUnavailable, "PLEX_DISABLED", "Plex integration is not enabled or not configured.", nil)
+// resolveClient returns the active Plex client, resolving it in priority order:
+//
+//  1. A persisted source_configs row for the "plex" source type (enabled). The
+//     client is cached and rebuilt whenever the row's updatedAt changes, so
+//     saving the connection from the UI takes effect immediately.
+//  2. The env-configured active provider (MediaSourceService).
+//  3. The raw env Plex configuration.
+//
+// It fails fast with PLEX_DISABLED when none of these is usable.
+func (h *PlexHandler) resolveClient(ctx context.Context) (*services.PlexClient, error) {
+	if h.deps.LibraryService != nil {
+		cfg, err := h.deps.LibraryService.GetBySourceType(ctx, "plex")
+		if err == nil && cfg != nil && cfg.Enabled {
+			key := cfg.UpdatedAt.String()
+			if h.client == nil || h.dbKey != key {
+				client, cerr := services.PlexClientFromSourceConfig(cfg)
+				if cerr == nil && client.Enabled() {
+					h.client = client
+					h.dbKey = key
+					h.dbNone = false
+				} else {
+					// Present but unusable — drop any cached client so we never
+					// serve stale credentials from a previous configuration.
+					h.client = nil
+					h.dbKey = ""
+				}
+			}
+			if h.client != nil && !h.dbNone {
+				return h.client, nil
+			}
+		} else if h.dbNone && h.client != nil {
+			return h.client, nil
+		}
 	}
-	return h.client, nil
+
+	if h.deps.MediaSourceService != nil && h.deps.MediaSourceService.Plex() != nil {
+		h.client = h.deps.MediaSourceService.Plex().GetClient()
+		h.dbKey = ""
+		h.dbNone = true
+		return h.client, nil
+	}
+
+	if h.deps.Config.MediaSource.Plex.URL != "" && h.deps.Config.MediaSource.Plex.Token != "" {
+		h.client = services.NewPlexClient(services.PlexConfig{
+			URL:              h.deps.Config.MediaSource.Plex.URL,
+			Token:            h.deps.Config.MediaSource.Plex.Token,
+			ClientIdentifier: h.deps.Config.MediaSource.Plex.ClientIdentifier,
+			Product:          h.deps.Config.MediaSource.Plex.Product,
+			Version:          h.deps.Config.MediaSource.Plex.Version,
+			Device:           h.deps.Config.MediaSource.Plex.Device,
+			Timeout:          h.deps.Config.MediaSource.Plex.Timeout,
+		})
+		h.dbKey = ""
+		h.dbNone = true
+		return h.client, nil
+	}
+
+	return nil, utils.NewError(http.StatusServiceUnavailable, "PLEX_DISABLED", "Plex integration is not enabled or not configured.", nil)
 }
 
 // GetIdentity returns the configured Plex server's identity (version, machineIdentifier, friendlyName).
 func (h *PlexHandler) GetIdentity(c *gin.Context) {
-	client, err := h.requireClient()
+	client, err := h.resolveClient(c.Request.Context())
 	if err != nil {
 		utils.Error(c, err)
 		return
@@ -75,7 +128,7 @@ func (h *PlexHandler) GetIdentity(c *gin.Context) {
 
 // ListLibraries returns the configured libraries on the Plex server.
 func (h *PlexHandler) ListLibraries(c *gin.Context) {
-	client, err := h.requireClient()
+	client, err := h.resolveClient(c.Request.Context())
 	if err != nil {
 		utils.Error(c, err)
 		return
@@ -100,7 +153,7 @@ func (h *PlexHandler) ListLibraries(c *gin.Context) {
 
 // GetLibrary returns a single library by key.
 func (h *PlexHandler) GetLibrary(c *gin.Context) {
-	client, err := h.requireClient()
+	client, err := h.resolveClient(c.Request.Context())
 	if err != nil {
 		utils.Error(c, err)
 		return
@@ -123,7 +176,7 @@ func (h *PlexHandler) GetLibrary(c *gin.Context) {
 // ListItems returns items inside a Plex library with optional pagination +
 // search.
 func (h *PlexHandler) ListItems(c *gin.Context) {
-	client, err := h.requireClient()
+	client, err := h.resolveClient(c.Request.Context())
 	if err != nil {
 		utils.Error(c, err)
 		return
@@ -159,7 +212,7 @@ func (h *PlexHandler) ListItems(c *gin.Context) {
 
 // GetMetadata returns the full Plex Metadata block for a ratingKey.
 func (h *PlexHandler) GetMetadata(c *gin.Context) {
-	client, err := h.requireClient()
+	client, err := h.resolveClient(c.Request.Context())
 	if err != nil {
 		utils.Error(c, err)
 		return
@@ -175,7 +228,7 @@ func (h *PlexHandler) GetMetadata(c *gin.Context) {
 
 // GetChildren returns children of a Plex metadata entry (seasons, episodes).
 func (h *PlexHandler) GetChildren(c *gin.Context) {
-	client, err := h.requireClient()
+	client, err := h.resolveClient(c.Request.Context())
 	if err != nil {
 		utils.Error(c, err)
 		return
@@ -194,7 +247,7 @@ func (h *PlexHandler) GetChildren(c *gin.Context) {
 
 // GetHubs returns recommendation hubs, optionally filtered by library.
 func (h *PlexHandler) GetHubs(c *gin.Context) {
-	client, err := h.requireClient()
+	client, err := h.resolveClient(c.Request.Context())
 	if err != nil {
 		utils.Error(c, err)
 		return
@@ -219,7 +272,7 @@ func (h *PlexHandler) GetHubs(c *gin.Context) {
 
 // RefreshLibrary triggers a metadata refresh on the given Plex library.
 func (h *PlexHandler) RefreshLibrary(c *gin.Context) {
-	client, err := h.requireClient()
+	client, err := h.resolveClient(c.Request.Context())
 	if err != nil {
 		utils.Error(c, err)
 		return
@@ -234,7 +287,7 @@ func (h *PlexHandler) RefreshLibrary(c *gin.Context) {
 
 // Scrobble marks an item as watched (server-side only).
 func (h *PlexHandler) Scrobble(c *gin.Context) {
-	client, err := h.requireClient()
+	client, err := h.resolveClient(c.Request.Context())
 	if err != nil {
 		utils.Error(c, err)
 		return
@@ -255,7 +308,7 @@ func (h *PlexHandler) Scrobble(c *gin.Context) {
 
 // Unscrobble removes the watched mark on a ratingKey.
 func (h *PlexHandler) Unscrobble(c *gin.Context) {
-	client, err := h.requireClient()
+	client, err := h.resolveClient(c.Request.Context())
 	if err != nil {
 		utils.Error(c, err)
 		return
@@ -276,7 +329,7 @@ func (h *PlexHandler) Unscrobble(c *gin.Context) {
 
 // UpdateTimeline pushes a playback event to Plex's /:/timeline endpoint.
 func (h *PlexHandler) UpdateTimeline(c *gin.Context) {
-	client, err := h.requireClient()
+	client, err := h.resolveClient(c.Request.Context())
 	if err != nil {
 		utils.Error(c, err)
 		return
@@ -312,7 +365,7 @@ func (h *PlexHandler) UpdateTimeline(c *gin.Context) {
 // optionally already resolving to absolute URLs when the library lives on a
 // remote Plex server. The proxy always re-applies the X-Plex-Token header.
 func (h *PlexHandler) ImageProxy(c *gin.Context) {
-	client, err := h.requireClient()
+	client, err := h.resolveClient(c.Request.Context())
 	if err != nil {
 		utils.Error(c, err)
 		return
@@ -360,11 +413,8 @@ func (h *PlexHandler) ImageProxy(c *gin.Context) {
 // response body is the URL itself so callers can store it (or attach their
 // own transcoding profile).
 func (h *PlexHandler) TranscodeDecision(c *gin.Context) {
-	// We only call requireClient() to fail-fast with PLEX_DISABLED when the
-	// integration is not configured; the actual stream URL is built from
-	// the active multiplexer-managed Plex provider, so the local client
-	// variable would be unused here.
-	if _, err := h.requireClient(); err != nil {
+	client, err := h.resolveClient(c.Request.Context())
+	if err != nil {
 		utils.Error(c, err)
 		return
 	}
@@ -376,23 +426,19 @@ func (h *PlexHandler) TranscodeDecision(c *gin.Context) {
 		utils.Error(c, utils.ErrValidationFailed)
 		return
 	}
-	if h.deps.MediaSourceService != nil && h.deps.MediaSourceService.Plex() != nil {
-		stream, err := h.deps.MediaSourceService.Plex().GetStreamURL(c.Request.Context(), body.RatingKey, body.Profile)
-		if err != nil {
-			utils.Error(c, err)
-			return
-		}
-		utils.Success(c, http.StatusOK, gin.H{"streamUrl": stream, "ratingKey": body.RatingKey, "profile": body.Profile})
+	stream, err := services.BuildPlexStreamURL(c.Request.Context(), client, body.RatingKey, body.Profile)
+	if err != nil {
+		utils.Error(c, err)
 		return
 	}
-	utils.Error(c, utils.NewError(http.StatusServiceUnavailable, "PLEX_NOT_ACTIVE", "Plex is not the active media source provider.", nil))
+	utils.Success(c, http.StatusOK, gin.H{"streamUrl": stream, "ratingKey": body.RatingKey, "profile": body.Profile})
 }
 
 // Search proxies /library/search and flattens results into the canonical
 // MediaSourceItem shape so the front-end doesn't have to differentiate
 // providers.
 func (h *PlexHandler) Search(c *gin.Context) {
-	client, err := h.requireClient()
+	client, err := h.resolveClient(c.Request.Context())
 	if err != nil {
 		utils.Error(c, err)
 		return
@@ -411,10 +457,39 @@ func (h *PlexHandler) Search(c *gin.Context) {
 		utils.Error(c, err)
 		return
 	}
-	if results == nil {
-		results = []map[string]interface{}{}
+	mapped := services.MapPlexItems(results)
+	if mapped == nil {
+		mapped = []map[string]interface{}{}
 	}
-	utils.Success(c, http.StatusOK, gin.H{"items": results, "total": len(results), "query": q})
+	utils.Success(c, http.StatusOK, gin.H{"items": mapped, "total": len(mapped), "query": q})
+}
+
+// ImportItem upserts a single Plex item (by ratingKey) into the local anime
+// index. It returns the canonical item plus created/updated flags so the
+// catalog UI can reflect the result immediately.
+func (h *PlexHandler) ImportItem(c *gin.Context) {
+	client, err := h.resolveClient(c.Request.Context())
+	if err != nil {
+		utils.Error(c, err)
+		return
+	}
+	var body struct {
+		RatingKey string `json:"ratingKey" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		utils.Error(c, utils.ErrValidationFailed)
+		return
+	}
+	if h.deps.Database == nil {
+		utils.Error(c, utils.NewError(http.StatusInternalServerError, "PLEX_IMPORT_FAILED", "Database unavailable.", nil))
+		return
+	}
+	result, err := services.ImportPlexItem(c.Request.Context(), h.deps.Database.Gorm(), client, body.RatingKey)
+	if err != nil {
+		utils.Error(c, err)
+		return
+	}
+	utils.Success(c, http.StatusCreated, result)
 }
 
 // ---- helpers --------------------------------------------------------------
@@ -494,7 +569,7 @@ func toInt(v interface{}) int {
 
 // HealthCheck probes the configured server with a GetIdentity request.
 func (h *PlexHandler) HealthCheck(c *gin.Context) {
-	client, err := h.requireClient()
+	client, err := h.resolveClient(c.Request.Context())
 	if err != nil {
 		utils.Error(c, err)
 		return

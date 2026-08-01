@@ -27,7 +27,7 @@ export const metadata: Metadata = {
 
 export default function DashHomePage() {
   return (
-    <main className="flex flex-col gap-6">
+    <main className="flex flex-col gap-6 select-none">
       <PageHeader
         title="Operations Center"
         description="Live view of everything moving through the Kami-Sama platform. Take action on imports, publications, infrastructure and moderation."

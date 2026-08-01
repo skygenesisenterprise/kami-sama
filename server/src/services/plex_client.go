@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/skygenesisenterprise/kami-sama/server/src/models"
 	"github.com/skygenesisenterprise/kami-sama/server/src/utils"
 )
 
@@ -21,14 +22,14 @@ import (
 // header which Plex respects on most endpoints. The MediaContainer wrapper is the
 // standard envelope around all responses.
 type PlexClient struct {
-	baseURL           string
-	token             string
+	baseURL          string
+	token            string
 	clientIdentifier string
-	product           string
-	version           string
-	device            string
-	httpClient        *http.Client
-	timeout           time.Duration
+	product          string
+	version          string
+	device           string
+	httpClient       *http.Client
+	timeout          time.Duration
 }
 
 // PlexConfig is the wiring struct for PlexClient. It mirrors config.PlexConfig
@@ -66,15 +67,53 @@ func NewPlexClient(cfg PlexConfig) *PlexClient {
 		clientID = "kamisama-server"
 	}
 	return &PlexClient{
-		baseURL:           strings.TrimRight(cfg.URL, "/"),
-		token:             cfg.Token,
+		baseURL:          strings.TrimRight(cfg.URL, "/"),
+		token:            cfg.Token,
 		clientIdentifier: clientID,
-		product:           product,
-		version:           version,
-		device:            device,
-		httpClient:        &http.Client{Timeout: timeout},
-		timeout:           timeout,
+		product:          product,
+		version:          version,
+		device:           device,
+		httpClient:       &http.Client{Timeout: timeout},
+		timeout:          timeout,
 	}
+}
+
+// plexConfigFromSourceConfig is the JSON shape stored on a source_configs
+// row for the plex source type.
+type plexConfigFromSourceConfig struct {
+	URL              string  `json:"url"`
+	Token            string  `json:"token"`
+	ClientIdentifier string  `json:"clientIdentifier"`
+	Product          string  `json:"product"`
+	Version          string  `json:"version"`
+	Device           string  `json:"device"`
+	TimeoutSeconds   float64 `json:"timeoutSeconds"`
+}
+
+// PlexClientFromSourceConfig builds a PlexClient from a persisted
+// source_configs row so the Plex integration can be (re)configured through
+// the UI without a server restart. Returns an error when the row is missing
+// a url/token pair.
+func PlexClientFromSourceConfig(cfg *models.SourceConfig) (*PlexClient, error) {
+	if cfg == nil {
+		return nil, fmt.Errorf("plex config is nil")
+	}
+	var raw plexConfigFromSourceConfig
+	if err := json.Unmarshal(cfg.Config, &raw); err != nil {
+		return nil, fmt.Errorf("invalid plex config: %w", err)
+	}
+	if raw.URL == "" || raw.Token == "" {
+		return nil, fmt.Errorf("plex config missing url or token")
+	}
+	return NewPlexClient(PlexConfig{
+		URL:              raw.URL,
+		Token:            raw.Token,
+		ClientIdentifier: raw.ClientIdentifier,
+		Product:          raw.Product,
+		Version:          raw.Version,
+		Device:           raw.Device,
+		Timeout:          time.Duration(raw.TimeoutSeconds) * time.Second,
+	}), nil
 }
 
 // Enabled reports whether the client is fully wired (URL + token).
@@ -102,18 +141,18 @@ type plexResponse struct {
 // also preserved as a raw map for callers that need access to extension
 // fields.
 type plexMediaContainer struct {
-	Size         int                      `json:"size"`
-	TotalSize    int                      `json:"totalSize"`
-	Offset       int                      `json:"offset"`
-	Art          string                   `json:"art"`
-	Thumb        string                   `json:"thumb"`
-	Title1       string                   `json:"title1"`
-	Title2       string                   `json:"title2"`
-	Directory    []map[string]interface{} `json:"Directory"`
-	Metadata     []map[string]interface{} `json:"Metadata"`
-	Hub          []map[string]interface{} `json:"Hub"`
-	Meta         []map[string]interface{} `json:"Meta"`
-	Raw          map[string]interface{}
+	Size      int                      `json:"size"`
+	TotalSize int                      `json:"totalSize"`
+	Offset    int                      `json:"offset"`
+	Art       string                   `json:"art"`
+	Thumb     string                   `json:"thumb"`
+	Title1    string                   `json:"title1"`
+	Title2    string                   `json:"title2"`
+	Directory []map[string]interface{} `json:"Directory"`
+	Metadata  []map[string]interface{} `json:"Metadata"`
+	Hub       []map[string]interface{} `json:"Hub"`
+	Meta      []map[string]interface{} `json:"Meta"`
+	Raw       map[string]interface{}
 }
 
 // plexDisabledError returns the canonical "not configured" sentinel matching

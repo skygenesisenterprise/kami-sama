@@ -407,6 +407,7 @@ func SetupRoutes(router *gin.Engine, deps Dependencies) {
 			plexGroup.GET("/metadata/:ratingKey/children", plex.GetChildren)
 			plexGroup.GET("/hubs", plex.GetHubs)
 			plexGroup.GET("/search", plex.Search)
+			plexGroup.POST("/import", plex.ImportItem)
 			plexGroup.GET("/image", plex.ImageProxy)
 			plexGroup.POST("/transcode", plex.TranscodeDecision)
 			plexGroup.POST("/scrobble", plex.Scrobble)

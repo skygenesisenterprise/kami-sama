@@ -67,6 +67,7 @@ export function mapApiCollectionToCollectionItem(c: ApiCollection): CollectionIt
     },
     sources,
     metadataStatus: (c.metadataStatus || "missing") as MetadataStatus,
+    createdAt: c.createdAt || "",
     updatedAt: formatRelativeTime(c.updatedAt),
     updatedBy: c.updatedBy || "system",
     discover,

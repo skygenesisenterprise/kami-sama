@@ -111,15 +111,25 @@ import {
   type MetadataStatus,
 } from '@/lib/collections-catalog-data'
 
-type SortKey = 'title' | 'type' | 'entries' | 'updated'
+type SortKey = 'created' | 'title' | 'type' | 'entries' | 'updated'
 type SortDir = 'asc' | 'desc'
 
 const SORT_OPTIONS: { value: SortKey; label: string }[] = [
+  { value: 'created', label: 'Date created' },
   { value: 'title', label: 'Title' },
   { value: 'type', label: 'Type' },
   { value: 'entries', label: 'Entries' },
   { value: 'updated', label: 'Last updated' },
 ]
+
+function parseRelativeOffset(s: string): number {
+  const n = parseInt(s, 10)
+  if (s.includes('m')) return n
+  if (s.includes('h')) return n * 60
+  if (s.includes('d')) return n * 1440
+  if (s.includes('week')) return n * 10080
+  return 99999
+}
 
 const METADATA_TONE: Record<MetadataStatus, 'success' | 'warning' | 'destructive' | 'neutral'> = {
   synced: 'success',
@@ -140,7 +150,7 @@ export default function CollectionsCatalogPage() {
   const [source, setSource] = React.useState<string>('all')
   const [collectionType, setCollectionType] = React.useState<string>('all')
   const [discoverFilter, setDiscoverFilter] = React.useState<'all' | 'discover' | 'hidden'>('all')
-  const [sortKey, setSortKey] = React.useState<SortKey>('title')
+  const [sortKey, setSortKey] = React.useState<SortKey>('created')
   const [sortDir, setSortDir] = React.useState<SortDir>('asc')
   const [view, setView] = React.useState<'table' | 'grid'>('table')
   const [selected, setSelected] = React.useState<Set<string>>(new Set())
@@ -207,6 +217,10 @@ export default function CollectionsCatalogPage() {
     items.sort((a, b) => {
       let cmp = 0
       switch (sortKey) {
+        case 'created':
+          cmp =
+            new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+          break
         case 'title':
           cmp = a.title.localeCompare(b.title)
           break
@@ -216,18 +230,9 @@ export default function CollectionsCatalogPage() {
         case 'entries':
           cmp = a.entries.length - b.entries.length
           break
-        case 'updated': {
-          const parseOffset = (s: string) => {
-            const n = parseInt(s, 10)
-            if (s.includes('m')) return n
-            if (s.includes('h')) return n * 60
-            if (s.includes('d')) return n * 1440
-            if (s.includes('week')) return n * 10080
-            return 99999
-          }
-          cmp = parseOffset(a.updatedAt) - parseOffset(b.updatedAt)
+        case 'updated':
+          cmp = parseRelativeOffset(a.updatedAt) - parseRelativeOffset(b.updatedAt)
           break
-        }
       }
       return sortDir === 'asc' ? cmp : -cmp
     })
@@ -286,10 +291,10 @@ export default function CollectionsCatalogPage() {
   }
 
   return (
-    <main className="flex flex-col gap-6">
+    <main className="flex flex-col gap-6 select-none">
       <PageHeader
         title="Collections"
-        description="Manage curated collections of series. Organize by genre, theme, season, or editorial picks."
+        description="Manage curated collections of items. Organize by genre, theme, season, or editorial picks."
       >
         <Button variant="outline" size="sm">
           <Eye data-icon="inline-start" />
@@ -627,7 +632,7 @@ export default function CollectionsCatalogPage() {
                   )}
                   {columns.entries && (
                     <TableCell className="hidden text-muted-foreground lg:table-cell">
-                      {item.entries.length} series
+                      {item.entries.length} items
                     </TableCell>
                   )}
                   {columns.tags && (
@@ -746,7 +751,7 @@ export default function CollectionsCatalogPage() {
                 {item.description}
               </p>
               <div className="mt-auto flex items-center justify-between text-xs text-muted-foreground">
-                <span>{item.entries.length} series</span>
+                <span>{item.entries.length} items</span>
                 <div className="flex items-center gap-1.5">
                   {item.status === 'Published' && (
                     <StatusBadge tone="info">Discover</StatusBadge>
@@ -971,11 +976,11 @@ function CollectionDetailSheet({
                 <FieldGroup>
                   <div className="flex items-center justify-between">
                     <span className="text-sm font-medium">
-                      {item.entries.length} series in this collection
+                      {item.entries.length} items in this collection
                     </span>
                     <Button variant="outline" size="sm">
                       <Plus data-icon="inline-start" />
-                      Add series
+                      Add items
                     </Button>
                   </div>
                   {item.entries

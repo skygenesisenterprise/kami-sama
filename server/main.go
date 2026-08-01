@@ -168,6 +168,7 @@ func main() {
 	searchService := services.NewSearchService(repos)
 	settingsService := services.NewSettingsService(repos)
 	mediaSourceService := services.NewMediaSourceService(db.Gorm(), cfg.MediaSource)
+	libraryService := services.NewLibraryService(repos)
 	dashboardService := services.NewDashboardService(db.Gorm())
 	collectionService := services.NewCollectionService(db.Gorm())
 	analyticsService := services.NewAnalyticsService(db.Gorm())
@@ -228,6 +229,7 @@ func main() {
 		SearchService:            searchService,
 		SettingsService:          settingsService,
 		MediaSourceService:       mediaSourceService,
+		LibraryService:           libraryService,
 		DashboardService:         dashboardService,
 		CollectionService:        collectionService,
 		AnalyticsService:         analyticsService,

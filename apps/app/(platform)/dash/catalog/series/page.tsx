@@ -1,6 +1,7 @@
 'use client'
 
 import * as React from 'react'
+import Link from 'next/link'
 import {
   AlertTriangle,
   Archive,
@@ -11,6 +12,7 @@ import {
   Image,
   LayoutGrid,
   List,
+  Loader2,
   MoreHorizontal,
   Pencil,
   Plus,
@@ -88,9 +90,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { PageHeader } from '@/components/dash/page-header'
+import { PlexImportDialog } from '@/components/dash/plex-import-dialog'
+import { SourceResultCard, type SourceResultItem } from '@/components/dash/source-result-card'
 import { StatusBadge } from '@/components/dash/status-badge'
 import {
-  SERIES_MOCK,
   SERIES_STATUS_TONE,
   ALL_SERIES_STATUSES,
   ALL_SERIES_TYPES,
@@ -99,7 +102,14 @@ import {
   getSeriesStats,
   type SeriesItem,
   type MetadataStatus,
+  type SeriesType,
+  type DataSource,
+  type PublicationState,
 } from '@/lib/series-catalog-data'
+import { anilistApi } from '@/lib/api/anilist'
+import { ApiError } from '@/lib/api/errors'
+import { plexApi, type PlexImportResult } from '@/lib/api/plex'
+import { anilistItemToSourceItem, plexItemToSourceItem } from '@/lib/source-search'
 
 type SortKey = 'title' | 'year' | 'rating' | 'episodes' | 'updated'
 type SortDir = 'asc' | 'desc'
@@ -141,11 +151,13 @@ export default function SeriesCatalogPage() {
     metadata: true,
     updated: true,
   })
+  const [items, setItems] = React.useState<SeriesItem[]>([])
+  const [importOpen, setImportOpen] = React.useState(false)
 
-  const stats = React.useMemo(() => getSeriesStats(SERIES_MOCK), [])
+  const stats = React.useMemo(() => getSeriesStats(items), [items])
 
   const filtered = React.useMemo(() => {
-    let items = SERIES_MOCK.filter((item) => {
+    let next = [...items].filter((item) => {
       const matchesQuery =
         item.title.toLowerCase().includes(query.toLowerCase()) ||
         item.titleOriginal.toLowerCase().includes(query.toLowerCase())
@@ -157,7 +169,7 @@ export default function SeriesCatalogPage() {
       return matchesQuery && matchesStatus && matchesSource && matchesType
     })
 
-    items.sort((a, b) => {
+    next.sort((a, b) => {
       let cmp = 0
       switch (sortKey) {
         case 'title':
@@ -188,8 +200,8 @@ export default function SeriesCatalogPage() {
       return sortDir === 'asc' ? cmp : -cmp
     })
 
-    return items
-  }, [query, status, source, seriesType, sortKey, sortDir])
+    return next
+  }, [items, query, status, source, seriesType, sortKey, sortDir])
 
   const allSelected = filtered.length > 0 && selected.size === filtered.length
 
@@ -213,6 +225,58 @@ export default function SeriesCatalogPage() {
     setSelected(new Set())
   }
 
+  const handleImported = (result: PlexImportResult) => {
+    const item = result.item
+    const ratingKey = item.sourceId ?? item.id ?? item.ratingKey ?? `plex-${result.sourceId}`
+    const sourceId = result.sourceId || ratingKey
+    const title = result.title || item.name || item.title || 'Untitled'
+    const importedItem: SeriesItem = {
+      id: `plex-${ratingKey}`,
+      slug: title
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/(^-|-$)/g, ''),
+      title,
+      titleOriginal: item.originalTitle || title,
+      synopsis: item.overview ?? '',
+      type: 'animation',
+      status: 'Draft',
+      airingStatus: 'completed',
+      genres: item.genres ?? [],
+      studios: [],
+      tags: [],
+      year: item.year ?? new Date().getFullYear(),
+      rating: typeof item.rating === 'number' ? item.rating : 0,
+      seasonCount: 0,
+      totalEpisodes: 0,
+      ageRating: 'Unknown',
+      assets: {
+        poster: item.imageUrl ?? '',
+        banner: item.artUrl ?? '',
+        backdrop: item.artUrl ?? '',
+      },
+      externalIds: { plex: sourceId },
+      sources: [
+        {
+          provider: 'Plex',
+          externalId: sourceId,
+          lastSyncedAt: new Date().toISOString(),
+          status: 'active',
+        },
+      ],
+      seasons: [],
+      relations: [],
+      metadataStatus: 'synced',
+      updatedAt: 'just now',
+      updatedBy: 'Plex import',
+    }
+    setItems((prev) => [importedItem, ...prev.filter((s) => s.id !== importedItem.id)])
+  }
+
+  const handleCreatedFromDialog = (item: SeriesItem) => {
+    setItems((prev) => [item, ...prev.filter((s) => s.id !== item.id)])
+  }
+
   return (
     <main className="flex flex-col gap-6">
       <PageHeader
@@ -222,6 +286,10 @@ export default function SeriesCatalogPage() {
         <Button variant="outline" size="sm">
           <Eye data-icon="inline-start" />
           Preview site
+        </Button>
+        <Button variant="outline" size="sm" onClick={() => setImportOpen(true)}>
+          <Tv data-icon="inline-start" />
+          Import from Plex
         </Button>
         <Button size="sm" onClick={() => setCreating(true)}>
           <Plus data-icon="inline-start" />
@@ -422,12 +490,30 @@ export default function SeriesCatalogPage() {
             <EmptyMedia variant="icon">
               <Search />
             </EmptyMedia>
-            <EmptyTitle>No series found</EmptyTitle>
-            <EmptyDescription>
-              No series match the current filters. Try adjusting your search or
-              create a new series.
-            </EmptyDescription>
+            {items.length === 0 ? (
+              <>
+                <EmptyTitle>No series yet</EmptyTitle>
+                <EmptyDescription>
+                  Search Plex to find a series by title and add it to your
+                  catalog, or create a new series manually.
+                </EmptyDescription>
+              </>
+            ) : (
+              <>
+                <EmptyTitle>No series found</EmptyTitle>
+                <EmptyDescription>
+                  No series match the current filters. Try adjusting your
+                  search or import another series from Plex.
+                </EmptyDescription>
+              </>
+            )}
           </EmptyHeader>
+          {items.length === 0 ? (
+            <Button onClick={() => setImportOpen(true)}>
+              <Tv data-icon="inline-start" />
+              Search Plex
+            </Button>
+          ) : null}
         </Empty>
       ) : view === 'table' ? (
         <div className="overflow-hidden rounded-lg border">
@@ -671,7 +757,7 @@ export default function SeriesCatalogPage() {
 
       <div className="flex items-center justify-between text-sm text-muted-foreground">
         <span>
-          Showing {filtered.length} of {SERIES_MOCK.length} series
+          Showing {filtered.length} of {items.length} series
         </span>
         <div className="flex items-center gap-2">
           <Button variant="outline" size="sm" disabled>
@@ -688,7 +774,18 @@ export default function SeriesCatalogPage() {
         onClose={() => setInspecting(null)}
       />
 
-      <NewSeriesDialog open={creating} onOpenChange={setCreating} />
+      <NewSeriesDialog
+        open={creating}
+        onOpenChange={setCreating}
+        onCreated={handleCreatedFromDialog}
+      />
+
+      <PlexImportDialog
+        open={importOpen}
+        onOpenChange={setImportOpen}
+        kind="series"
+        onImported={handleImported}
+      />
     </main>
   )
 }
@@ -1104,12 +1201,28 @@ function SeriesDetailSheet({
   )
 }
 
+function formatApiError(err: unknown): string {
+  if (err instanceof ApiError) {
+    return err.code ? `${err.code}: ${err.message}` : err.message
+  }
+  return err instanceof Error ? err.message : 'Unknown error'
+}
+
+function slugify(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/(^-|-$)/g, '')
+}
+
 function NewSeriesDialog({
   open,
   onOpenChange,
+  onCreated,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
+  onCreated: (item: SeriesItem) => void
 }) {
   const [title, setTitle] = React.useState('')
   const [titleOriginal, setTitleOriginal] = React.useState('')
@@ -1126,6 +1239,15 @@ function NewSeriesDialog({
   const [studioInput, setStudioInput] = React.useState('')
   const [tags, setTags] = React.useState<string[]>([])
   const [tagInput, setTagInput] = React.useState('')
+
+  const [searchSource, setSearchSource] = React.useState<string>('Plex')
+  const [sourceQuery, setSourceQuery] = React.useState('')
+  const [sourceResults, setSourceResults] = React.useState<SourceResultItem[]>([])
+  const [sourceSearching, setSourceSearching] = React.useState(false)
+  const [sourceError, setSourceError] = React.useState<string | null>(null)
+  const [sourceUnavailable, setSourceUnavailable] = React.useState<string | null>(null)
+  const [selectedSourceId, setSelectedSourceId] = React.useState<string | null>(null)
+  const [externalId, setExternalId] = React.useState<string | null>(null)
 
   const addGenre = () => {
     const trimmed = genreInput.trim()
@@ -1151,6 +1273,63 @@ function NewSeriesDialog({
     }
   }
 
+  React.useEffect(() => {
+    if (!open) return
+    const q = sourceQuery.trim()
+    if (!q) {
+      setSourceResults([])
+      return
+    }
+    let cancelled = false
+    const timeout = setTimeout(async () => {
+      setSourceSearching(true)
+      setSourceError(null)
+      setSourceUnavailable(null)
+      try {
+        if (searchSource === 'Plex') {
+          const res = await plexApi.search(q, { type: 'show', limit: 8 })
+          const wanted = ['Series', 'show']
+          const items = res.items
+            .filter((i) => wanted.includes(i.type ?? ''))
+            .map(plexItemToSourceItem)
+          if (!cancelled) setSourceResults(items)
+        } else {
+          const res = await anilistApi.search(q, { perPage: 8 })
+          if (!cancelled) setSourceResults(res.items.map(anilistItemToSourceItem))
+        }
+      } catch (err) {
+        if (cancelled) return
+        if (
+          err instanceof ApiError &&
+          (err.code === 'PLEX_DISABLED' || err.code === 'ANILIST_DISABLED')
+        ) {
+          setSourceUnavailable(err.message)
+        } else {
+          setSourceError(formatApiError(err))
+        }
+        setSourceResults([])
+      } finally {
+        if (!cancelled) setSourceSearching(false)
+      }
+    }, 350)
+    return () => {
+      cancelled = true
+      clearTimeout(timeout)
+    }
+  }, [open, sourceQuery, searchSource])
+
+  const selectResult = (item: SourceResultItem) => {
+    setSelectedSourceId(item.id)
+    setExternalId(item.id)
+    setProvider(searchSource)
+    setTitle(item.title)
+    setTitleOriginal(item.subtitle ?? '')
+    setSynopsis(item.overview ?? '')
+    if (item.year) setYear(item.year)
+    if (item.genres && item.genres.length > 0) setGenres(item.genres)
+    if (searchSource === 'AniList') setType('anime')
+  }
+
   const reset = () => {
     setTitle('')
     setTitleOriginal('')
@@ -1167,11 +1346,72 @@ function NewSeriesDialog({
     setStudioInput('')
     setTags([])
     setTagInput('')
+    setSourceQuery('')
+    setSourceResults([])
+    setSourceSearching(false)
+    setSourceError(null)
+    setSourceUnavailable(null)
+    setSelectedSourceId(null)
+    setExternalId(null)
   }
 
-  const handleCreate = () => {
+  const handleCreate = async () => {
+    if (selectedSourceId && searchSource === 'Plex') {
+      try {
+        await plexApi.importItem(selectedSourceId)
+      } catch (err) {
+        toast.error(`Could not reach Plex: ${formatApiError(err)}`)
+        return
+      }
+    }
+    const selected = sourceResults.find((r) => r.id === selectedSourceId) ?? null
+    const source = searchSource
+    const item: SeriesItem = {
+      id: selected ? `${source.toLowerCase()}-${selected.id}` : `manual-${Date.now()}`,
+      slug: slugify(selected?.title ?? title),
+      title: selected?.title ?? title,
+      titleOriginal: selected?.subtitle || titleOriginal || title,
+      synopsis: selected?.overview ?? synopsis,
+      type: (source === 'AniList' ? 'anime' : type) as SeriesType,
+      status: status as PublicationState,
+      airingStatus: airingStatus as SeriesItem['airingStatus'],
+      genres: selected?.genres && selected.genres.length > 0 ? selected.genres : genres,
+      studios,
+      tags,
+      year: selected?.year ?? year,
+      rating: selected?.rating ?? 0,
+      seasonCount: 0,
+      totalEpisodes: 0,
+      ageRating: ageRating || 'Unknown',
+      assets: {
+        poster: selected?.imageUrl ?? '',
+        banner: selected?.artUrl ?? '',
+        backdrop: selected?.artUrl ?? '',
+      },
+      externalIds: selected
+        ? source === 'Plex'
+          ? { plex: selected.id }
+          : { anilist: selected.id }
+        : {},
+      sources: selected
+        ? [
+            {
+              provider: source as DataSource,
+              externalId: selected.id,
+              lastSyncedAt: new Date().toISOString(),
+              status: 'active',
+            },
+          ]
+        : [],
+      seasons: [],
+      relations: [],
+      metadataStatus: selected ? 'synced' : 'missing',
+      updatedAt: 'just now',
+      updatedBy: 'New series',
+    }
+    onCreated(item)
     toast.success('Series created', {
-      description: `"${title}" has been added to the catalog.`,
+      description: `"${item.title}" has been added to the catalog.`,
     })
     reset()
     onOpenChange(false)
@@ -1179,13 +1419,102 @@ function NewSeriesDialog({
 
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!v) reset(); onOpenChange(v) }}>
-      <DialogContent className="sm:max-w-lg max-h-[85vh] overflow-y-auto">
+      <DialogContent className="sm:max-w-xl max-h-[85vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>New series</DialogTitle>
           <DialogDescription>
-            Add a new series to your catalog. Fill in the details below.
+            Search a title in a connected source to verify it exists and prefill
+            the details, or create the series manually.
           </DialogDescription>
         </DialogHeader>
+
+        <div className="flex flex-col gap-3 rounded-lg border bg-card p-3">
+          <div className="flex items-center gap-2">
+            <Select
+              value={searchSource}
+              onValueChange={(v) => {
+                setSearchSource(v)
+                setSelectedSourceId(null)
+                setExternalId(null)
+                setSourceResults([])
+              }}
+            >
+              <SelectTrigger className="w-40">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  <SelectItem value="Plex">Plex</SelectItem>
+                  <SelectItem value="AniList">AniList</SelectItem>
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+            <div className="relative flex-1">
+              <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                className="pl-9"
+                placeholder={`Search ${searchSource} by title...`}
+                value={sourceQuery}
+                onChange={(e) => setSourceQuery(e.target.value)}
+              />
+            </div>
+          </div>
+
+          {selectedSourceId ? (
+            <p className="rounded-md bg-primary/10 px-3 py-1.5 text-xs text-primary">
+              Using{' '}
+              <span className="font-medium">
+                {sourceResults.find((r) => r.id === selectedSourceId)?.title ?? title}
+              </span>{' '}
+              from {searchSource} — it will be linked as an external source.
+            </p>
+          ) : null}
+
+          {sourceUnavailable ? (
+            <div className="flex items-center justify-between gap-2 rounded-md border bg-warning/10 px-3 py-2 text-xs text-warning">
+              <span>{sourceUnavailable}</span>
+              {searchSource === 'Plex' ? (
+                <Link
+                  href="/dash/sources/plex"
+                  className="shrink-0 font-medium underline underline-offset-2"
+                >
+                  Open Plex settings
+                </Link>
+              ) : null}
+            </div>
+          ) : sourceError ? (
+            <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+              Search failed: {sourceError}
+            </div>
+          ) : sourceSearching ? (
+            <div className="flex items-center justify-center gap-2 py-4 text-xs text-muted-foreground">
+              <Loader2 className="size-3.5 animate-spin" />
+              Searching {searchSource}…
+            </div>
+          ) : sourceQuery.trim() === '' ? (
+            <p className="py-2 text-center text-xs text-muted-foreground">
+              Search a title to verify it is available in {searchSource}.
+            </p>
+          ) : sourceResults.length === 0 ? (
+            <p className="py-2 text-center text-xs text-muted-foreground">
+              No results for “{sourceQuery.trim()}” in {searchSource}.
+            </p>
+          ) : (
+            <div className="flex max-h-72 flex-col gap-3 overflow-y-auto pr-1">
+              {sourceResults.map((item) => (
+                <SourceResultCard
+                  key={item.id}
+                  item={item}
+                  icon="series"
+                  actionLabel="Select"
+                  doneLabel="Selected"
+                  done={item.id === selectedSourceId}
+                  onAction={(it) => selectResult(it)}
+                />
+              ))}
+            </div>
+          )}
+        </div>
 
         <div className="flex flex-col gap-4">
           <div className="grid grid-cols-2 gap-4">
