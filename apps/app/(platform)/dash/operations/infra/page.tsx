@@ -48,11 +48,9 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { StatusBadge, type StatusTone } from '@/components/dash/status-badge'
 import { PageHeader } from '@/components/dash/page-header'
 import { cn } from '@/lib/utils'
-
 import {
   infraData,
   type InfraData,
-  type InfraOverview,
   type Node,
   type Service,
   type Container,
@@ -66,7 +64,6 @@ import {
   type ServiceStatus,
   type ContainerStatus,
   type AlertSeverity,
-  type AlertStatus,
   type DeploymentStatus,
   type ActivityEventType,
 } from '@/lib/infra-data'
