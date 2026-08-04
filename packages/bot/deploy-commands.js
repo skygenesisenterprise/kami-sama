@@ -34,20 +34,14 @@ async function deployGuildCommands() {
     const rest = new REST({ version: "10" }).setToken(env.token);
     const scope = env.commandScope.toLowerCase();
     const globalRoute = Routes.applicationCommands(env.clientId);
-    const guildRoute = Routes.applicationGuildCommands(env.clientId, env.guildId);
 
-    if (!["global", "guild", "both"].includes(scope)) {
+    if (!["global", "none"].includes(scope)) {
       throw new Error(
-        `DISCORD_COMMAND_SCOPE invalide: ${env.commandScope}. Valeurs attendues: global, guild, both.`,
+        `DISCORD_COMMAND_SCOPE invalide: ${env.commandScope}. Valeurs attendues: global, none.`,
       );
     }
 
     if (scope === "global") {
-      await rest.put(guildRoute, {
-        body: [],
-      });
-      console.log("Anciennes commandes guilde supprimees.");
-
       await rest.put(globalRoute, {
         body: commands,
       });
@@ -55,28 +49,7 @@ async function deployGuildCommands() {
       return;
     }
 
-    if (scope === "guild") {
-      await rest.put(globalRoute, {
-        body: [],
-      });
-      console.log("Anciennes commandes globales supprimees.");
-
-      await rest.put(guildRoute, {
-        body: commands,
-      });
-      console.log(`${commands.length} commande(s) guilde déployée(s).`);
-      return;
-    }
-
-    await rest.put(globalRoute, {
-      body: commands,
-    });
-    console.log(`${commands.length} commande(s) globale(s) déployée(s).`);
-
-    await rest.put(guildRoute, {
-      body: commands,
-    });
-    console.log(`${commands.length} commande(s) guilde déployée(s).`);
+    console.log("Aucune commande déployée (scope = none).");
   } catch (error) {
     console.error("Erreur pendant le déploiement des commandes:", error);
     process.exit(1);
