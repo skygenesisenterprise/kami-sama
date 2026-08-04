@@ -33,7 +33,7 @@ async function writeState(state) {
 }
 
 export async function announceDeployment(client) {
-  if (!env.announceDeployments || !env.updatesChannelId) return false;
+  if (!env.announceDeployments) return false;
 
   const release = getReleaseInfo();
   const deploymentKey = `${release.environment}:${release.version}:${release.commitSha}`;
@@ -41,28 +41,43 @@ export async function announceDeployment(client) {
 
   if (state.lastAnnouncedDeployment === deploymentKey) return false;
 
-  const channel = await client.channels.fetch(env.updatesChannelId).catch(() => null);
-  if (!channel?.isTextBased()) {
-    console.warn("[DEPLOYMENT] DISCORD_UPDATES_CHANNEL_ID ne référence pas un salon textuel accessible.");
-    return false;
+  // Annonce dans tous les serveurs où un salon d-updates est configuré
+  for (const guild of client.guilds.cache.values()) {
+    const settings = getGuildSettings(guild.id);
+    const updatesChannelId = settings.updatesChannelId;
+    
+    if (!updatesChannelId) continue;
+
+    const channel = await guild.channels.fetch(updatesChannelId).catch(() => null);
+    if (!channel?.isTextBased()) {
+      console.warn(`[DEPLOYMENT] Le salon d-updates pour ${guild.name} (${guild.id}) n'est pas accessible.`);
+      continue;
+    }
+
+    const embed = new EmbedBuilder()
+      .setTitle("🚀 Bot mis à jour")
+      .setDescription("Une nouvelle version du bot vient d’être déployée et ses commandes slash ont été synchronisées.")
+      .addFields(
+        { name: "Version", value: release.version, inline: true },
+        { name: "Commit", value: release.shortCommit, inline: true },
+        { name: "Environnement", value: release.environment, inline: true },
+        { name: "Build", value: release.buildDate },
+      )
+      .setTimestamp();
+
+    await channel.send({ embeds: [embed] }).catch(() => {});
   }
 
-  const embed = new EmbedBuilder()
-    .setTitle("🚀 Discord Enterprise mis à jour")
-    .setDescription("Une nouvelle version du bot vient d’être déployée et ses commandes slash ont été synchronisées.")
-    .addFields(
-      { name: "Version", value: release.version, inline: true },
-      { name: "Commit", value: release.shortCommit, inline: true },
-      { name: "Environnement", value: release.environment, inline: true },
-      { name: "Build", value: release.buildDate },
-    )
-    .setTimestamp();
-
-  await channel.send({ embeds: [embed] });
   await writeState({
     lastAnnouncedDeployment: deploymentKey,
     announcedAt: new Date().toISOString(),
   });
 
   return true;
+}
+
+function getGuildSettings(guildId) {
+  // Placeholder pour la récupération des paramètres par serveur
+  // À implémenter dans store.js ou un fichier dédié
+  return {};
 }

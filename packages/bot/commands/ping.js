@@ -1,15 +1,30 @@
-import { SlashCommandBuilder } from "discord.js";
+import {
+  SlashCommandBuilder,
+  EmbedBuilder,
+} from "discord.js";
 
 export const data = new SlashCommandBuilder()
   .setName("ping")
-  .setDescription("Affiche la latence du bot.");
+  .setDescription("Vérifier la latence du bot et de l'API Discord.")
+  .setDMPermission(true);
 
 export async function execute(interaction) {
-  const gatewayPing = Math.round(interaction.client.ws.ping);
-  const apiLatency = Date.now() - interaction.createdTimestamp;
-
-  await interaction.reply({
-    content: `Pong! Gateway: ${gatewayPing}ms | API: ${apiLatency}ms`,
-    ephemeral: true,
+  const sent = await interaction.reply({
+    content: "Ping...",
+    fetchReply: true,
   });
+
+  const latency = sent.createdTimestamp - interaction.createdTimestamp;
+  const apiLatency = Math.round(interaction.client.ws.ping);
+
+  const embed = new EmbedBuilder()
+    .setColor(0x00ff00)
+    .setTitle("🏓 Pong !")
+    .setDescription(
+      `Latence du bot: **${latency}ms**\n` +
+      `Latence de l'API Discord: **${apiLatency}ms**`
+    )
+    .setTimestamp();
+
+  await interaction.editReply({ content: " ", embeds: [embed] });
 }

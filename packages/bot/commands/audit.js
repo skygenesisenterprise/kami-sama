@@ -1,3 +1,0 @@
-import { SlashCommandBuilder, PermissionFlagsBits } from "discord.js";import{auditLog}from"../utils/store.js";
-export const data=new SlashCommandBuilder().setName("audit").setDescription("Affiche les dernières actions du bot.").setDefaultMemberPermissions(PermissionFlagsBits.ViewAuditLog).addIntegerOption(o=>o.setName("limit").setDescription("Nombre d’entrées").setMinValue(1).setMaxValue(25));
-export async function execute(i){const n=i.options.getInteger("limit")??10,list=auditLog.filter(x=>x.guildId===i.guildId).slice(0,n);await i.reply({content:list.length?list.map(x=>`• ${x.action} — ${x.actor}${x.target?` → ${x.target}`:""}${x.reason?` — ${x.reason}`:""}`).join("\n"):"Aucune entrée d’audit en mémoire.",ephemeral:true});}

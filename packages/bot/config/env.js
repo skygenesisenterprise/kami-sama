@@ -6,19 +6,22 @@ import dotenv from "dotenv";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const botRoot = path.resolve(__dirname, "..");
-const envFile = path.join(botRoot, ".env");
+const workspaceRoot = path.resolve(botRoot, "..");
+const envFiles = [path.join(botRoot, ".env"), path.join(workspaceRoot, ".env")];
 
-if (fs.existsSync(envFile)) {
-  dotenv.config({ path: envFile, override: false });
+for (const envFile of envFiles) {
+  if (fs.existsSync(envFile)) {
+    dotenv.config({ path: envFile, override: false });
+  }
 }
 
-const requiredVars = ["DISCORD_TOKEN", "DISCORD_CLIENT_ID", "DISCORD_GUILD_ID"];
+const requiredVars = ["DISCORD_TOKEN", "DISCORD_CLIENT_ID"];
 const missingRequiredVars = requiredVars.filter((key) => !process.env[key]);
 
 export const env = {
   token: process.env.DISCORD_TOKEN ?? "",
   clientId: process.env.DISCORD_CLIENT_ID ?? "",
-  guildId: process.env.DISCORD_GUILD_ID ?? "",
+  welcomeDmEnabled: process.env.DISCORD_WELCOME_DM_ENABLED !== "false",
   commandScope: process.env.DISCORD_COMMAND_SCOPE ?? "global",
   version: process.env.APP_VERSION ?? "1.1.0",
   commitSha: process.env.GIT_COMMIT_SHA ?? process.env.COMMIT_SHA ?? "unknown",

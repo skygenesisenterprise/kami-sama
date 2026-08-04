@@ -1,194 +1,168 @@
 #!/bin/sh
 set -e
 
-# ══════════════════════════════════════════════════════════════════════════════
-# Kami-Sama Bot — Development Entrypoint
-# ══════════════════════════════════════════════════════════════════════════════
+export NODE_ENV="${NODE_ENV:-production}"
+export LOG_LEVEL="${LOG_LEVEL:-info}"
+export REDIS_ENABLED="${REDIS_ENABLED:-true}"
+export REDIS_REQUIRED="${REDIS_REQUIRED:-false}"
 
-export PATH="/usr/local/bin:/usr/bin:/bin:${PATH}"
-export NODE_ENV="${NODE_ENV:-development}"
+timestamp_utc() {
+    date -u '+%Y-%m-%dT%H:%M:%SZ'
+}
 
-# ── Logging ───────────────────────────────────────────────────────────────────
+should_log() {
+    requested_level="$1"
+
+    case "${LOG_LEVEL:-info}" in
+        debug)
+            return 0
+            ;;
+        info)
+            [ "${requested_level}" != "debug" ]
+            ;;
+        warn)
+            [ "${requested_level}" = "warn" ] || [ "${requested_level}" = "error" ]
+            ;;
+        error)
+            [ "${requested_level}" = "error" ]
+            ;;
+        *)
+            return 0
+            ;;
+    esac
+}
+
+log_debug() {
+    if should_log debug; then
+        echo "[DEBUG] $(timestamp_utc) - $1"
+    fi
+}
+
 log_info() {
-    echo "[INFO] $(date '+%Y-%m-%d %H:%M:%S') - $1"
+    if should_log info; then
+        echo "[INFO] $(timestamp_utc) - $1"
+    fi
 }
 
 log_warn() {
-    echo "[WARN] $(date '+%Y-%m-%d %H:%M:%S') - $1" >&2
+    if should_log warn; then
+        echo "[WARN] $(timestamp_utc) - $1" >&2
+    fi
 }
 
 log_error() {
-    echo "[ERROR] $(date '+%Y-%m-%d %H:%M:%S') - $1" >&2
-}
-
-# ── Configuration de la base de données ───────────────────────────────────────
-configure_database() {
-    if [ -n "${POSTGRESQL__HOST:-}" ] && [ -z "${DB_HOST:-}" ]; then
-        export DB_HOST="${POSTGRESQL__HOST}"
-    fi
-    if [ -n "${POSTGRESQL__PORT:-}" ] && [ -z "${DB_PORT:-}" ]; then
-        export DB_PORT="${POSTGRESQL__PORT}"
-    fi
-    if [ -n "${POSTGRESQL__USER:-}" ] && [ -z "${DB_USER:-}" ]; then
-        export DB_USER="${POSTGRESQL__USER}"
-    fi
-    if [ -n "${POSTGRESQL__NAME:-}" ] && [ -z "${DB_NAME:-}" ]; then
-        export DB_NAME="${POSTGRESQL__NAME}"
-    fi
-    if [ -n "${POSTGRESQL__PASSWORD:-}" ] && [ -z "${DB_PASSWORD:-}" ]; then
-        export DB_PASSWORD="${POSTGRESQL__PASSWORD}"
-    fi
-
-    if [ -n "${PG_HOST:-}" ] && [ -z "${DB_HOST:-}" ]; then
-        export DB_HOST="${PG_HOST}"
-    fi
-    if [ -n "${PG_PORT:-}" ] && [ -z "${DB_PORT:-}" ]; then
-        export DB_PORT="${PG_PORT}"
-    fi
-    if [ -n "${PG_USER:-}" ] && [ -z "${DB_USER:-}" ]; then
-        export DB_USER="${PG_USER}"
-    fi
-    if [ -n "${PG_DB:-}" ] && [ -z "${DB_NAME:-}" ]; then
-        export DB_NAME="${PG_DB}"
-    fi
-    if [ -n "${PG_PASS:-}" ] && [ -z "${DB_PASSWORD:-}" ]; then
-        export DB_PASSWORD="${PG_PASS}"
-    fi
-
-    export DB_HOST="${DB_HOST:-postgresql}"
-    export DB_PORT="${DB_PORT:-5432}"
-    export DB_USER="${DB_USER:-postgres}"
-    export DB_NAME="${DB_NAME:-postgres}"
-    export DB_PASSWORD="${DB_PASSWORD:-${POSTGRES_PASSWORD:-postgres}}"
-
-    if [ -z "${DATABASE_URL:-}" ]; then
-        export DATABASE_URL="postgresql://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/${DB_NAME}"
+    if should_log error; then
+        echo "[ERROR] $(timestamp_utc) - $1" >&2
     fi
 }
 
-# ── Configuration Redis ───────────────────────────────────────────────────────
-configure_redis() {
-    if [ -n "${REDIS_URL:-}" ]; then
-        redis_url="${REDIS_URL#redis://}"
-        redis_url="${redis_url#rediss://}"
-        redis_authority="${redis_url%%/*}"
-        redis_db="${redis_url#*/}"
-        redis_db="${redis_db%%\?*}"
+configure_redis_from_url() {
+    if [ -z "${REDIS_URL:-}" ]; then
+        return 0
+    fi
 
-        credentials=""
-        redis_host_port="${redis_authority}"
-        if [ "${redis_authority#*@}" != "${redis_authority}" ]; then
-            credentials="${redis_authority%@*}"
-            redis_host_port="${redis_authority#*@}"
-        fi
+    redis_url="${REDIS_URL#redis://}"
+    redis_url="${redis_url#rediss://}"
+    redis_authority="${redis_url%%/*}"
+    redis_db="${redis_url#*/}"
+    redis_db="${redis_db%%\?*}"
 
-        if [ -n "${credentials}" ]; then
-            case "${credentials}" in
-                *:*)
-                    export REDIS_PASSWORD="${credentials#*:}"
-                    ;;
-                *)
-                    export REDIS_PASSWORD="${credentials}"
-                    ;;
-            esac
-        fi
+    credentials=""
+    redis_host_port="${redis_authority}"
+    if [ "${redis_authority#*@}" != "${redis_authority}" ]; then
+        credentials="${redis_authority%@*}"
+        redis_host_port="${redis_authority#*@}"
+    fi
 
-        case "${redis_host_port}" in
-            \[*\]:*)
-                export REDIS_HOST="${redis_host_port%\]:*}"
-                export REDIS_HOST="${REDIS_HOST#\[}"
-                export REDIS_PORT="${redis_host_port##*\]:}"
-                ;;
+    if [ -n "${credentials}" ]; then
+        case "${credentials}" in
             *:*)
-                export REDIS_HOST="${redis_host_port%%:*}"
-                export REDIS_PORT="${redis_host_port#*:}"
+                export REDIS_PASSWORD="${credentials#*:}"
                 ;;
             *)
-                export REDIS_HOST="${redis_host_port}"
+                export REDIS_PASSWORD="${credentials}"
                 ;;
         esac
-
-        if [ -n "${redis_db}" ] && [ "${redis_db}" != "${redis_url}" ]; then
-            export REDIS_DB="${redis_db}"
-        fi
     fi
+
+    case "${redis_host_port}" in
+        \[*\]:*)
+            export REDIS_HOST="${redis_host_port%\]:*}"
+            export REDIS_HOST="${REDIS_HOST#\[}"
+            export REDIS_PORT="${redis_host_port##*\]:}"
+            ;;
+        *:*)
+            export REDIS_HOST="${redis_host_port%%:*}"
+            export REDIS_PORT="${redis_host_port#*:}"
+            ;;
+        *)
+            export REDIS_HOST="${redis_host_port}"
+            ;;
+    esac
+
+    if [ -n "${redis_db}" ] && [ "${redis_db}" != "${redis_url}" ]; then
+        export REDIS_DB="${redis_db}"
+    fi
+}
+
+configure_runtime() {
+    configure_redis_from_url
 
     export REDIS_HOST="${REDIS_HOST:-redis}"
     export REDIS_PORT="${REDIS_PORT:-6379}"
     export REDIS_DB="${REDIS_DB:-0}"
+    export REDIS_KEY_PREFIX="${REDIS_KEY_PREFIX:-astron:v1}"
     export REDIS_ENABLED="${REDIS_ENABLED:-true}"
     export REDIS_REQUIRED="${REDIS_REQUIRED:-false}"
-    export REDIS_KEY_PREFIX="${REDIS_KEY_PREFIX:-kami-bot:v1}"
+
+    case "${LOG_LEVEL}" in
+        debug|info|warn|error)
+            ;;
+        *)
+            log_warn "Invalid LOG_LEVEL '${LOG_LEVEL}'; expected debug, info, warn, or error"
+            ;;
+    esac
 }
 
-# ── Configuration du runtime ──────────────────────────────────────────────────
-configure_runtime() {
-    configure_database
-    configure_redis
-
-    if [ -n "${SECRET_KEY:-}" ] && [ -z "${SYSTEM_KEY:-}" ]; then
-        export SYSTEM_KEY="${SECRET_KEY}"
-    fi
-}
-
-# ── Prisma ────────────────────────────────────────────────────────────────────
-find_prisma_bin() {
-    for bin in ./prisma/node_modules/.bin/prisma ./node_modules/.bin/prisma; do
-        if [ -x "${bin}" ]; then
-            echo "${bin}"
-            return 0
+log_redis_configuration() {
+    if [ "${REDIS_ENABLED}" = "true" ]; then
+        log_info "Redis enabled at ${REDIS_HOST}:${REDIS_PORT}/${REDIS_DB}"
+        if [ -z "${REDIS_URL:-}" ]; then
+            log_warn "REDIS_URL is not configured; the bot will use the Redis host/port settings"
         fi
-    done
-
-    if command -v npx >/dev/null 2>&1; then
-        echo "npx prisma"
-        return 0
-    fi
-
-    return 1
-}
-
-run_prisma_generate() {
-    if [ ! -f ./prisma/schema.prisma ]; then
-        log_warn "Prisma schema not found at ./prisma/schema.prisma; skipping"
-        return 0
-    fi
-
-    prisma_bin="$(find_prisma_bin || true)"
-
-    if [ -z "${prisma_bin}" ]; then
-        log_warn "Prisma CLI is not available; skipping"
-        return 0
-    fi
-
-    log_info "Generating Prisma client..."
-    if DATABASE_URL="${DATABASE_URL}" ${prisma_bin} generate; then
-        log_info "Prisma client generated"
     else
-        log_warn "Prisma generate failed; continuing"
+        log_info "Redis disabled"
+    fi
+
+    if [ "${REDIS_ENABLED}" = "true" ] && [ "${REDIS_REQUIRED}" != "true" ]; then
+        log_warn "Redis is optional; the bot may continue without cache"
     fi
 }
 
-# ── Lancement du bot ──────────────────────────────────────────────────────────
 run_bot() {
-    log_info "Kami-Sama Bot starting (development mode)"
+    configure_runtime
+    log_redis_configuration
+    log_info "Discord bot starting"
 
-    if [ ! -f /app/index.js ]; then
-        log_error "Bot entrypoint not found at /app/index.js"
+    cd /app/bot
+
+    if [ ! -f index.js ]; then
+        log_error "Bot entrypoint not found at /app/bot/index.js"
         return 1
     fi
 
-    if [ ! -d /app/node_modules ]; then
-        log_error "Bot dependencies not found at /app/node_modules"
+    if [ ! -d node_modules ]; then
+        log_error "Bot dependencies not found at /app/bot/node_modules"
         return 1
     fi
 
-    exec node --watch /app/index.js
+    if [ "${NODE_ENV}" = "development" ]; then
+        log_info "Running in development mode (node --watch)"
+        exec node --watch index.js "$@"
+    fi
+
+    exec node index.js "$@"
 }
-
-# ── Point d'entrée ────────────────────────────────────────────────────────────
-configure_runtime
-run_prisma_generate
 
 role="${1:-bot}"
 
@@ -196,6 +170,11 @@ case "${role}" in
     bot)
         shift || true
         run_bot "$@"
+        ;;
+    worker)
+        shift || true
+        log_warn "No dedicated worker process is implemented; keeping the container alive."
+        exec tail -f /dev/null
         ;;
     *)
         exec "$@"

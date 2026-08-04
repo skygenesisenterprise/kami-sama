@@ -7,20 +7,20 @@ import {
 import { addAudit } from "../utils/store.js";
 
 export const data = new SlashCommandBuilder()
-  .setName("kick")
-  .setDescription("Expulser un membre du serveur.")
-  .setDefaultMemberPermissions(PermissionFlagsBits.KickMembers)
+  .setName("unmute")
+  .setDescription("Retirer le mute d'un membre.")
+  .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers)
   .setDMPermission(false)
   .addUserOption((option) =>
     option
       .setName("membre")
-      .setDescription("Le membre à expulser")
+      .setDescription("Le membre à unmuter")
       .setRequired(true)
   )
   .addStringOption((option) =>
     option
       .setName("raison")
-      .setDescription("La raison de l'expulsion")
+      .setDescription("La raison du unmute")
       .setRequired(false)
   );
 
@@ -36,25 +36,9 @@ export async function execute(interaction) {
   const member = interaction.options.getUser("membre", true);
   const reason = interaction.options.getString("raison") || "Aucune raison fournie";
 
-  if (!interaction.guild.members.me.permissions.has(PermissionFlagsBits.KickMembers)) {
+  if (!interaction.guild.members.me.permissions.has(PermissionFlagsBits.ModerateMembers)) {
     await interaction.reply({
-      content: "Je n'ai pas la permission d'expulser des membres.",
-      ephemeral: true,
-    });
-    return;
-  }
-
-  if (member.id === interaction.user.id) {
-    await interaction.reply({
-      content: "Vous ne pouvez pas vous expulser vous-même.",
-      ephemeral: true,
-    });
-    return;
-  }
-
-  if (member.id === interaction.guild.ownerId) {
-    await interaction.reply({
-      content: "Je ne peux pas expulser le propriétaire du serveur.",
+      content: "Je n'ai pas la permission de gérer les timeouts.",
       ephemeral: true,
     });
     return;
@@ -62,7 +46,7 @@ export async function execute(interaction) {
 
   if (member.id === interaction.client.user.id) {
     await interaction.reply({
-      content: "Je ne peux pas m'expulser moi-même.",
+      content: "Je ne peux pas me unmuter moi-même.",
       ephemeral: true,
     });
     return;
@@ -77,29 +61,29 @@ export async function execute(interaction) {
     return;
   }
 
-  if (!guildMember.kickable) {
+  if (!guildMember.isCommunicationDisabled()) {
     await interaction.reply({
-      content: "Je ne peux pas expulser ce membre (rôle trop élevé ou permissions insuffisantes).",
+      content: "Ce membre n'est pas muté.",
       ephemeral: true,
     });
     return;
   }
 
   try {
-    await guildMember.kick(`[${interaction.user.tag}] ${reason}`);
+    await guildMember.timeout(null, `[${interaction.user.tag}] ${reason}`);
 
     addAudit({
       guildId: interaction.guildId,
-      action: "kick",
+      action: "unmute",
       actor: interaction.user.tag,
       target: member.tag,
       reason: reason,
     });
 
     const embed = new EmbedBuilder()
-      .setColor(0xffa500)
-      .setTitle("👢 Membre expulsé")
-      .setDescription(`${member.tag} a été expulsé du serveur.`)
+      .setColor(0x00ff00)
+      .setTitle("🔊 Membre unmute")
+      .setDescription(`${member.tag} peut à nouveau envoyer des messages.`)
       .addFields(
         { name: "Raison", value: reason, inline: true },
         { name: "Modérateur", value: interaction.user.tag, inline: true }
@@ -108,9 +92,9 @@ export async function execute(interaction) {
 
     await interaction.reply({ embeds: [embed] });
   } catch (error) {
-    console.error("Erreur lors du kick:", error);
+    console.error("Erreur lors de l'unmute:", error);
     await interaction.reply({
-      content: "Une erreur est survenue lors de l'expulsion.",
+      content: "Une erreur est survenue lors de l'unmute.",
       ephemeral: true,
     });
   }
