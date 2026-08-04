@@ -12,14 +12,6 @@
 
 </div>
 
-**Kami-Sama** is an open-source, full-stack media platform built for the anime & manga community. It provides a complete ecosystem for content discovery, catalog management, watchlist tracking, personalized recommendations, community forums, and media streaming -- all in one unified platform.
-
-Kami-Sama is built on a modern monorepo architecture with a Go backend API, a Next.js 16 frontend (with React Native for mobile), PostgreSQL with Prisma ORM, Redis caching, MeiliSearch for full-text search, and RabbitMQ for async messaging. The platform ships with Docker-based deployment, Kubernetes manifests, a CLI tool, and a Discord bot.
-
-Kami-Sama is developed and maintained by [Sky Genesis Enterprise](https://skygenesisenterprise.com).
-
----
-
 ## Table of Contents
 
 - [What is Kami-Sama?](#what-is-kami-sama)
