@@ -20,7 +20,7 @@
     "lint": "eslint src/"
   },
   "dependencies": {
-    "chalk": "^5.4.1",
+    "chalk": "^6.0.0",
     "commander": "^13.1.0",
     "@inquirer/prompts": "^7.5.0",
     "ora": "^8.2.0",
