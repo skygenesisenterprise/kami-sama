@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/skygenesisenterprise/kami-sama/server/src/interfaces"
 	"github.com/skygenesisenterprise/kami-sama/server/src/middleware"
+	"github.com/skygenesisenterprise/kami-sama/server/src/services"
 	"github.com/skygenesisenterprise/kami-sama/server/src/utils"
 )
 
@@ -25,7 +26,7 @@ func (h *AnimeHandler) List(c *gin.Context) {
 	if page < 1 {
 		page = 1
 	}
-	if limit < 1 || limit > 100 {
+	if limit < 1 || limit > 1000 {
 		limit = 20
 	}
 
@@ -105,26 +106,49 @@ func (h *AnimeHandler) Create(c *gin.Context) {
 		return
 	}
 	var req struct {
-		Title          string   `json:"title"`
-		JapaneseTitle  string   `json:"japaneseTitle"`
-		Synopsis       string   `json:"synopsis"`
-		CoverImageUrl  string   `json:"coverImageUrl"`
-		BannerImageUrl string   `json:"bannerImageUrl"`
-		TrailerUrl     string   `json:"trailerUrl"`
-		Status         string   `json:"status"`
-		TotalEpisodes  int      `json:"totalEpisodes"`
-		ReleaseYear    int      `json:"releaseYear"`
-		Season         string   `json:"season"`
-		Source         string   `json:"source"`
-		AgeRating      string   `json:"ageRating"`
-		GenreIDs       []string `json:"genreIds"`
-		StudioIDs      []string `json:"studioIds"`
+		Title          string               `json:"title"`
+		JapaneseTitle  string               `json:"japaneseTitle"`
+		Synopsis       string               `json:"synopsis"`
+		CoverImageUrl  string               `json:"coverImageUrl"`
+		BannerImageUrl string               `json:"bannerImageUrl"`
+		TrailerUrl     string               `json:"trailerUrl"`
+		Status         string               `json:"status"`
+		Rating         float64              `json:"rating"`
+		TotalEpisodes  int                  `json:"totalEpisodes"`
+		ReleaseYear    int                  `json:"releaseYear"`
+		Season         string               `json:"season"`
+		Source         string               `json:"source"`
+		AgeRating      string               `json:"ageRating"`
+		AiringStatus   string               `json:"airingStatus"`
+		ExternalIDs    map[string]string    `json:"externalIds"`
+		Sources        []services.AnimeSourceRef `json:"sources"`
+		GenreIDs       []string             `json:"genreIds"`
+		StudioIDs      []string             `json:"studioIds"`
 	}
 	if c.ShouldBindJSON(&req) != nil {
 		utils.Error(c, utils.ErrValidationFailed)
 		return
 	}
-	item, err := h.deps.AnimeService.Create(c.Request.Context(), principal.UserID, req.Title, req.JapaneseTitle, req.Synopsis, req.CoverImageUrl, req.BannerImageUrl, req.TrailerUrl, req.Status, req.TotalEpisodes, req.ReleaseYear, req.Season, req.Source, req.AgeRating, req.GenreIDs, req.StudioIDs)
+	item, err := h.deps.AnimeService.Create(c.Request.Context(), principal.UserID, services.CreateAnimeInput{
+		Title:          req.Title,
+		JapaneseTitle:  req.JapaneseTitle,
+		Synopsis:       req.Synopsis,
+		CoverImageUrl:  req.CoverImageUrl,
+		BannerImageUrl: req.BannerImageUrl,
+		TrailerUrl:     req.TrailerUrl,
+		Status:         req.Status,
+		Rating:         req.Rating,
+		TotalEpisodes:  req.TotalEpisodes,
+		ReleaseYear:    req.ReleaseYear,
+		Season:         req.Season,
+		Source:         req.Source,
+		AgeRating:      req.AgeRating,
+		AiringStatus:   req.AiringStatus,
+		ExternalIDs:    req.ExternalIDs,
+		Sources:        req.Sources,
+		GenreIDs:       req.GenreIDs,
+		StudioIDs:      req.StudioIDs,
+	})
 	if err != nil {
 		utils.Error(c, err)
 		return
@@ -144,23 +168,26 @@ func (h *AnimeHandler) Update(c *gin.Context) {
 		return
 	}
 	var req struct {
-		Title          *string  `json:"title"`
-		JapaneseTitle  *string  `json:"japaneseTitle"`
-		Synopsis       *string  `json:"synopsis"`
-		CoverImageUrl  *string  `json:"coverImageUrl"`
-		BannerImageUrl *string  `json:"bannerImageUrl"`
-		TrailerUrl     *string  `json:"trailerUrl"`
-		Status         *string  `json:"status"`
-		Rating         *float64 `json:"rating"`
-		TotalEpisodes  *int     `json:"totalEpisodes"`
-		ReleaseYear    *int     `json:"releaseYear"`
-		Season         *string  `json:"season"`
-		Source         *string  `json:"source"`
-		AgeRating      *string  `json:"ageRating"`
-		IsFeatured     *bool    `json:"isFeatured"`
-		IsTrending     *bool    `json:"isTrending"`
-		GenreIDs       []string `json:"genreIds"`
-		StudioIDs      []string `json:"studioIds"`
+		Title          *string             `json:"title"`
+		JapaneseTitle  *string             `json:"japaneseTitle"`
+		Synopsis       *string             `json:"synopsis"`
+		CoverImageUrl  *string             `json:"coverImageUrl"`
+		BannerImageUrl *string             `json:"bannerImageUrl"`
+		TrailerUrl     *string             `json:"trailerUrl"`
+		Status         *string             `json:"status"`
+		Rating         *float64            `json:"rating"`
+		TotalEpisodes  *int                `json:"totalEpisodes"`
+		ReleaseYear    *int                `json:"releaseYear"`
+		Season         *string             `json:"season"`
+		Source         *string             `json:"source"`
+		AgeRating      *string             `json:"ageRating"`
+		IsFeatured     *bool               `json:"isFeatured"`
+		IsTrending     *bool               `json:"isTrending"`
+		AiringStatus   *string             `json:"airingStatus"`
+		ExternalIDs    *map[string]string  `json:"externalIds"`
+		Sources        *[]services.AnimeSourceRef `json:"sources"`
+		GenreIDs       []string            `json:"genreIds"`
+		StudioIDs      []string            `json:"studioIds"`
 	}
 	if c.ShouldBindJSON(&req) != nil {
 		utils.Error(c, utils.ErrValidationFailed)

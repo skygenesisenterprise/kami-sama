@@ -62,6 +62,7 @@ type Dependencies struct {
 	NotificationAdminService *services.NotificationAdminService
 	SettingsAdminService     *services.SettingsAdminService
 	AnilistService           *services.AnilistService
+	MalService               *services.MalService
 	ProfileService           *services.ProfileService
 	MfaService               *services.MfaService
 	RecommendationService    *services.RecommendationService
@@ -413,6 +414,17 @@ func SetupRoutes(router *gin.Engine, deps Dependencies) {
 			plexGroup.POST("/scrobble", plex.Scrobble)
 			plexGroup.POST("/unscrobble", plex.Unscrobble)
 			plexGroup.POST("/timeline", plex.UpdateTimeline)
+		}
+
+		mal := NewMalHandler(deps)
+		malGroup := protected.Group("/integrations/myanimelist")
+		{
+			malGroup.GET("/snapshot", mal.GetSnapshot)
+			malGroup.GET("/settings", mal.GetSettings)
+			malGroup.PUT("/settings", mal.SaveSettings)
+			malGroup.POST("/test", mal.TestConnection)
+			malGroup.GET("/search", mal.Search)
+			malGroup.POST("/actions/sync", mal.RunSync)
 		}
 
 		discover := NewDiscoverHandler(deps)

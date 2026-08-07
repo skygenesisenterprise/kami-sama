@@ -18,3 +18,4 @@ export * from "@/lib/api/oauth";
 export * from "@/lib/api/profiles";
 export * from "@/lib/api/collections";
 export * from "@/lib/api/plex";
+export * from "@/lib/api/myanimelist";

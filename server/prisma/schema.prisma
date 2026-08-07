@@ -36,9 +36,16 @@ enum LoginStatus {
 enum AnimeStatus {
   upcoming
   airing
-  completed
+  complete
   hiatus
   cancelled
+  added
+  draft
+  review
+  approved
+  scheduled
+  published
+  archived
 }
 
 enum ContentType {

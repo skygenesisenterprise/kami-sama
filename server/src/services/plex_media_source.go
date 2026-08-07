@@ -387,7 +387,7 @@ func ImportPlexItem(ctx context.Context, db *gorm.DB, client *PlexClient, rating
 			Title:         getStringFromMap(mapped, "name"),
 			JapaneseTitle: getStringFromMap(mapped, "originalTitle"),
 			Synopsis:      getStringFromMap(mapped, "overview"),
-			Status:        "released",
+			Status:        "added",
 			Rating:        getFloat64FromMap(mapped, "rating"),
 			ReleaseYear:   getIntFromMap(mapped, "year"),
 			Source:        "plex",

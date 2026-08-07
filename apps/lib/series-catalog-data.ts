@@ -1,6 +1,7 @@
 import type { StatusTone } from '@/components/dash/status-badge'
 
 export type PublicationState =
+  | 'Added'
   | 'Draft'
   | 'Review'
   | 'Approved'
@@ -88,6 +89,7 @@ export interface SeriesItem {
 }
 
 export const SERIES_STATUS_TONE: Record<PublicationState, StatusTone> = {
+  Added: 'neutral',
   Draft: 'neutral',
   Review: 'warning',
   Approved: 'info',
@@ -112,6 +114,7 @@ export const METADATA_STATUS_LABEL: Record<MetadataStatus, string> = {
 
 export const ALL_SERIES_STATUSES: Array<PublicationState | 'all'> = [
   'all',
+  'Added',
   'Draft',
   'Review',
   'Approved',
@@ -727,7 +730,9 @@ export const SERIES_MOCK: SeriesItem[] = [
 export function getSeriesStats(series: SeriesItem[]) {
   const total = series.length
   const published = series.filter((s) => s.status === 'Published').length
-  const drafts = series.filter((s) => s.status === 'Draft').length
+  const drafts = series.filter(
+    (s) => s.status === 'Draft' || s.status === 'Added',
+  ).length
   const metadataErrors = series.filter(
     (s) => s.metadataStatus === 'error' || s.metadataStatus === 'missing',
   ).length

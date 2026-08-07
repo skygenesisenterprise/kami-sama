@@ -50,4 +50,30 @@ export const anilistApi = {
       `/integrations/anilist/search${qs({ q: query, type, page, perPage })}`
     );
   },
+
+  /** Currently trending media. */
+  trending(opts: { type?: string; page?: number; perPage?: number } = {}) {
+    const { type = "ANIME", page = 1, perPage = 50 } = opts;
+    return apiRequest<AniListSearchResult>(
+      `/integrations/anilist/trending${qs({ type, page, perPage })}`
+    );
+  },
+
+  /** All-time most popular media. */
+  popular(opts: { type?: string; page?: number; perPage?: number } = {}) {
+    const { type = "ANIME", page = 1, perPage = 50 } = opts;
+    return apiRequest<AniListSearchResult>(
+      `/integrations/anilist/popular${qs({ type, page, perPage })}`
+    );
+  },
+
+  /** Media for the current (or given) season. */
+  seasonal(
+    opts: { type?: string; page?: number; perPage?: number; season?: string; year?: number } = {}
+  ) {
+    const { type = "ANIME", page = 1, perPage = 50, season, year } = opts;
+    return apiRequest<AniListSearchResult>(
+      `/integrations/anilist/seasonal${qs({ type, page, perPage, season, year })}`
+    );
+  },
 };

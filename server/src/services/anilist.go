@@ -366,7 +366,7 @@ func buildTrailerURL(trailer *struct {
 func mapAnilistStatus(status string) string {
 	switch strings.ToUpper(status) {
 	case "FINISHED":
-		return "completed"
+		return "complete"
 	case "RELEASING":
 		return "airing"
 	case "NOT_YET_RELEASED":

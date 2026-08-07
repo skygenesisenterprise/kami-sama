@@ -93,6 +93,8 @@ services:
       RABBITMQ_URL: amqp://${RABBITMQ_USER:-guest}:${RABBITMQ_PASSWORD:-guest}@rabbitmq:5672
       MEILI_HOST: http://meilisearch:7700
       MEILI_API_KEY: ${MEILI_MASTER_KEY:-dev-master-key}
+      ANILIST_ENABLED: ${ANILIST_ENABLED:-true}
+      ANILIST_CACHE_TTL: ${ANILIST_CACHE_TTL:-5m}
     volumes:
       - ./server:/app/server
       - ./go.mod:/app/go.mod

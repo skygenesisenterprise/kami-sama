@@ -2,12 +2,14 @@ package services
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"time"
 
 	"github.com/skygenesisenterprise/kami-sama/server/src/interfaces"
 	"github.com/skygenesisenterprise/kami-sama/server/src/models"
 	"github.com/skygenesisenterprise/kami-sama/server/src/utils"
+	"gorm.io/datatypes"
 )
 
 type AnimeService struct {
@@ -18,35 +20,72 @@ func NewAnimeService(repos *Repositories) *AnimeService {
 	return &AnimeService{repos: repos}
 }
 
-func (s *AnimeService) Create(ctx context.Context, userID, title, jpTitle, synopsis, coverImg, bannerImg, trailer, status string, totalEpisodes, releaseYear int, season, source, ageRating string, genreIDs, studioIDs []string) (*models.Anime, error) {
-	if strings.TrimSpace(title) == "" {
+// AnimeSourceRef is a single provider link persisted on the Anime row, mirroring
+// the front-end SeriesSource shape.
+type AnimeSourceRef struct {
+	Provider     string `json:"provider"`
+	ExternalID   string `json:"externalId"`
+	Status       string `json:"status"`
+	LastSyncedAt string `json:"lastSyncedAt"`
+}
+
+// CreateAnimeInput carries everything the Create handler accepts, including the
+// provider metadata (airing status, external IDs, source links) stored in the
+// metadata JSONB column.
+type CreateAnimeInput struct {
+	Title          string
+	JapaneseTitle  string
+	Synopsis       string
+	CoverImageUrl  string
+	BannerImageUrl string
+	TrailerUrl     string
+	Status         string
+	Rating         float64
+	TotalEpisodes  int
+	ReleaseYear    int
+	Season         string
+	Source         string
+	AgeRating      string
+	AiringStatus   string
+	ExternalIDs    map[string]string
+	Sources        []AnimeSourceRef
+	GenreIDs       []string
+	StudioIDs      []string
+}
+
+func (s *AnimeService) Create(ctx context.Context, userID string, input CreateAnimeInput) (*models.Anime, error) {
+	if strings.TrimSpace(input.Title) == "" {
 		return nil, utils.ErrValidationFailed
 	}
-	slug := generateSlug(title)
+	slug := generateSlug(input.Title)
 	now := time.Now().UTC()
 	anime := &models.Anime{
 		Common:         models.Common{ID: utils.NewID(), CreatedAt: now, UpdatedAt: now},
 		Slug:           slug,
-		Title:          strings.TrimSpace(title),
-		JapaneseTitle:  jpTitle,
-		Synopsis:       synopsis,
-		CoverImageUrl:  coverImg,
-		BannerImageUrl: bannerImg,
-		TrailerUrl:     trailer,
-		Status:         defaultString(status, "upcoming"),
-		TotalEpisodes:  totalEpisodes,
-		ReleaseYear:    releaseYear,
-		Season:         season,
-		Source:         source,
-		AgeRating:      ageRating,
+		Title:          strings.TrimSpace(input.Title),
+		JapaneseTitle:  input.JapaneseTitle,
+		Synopsis:       input.Synopsis,
+		CoverImageUrl:  input.CoverImageUrl,
+		BannerImageUrl: input.BannerImageUrl,
+		TrailerUrl:     input.TrailerUrl,
+		Status:         defaultString(input.Status, "added"),
+		Rating:         input.Rating,
+		TotalEpisodes:  input.TotalEpisodes,
+		ReleaseYear:    input.ReleaseYear,
+		Season:         input.Season,
+		Source:         input.Source,
+		AgeRating:      input.AgeRating,
+	}
+	if meta := mergeAnimeMetadata(nil, input.AiringStatus, input.ExternalIDs, input.Sources); meta != nil {
+		anime.Metadata = meta
 	}
 	if err := s.repos.Anime().Create(ctx, anime); err != nil {
 		return nil, err
 	}
-	for _, genreID := range genreIDs {
+	for _, genreID := range input.GenreIDs {
 		s.repos.db.Exec("INSERT INTO anime_genres (anime_id, genre_id) VALUES (?, ?) ON CONFLICT DO NOTHING", anime.ID, genreID)
 	}
-	for _, studioID := range studioIDs {
+	for _, studioID := range input.StudioIDs {
 		s.repos.db.Exec("INSERT INTO anime_studios (anime_id, studio_id) VALUES (?, ?) ON CONFLICT DO NOTHING", anime.ID, studioID)
 	}
 	return anime, nil
@@ -80,6 +119,9 @@ type UpdateAnimeInput struct {
 	AgeRating      *string  `json:"ageRating"`
 	IsFeatured     *bool    `json:"isFeatured"`
 	IsTrending     *bool    `json:"isTrending"`
+	AiringStatus   *string  `json:"airingStatus"`
+	ExternalIDs    *map[string]string `json:"externalIds"`
+	Sources        *[]AnimeSourceRef  `json:"sources"`
 	GenreIDs       []string `json:"genreIds"`
 	StudioIDs      []string `json:"studioIds"`
 }
@@ -134,6 +176,12 @@ func (s *AnimeService) Update(ctx context.Context, userID, id string, input Upda
 	if input.IsTrending != nil {
 		anime.IsTrending = *input.IsTrending
 	}
+	if input.AiringStatus != nil || input.ExternalIDs != nil || input.Sources != nil {
+		anime.Metadata = mergeAnimeMetadata(anime.Metadata,
+			derefString(input.AiringStatus),
+			derefMap(input.ExternalIDs),
+			derefSources(input.Sources))
+	}
 	anime.UpdatedAt = time.Now().UTC()
 	if err := s.repos.Anime().Update(ctx, anime); err != nil {
 		return nil, err
@@ -173,4 +221,52 @@ func (s *AnimeService) ListSeasons(ctx context.Context, animeID string) ([]model
 
 func (s *AnimeService) ListReviews(ctx context.Context, animeID string, limit, offset int) ([]models.Review, int64, error) {
 	return s.repos.Reviews().ListByAnime(ctx, animeID, limit, offset)
+}
+
+// mergeAnimeMetadata merges the optional provider fields into the anime
+// metadata JSONB column, preserving any existing keys (mal_id, plex sourceId,
+// genres, ...). A nil result means nothing was provided.
+func mergeAnimeMetadata(existing datatypes.JSON, airingStatus string, externalIDs map[string]string, sources []AnimeSourceRef) datatypes.JSON {
+	if airingStatus == "" && len(externalIDs) == 0 && len(sources) == 0 {
+		return nil
+	}
+	meta := map[string]any{}
+	if len(existing) > 0 {
+		_ = json.Unmarshal(existing, &meta)
+	}
+	if airingStatus != "" {
+		meta["airing_status"] = airingStatus
+	}
+	if len(externalIDs) > 0 {
+		meta["external_ids"] = externalIDs
+	}
+	if len(sources) > 0 {
+		meta["sources"] = sources
+	}
+	raw, err := json.Marshal(meta)
+	if err != nil {
+		return existing
+	}
+	return datatypes.JSON(raw)
+}
+
+func derefString(v *string) string {
+	if v == nil {
+		return ""
+	}
+	return *v
+}
+
+func derefMap(v *map[string]string) map[string]string {
+	if v == nil {
+		return nil
+	}
+	return *v
+}
+
+func derefSources(v *[]AnimeSourceRef) []AnimeSourceRef {
+	if v == nil {
+		return nil
+	}
+	return *v
 }

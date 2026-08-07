@@ -60,10 +60,20 @@ import {
   type ProviderSettings,
   type ProviderStatus,
   type JobStatus,
+  type JobType,
   type LogLevel,
   type MediaType,
   type AnimeStatus,
 } from '@/lib/mal-provider-data'
+import { myanimelistApi } from '@/lib/api/myanimelist'
+import { ApiError } from '@/lib/api/errors'
+
+function formatError(err: unknown): string {
+  if (err instanceof ApiError) {
+    return err.code ? `${err.code}: ${err.message}` : err.message
+  }
+  return err instanceof Error ? err.message : 'Unknown error'
+}
 
 function statusTone(s: ProviderStatus): StatusTone {
   return s === 'connected' ? 'success' : s === 'syncing' ? 'info' : s === 'error' ? 'destructive' : 'neutral'
@@ -122,7 +132,7 @@ function matchScoreBadge(score: number) {
 /*  Overview Tab                                                              */
 /* -------------------------------------------------------------------------- */
 
-function OverviewTab({ data }: { data: MalProviderData }) {
+function OverviewTab({ data, onTest, onSync }: { data: MalProviderData; onTest: () => void; onSync: () => void }) {
   const { provider, stats } = data
   const cachePercent = Math.round((parseFloat(stats.cacheSize) / parseFloat(stats.cacheTotalSize)) * 100)
   const apiPercent = Math.round((stats.apiCallsToday / stats.apiCallsLimit) * 100)
@@ -161,11 +171,11 @@ function OverviewTab({ data }: { data: MalProviderData }) {
             </p>
           </div>
           <div className="flex items-center gap-2">
-            <Button size="sm" variant="outline" onClick={() => toast.success('Test connection: OK')}>
+            <Button size="sm" variant="outline" onClick={onTest}>
               <Link2 className="mr-1.5 size-3.5" />
               Test Connection
             </Button>
-            <Button size="sm" onClick={() => toast.info('Sync started...')}>
+            <Button size="sm" onClick={onSync}>
               <RefreshCw className="mr-1.5 size-3.5" />
               Sync Now
             </Button>
@@ -239,7 +249,7 @@ function OverviewTab({ data }: { data: MalProviderData }) {
 /*  Categories Tab                                                            */
 /* -------------------------------------------------------------------------- */
 
-function CategoriesTab({ categories }: { categories: MediaCategory[] }) {
+function CategoriesTab({ categories, onSync }: { categories: MediaCategory[]; onSync: (type: string) => void }) {
   const [enabledMap, setEnabledMap] = React.useState<Record<string, boolean>>(
     Object.fromEntries(categories.map((c) => [c.id, c.enabled])),
   )
@@ -261,7 +271,7 @@ function CategoriesTab({ categories }: { categories: MediaCategory[] }) {
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between">
         <p className="text-sm text-muted-foreground">{categories.length} media categories &middot; {categories.filter((c) => enabledMap[c.id]).length} active</p>
-        <Button size="sm" variant="outline">
+        <Button size="sm" variant="outline" onClick={() => onSync('all')}>
           <RefreshCw className="mr-1.5 size-3.5" />
           Sync All
         </Button>
@@ -286,7 +296,7 @@ function CategoriesTab({ categories }: { categories: MediaCategory[] }) {
                     </p>
                   </div>
                 </div>
-                <Button size="icon" variant="ghost" className="size-8" onClick={() => toast.info(`Syncing ${cat.label}...`)}>
+                <Button size="icon" variant="ghost" className="size-8" onClick={() => onSync(cat.type)}>
                   <RefreshCw className="size-3.5" />
                 </Button>
               </div>
@@ -327,7 +337,7 @@ function CategoriesTab({ categories }: { categories: MediaCategory[] }) {
 /*  Imports Tab                                                               */
 /* -------------------------------------------------------------------------- */
 
-function ImportsTab({ categories }: { categories: MediaCategory[] }) {
+function ImportsTab({ categories, onSync }: { categories: MediaCategory[]; onSync: (type: string) => void }) {
   return (
     <div className="flex flex-col gap-6">
       <Card>
@@ -366,7 +376,7 @@ function ImportsTab({ categories }: { categories: MediaCategory[] }) {
                   </TableCell>
                   <TableCell className="text-muted-foreground">{timeAgo(cat.lastSyncedAt)}</TableCell>
                   <TableCell className="text-right">
-                    <Button size="sm" variant="ghost" onClick={() => toast.info(`Re-syncing ${cat.label}...`)}>
+                    <Button size="sm" variant="ghost" onClick={() => onSync(cat.type)}>
                       <RefreshCw className="mr-1 size-3" />
                       Re-sync
                     </Button>
@@ -660,7 +670,7 @@ function LogsTab({ logs }: { logs: ProviderLog[] }) {
 /*  Settings Tab                                                              */
 /* -------------------------------------------------------------------------- */
 
-function SettingsTab({ settings }: { settings: ProviderSettings }) {
+function SettingsTab({ settings, onSave }: { settings: ProviderSettings; onSave: (settings: ProviderSettings) => void }) {
   const [form, setForm] = React.useState(settings)
   function update<K extends keyof ProviderSettings>(key: K, value: ProviderSettings[K]) {
     setForm((prev) => ({ ...prev, [key]: value }))
@@ -816,7 +826,7 @@ function SettingsTab({ settings }: { settings: ProviderSettings }) {
 
       <div className="flex justify-end gap-2">
         <Button variant="outline" onClick={() => setForm(settings)}>Reset</Button>
-        <Button onClick={() => toast.success('Settings saved')}>
+        <Button onClick={() => onSave(form)}>
           <Save className="mr-1.5 size-3.5" />
           Save Settings
         </Button>
@@ -841,7 +851,77 @@ const TABS = [
 ] as const
 
 export default function MalProviderPage() {
-  const data = malProviderData
+  const [data, setData] = React.useState<MalProviderData>(malProviderData)
+  const [status, setStatus] = React.useState<'loading' | 'ready' | 'error'>('loading')
+
+  const load = React.useCallback(async () => {
+    try {
+      const snapshot = await myanimelistApi.getSnapshot()
+      setData(snapshot)
+      setStatus('ready')
+    } catch (error) {
+      setData(malProviderData)
+      setStatus('error')
+      toast.error(`Could not load MyAnimeList data: ${formatError(error)}`)
+    }
+  }, [])
+
+  React.useEffect(() => {
+    load()
+  }, [load])
+
+  const handleTest = React.useCallback(async () => {
+    try {
+      const result = await myanimelistApi.testConnection()
+      toast.success(`Connection OK — ${result.latencyMs}ms latency`)
+      load()
+    } catch (error) {
+      toast.error(`Connection failed: ${formatError(error)}`)
+    }
+  }, [load])
+
+  const handleSync = React.useCallback(
+    async (jobType: JobType = 'anime-sync') => {
+      try {
+        const job = await myanimelistApi.runSync(jobType, 'manual')
+        toast.success(`${job.type} sync started`)
+        load()
+      } catch (error) {
+        toast.error(`Sync failed: ${formatError(error)}`)
+      }
+    },
+    [load],
+  )
+
+  const handleSyncCategory = React.useCallback(
+    (type: string) => {
+      if (type === 'manga') handleSync('manga-sync')
+      else if (type === 'anime') handleSync('anime-sync')
+      else handleSync('seasonal-sync')
+    },
+    [handleSync],
+  )
+
+  const handleSave = React.useCallback(
+    async (settings: ProviderSettings) => {
+      try {
+        await myanimelistApi.saveSettings(settings)
+        toast.success('Settings saved')
+        load()
+      } catch (error) {
+        toast.error(`Failed to save settings: ${formatError(error)}`)
+      }
+    },
+    [load],
+  )
+
+  if (status === 'loading') {
+    return (
+      <main className="flex flex-1 items-center justify-center">
+        <Loader2 className="size-6 animate-spin text-muted-foreground" />
+      </main>
+    )
+  }
 
   return (
     <main className="flex flex-col gap-6">
@@ -849,11 +929,11 @@ export default function MalProviderPage() {
         title="MyAnimeList"
         description="Configure and monitor your MAL integration. Sync anime, manga, characters, and seasonal data for your library."
       >
-        <Button variant="outline" size="sm" onClick={() => toast.info('Test connection...')}>
+        <Button variant="outline" size="sm" onClick={handleTest}>
           <Link2 className="mr-1.5 size-3.5" />
           Test Connection
         </Button>
-        <Button size="sm" onClick={() => toast.info('Sync started...')}>
+        <Button size="sm" onClick={() => handleSync('anime-sync')}>
           <RefreshCw className="mr-1.5 size-3.5" />
           Sync Now
         </Button>
@@ -873,14 +953,14 @@ export default function MalProviderPage() {
           ))}
         </TabsList>
 
-        <TabsContent value="overview"><OverviewTab data={data} /></TabsContent>
-        <TabsContent value="categories"><CategoriesTab categories={data.categories} /></TabsContent>
-        <TabsContent value="imports"><ImportsTab categories={data.categories} /></TabsContent>
+        <TabsContent value="overview"><OverviewTab data={data} onTest={handleTest} onSync={() => handleSync('anime-sync')} /></TabsContent>
+        <TabsContent value="categories"><CategoriesTab categories={data.categories} onSync={handleSyncCategory} /></TabsContent>
+        <TabsContent value="imports"><ImportsTab categories={data.categories} onSync={handleSyncCategory} /></TabsContent>
         <TabsContent value="jobs"><JobsTab jobs={data.jobs} /></TabsContent>
         <TabsContent value="mappings"><MappingsTab mappings={data.mappings} /></TabsContent>
         <TabsContent value="capabilities"><CapabilitiesTab capabilities={data.capabilities} /></TabsContent>
         <TabsContent value="logs"><LogsTab logs={data.logs} /></TabsContent>
-        <TabsContent value="settings"><SettingsTab settings={data.settings} /></TabsContent>
+        <TabsContent value="settings"><SettingsTab settings={data.settings} onSave={handleSave} /></TabsContent>
       </Tabs>
     </main>
   )

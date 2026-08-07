@@ -187,6 +187,7 @@ func main() {
 	settingsAdminService := services.NewSettingsAdminService(db.Gorm(), repos)
 	profileService := services.NewProfileService(db, repos)
 	anilistService := services.NewAnilistService(cfg.Anilist, repos, logger)
+	malService := services.NewMalService(cfg.MyAnimeList, db.Gorm(), logger)
 	mfaService := services.NewMfaService(cfg.Auth, db, repos)
 	recommendationService := services.NewRecommendationService(db.Gorm())
 
@@ -247,6 +248,7 @@ func main() {
 		NotificationAdminService: notificationAdminService,
 		SettingsAdminService:     settingsAdminService,
 		AnilistService:           anilistService,
+		MalService:               malService,
 		ProfileService:           profileService,
 		MfaService:               mfaService,
 		RecommendationService:    recommendationService,

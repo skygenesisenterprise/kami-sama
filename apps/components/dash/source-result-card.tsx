@@ -11,6 +11,7 @@ import { Button } from '@/components/ui/button'
  */
 export interface SourceResultItem {
   id: string
+  source?: string
   title: string
   subtitle?: string
   type?: string
@@ -116,6 +117,11 @@ export function SourceResultCard({
       <div className={item.imageUrl ? 'flex flex-col gap-2 p-3 pt-8' : 'flex flex-col gap-2 p-3'}>
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
+            {item.source ? (
+              <Badge variant="outline" className="mb-1 bg-background/60 text-[10px] font-medium">
+                {item.source}
+              </Badge>
+            ) : null}
             {item.subtitle ? (
               <p className="truncate font-mono text-xs text-muted-foreground">{item.subtitle}</p>
             ) : null}

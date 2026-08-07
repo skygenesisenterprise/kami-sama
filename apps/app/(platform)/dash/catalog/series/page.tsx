@@ -91,7 +91,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { PageHeader } from '@/components/dash/page-header'
 import { PlexImportDialog } from '@/components/dash/plex-import-dialog'
-import { SourceResultCard, type SourceResultItem } from '@/components/dash/source-result-card'
+import type { SourceResultItem } from '@/components/dash/source-result-card'
 import { StatusBadge } from '@/components/dash/status-badge'
 import {
   SERIES_STATUS_TONE,
@@ -106,8 +106,16 @@ import {
   type DataSource,
   type PublicationState,
 } from '@/lib/series-catalog-data'
-import { anilistApi } from '@/lib/api/anilist'
+import { anilistApi, type AniListSearchResult } from '@/lib/api/anilist'
 import { ApiError } from '@/lib/api/errors'
+import {
+  animeApi,
+  apiAnimeToSeriesItem,
+  seriesItemToAnimeCreatePayload,
+  seriesItemToAnimeUpdatePayload,
+  type ApiAnime,
+} from '@/lib/api/anime'
+import { myanimelistApi } from '@/lib/api/myanimelist'
 import { plexApi, type PlexImportResult } from '@/lib/api/plex'
 import { anilistItemToSourceItem, plexItemToSourceItem } from '@/lib/source-search'
 
@@ -149,10 +157,43 @@ export default function SeriesCatalogPage() {
     rating: true,
     episodes: true,
     metadata: true,
+    sources: true,
     updated: true,
   })
   const [items, setItems] = React.useState<SeriesItem[]>([])
+  const [loading, setLoading] = React.useState(true)
+  const [loadError, setLoadError] = React.useState<string | null>(null)
   const [importOpen, setImportOpen] = React.useState(false)
+  const [enriching, setEnriching] = React.useState(false)
+
+  const fetchCatalog = React.useCallback(async () => {
+    try {
+      const all: ApiAnime[] = []
+      const pageSize = 1000
+      let page = 1
+      let total = 0
+      do {
+        const res = await animeApi.list({
+          page,
+          limit: pageSize,
+          sort: 'created_at',
+        })
+        all.push(...res.items)
+        total = res.total
+        page += 1
+      } while (all.length < total && page <= 1000)
+      setItems(all.map(apiAnimeToSeriesItem))
+      setLoadError(null)
+    } catch (err) {
+      setLoadError(formatApiError(err))
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  React.useEffect(() => {
+    void fetchCatalog()
+  }, [fetchCatalog])
 
   const stats = React.useMemo(() => getSeriesStats(items), [items])
 
@@ -218,63 +259,173 @@ export default function SeriesCatalogPage() {
     })
   }
 
-  const bulkAction = (action: string) => {
-    toast.success(`${action} applied to ${selected.size} series`, {
-      description: 'Changes will sync to the API when connected.',
-    })
+  const bulkAction = async (action: 'Publish' | 'Archive' | 'Delete') => {
+    const ids = [...selected]
     setSelected(new Set())
-  }
-
-  const handleImported = (result: PlexImportResult) => {
-    const item = result.item
-    const ratingKey = item.sourceId ?? item.id ?? item.ratingKey ?? `plex-${result.sourceId}`
-    const sourceId = result.sourceId || ratingKey
-    const title = result.title || item.name || item.title || 'Untitled'
-    const importedItem: SeriesItem = {
-      id: `plex-${ratingKey}`,
-      slug: title
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, '-')
-        .replace(/(^-|-$)/g, ''),
-      title,
-      titleOriginal: item.originalTitle || title,
-      synopsis: item.overview ?? '',
-      type: 'animation',
-      status: 'Draft',
-      airingStatus: 'completed',
-      genres: item.genres ?? [],
-      studios: [],
-      tags: [],
-      year: item.year ?? new Date().getFullYear(),
-      rating: typeof item.rating === 'number' ? item.rating : 0,
-      seasonCount: 0,
-      totalEpisodes: 0,
-      ageRating: 'Unknown',
-      assets: {
-        poster: item.imageUrl ?? '',
-        banner: item.artUrl ?? '',
-        backdrop: item.artUrl ?? '',
-      },
-      externalIds: { plex: sourceId },
-      sources: [
-        {
-          provider: 'Plex',
-          externalId: sourceId,
-          lastSyncedAt: new Date().toISOString(),
-          status: 'active',
-        },
-      ],
-      seasons: [],
-      relations: [],
-      metadataStatus: 'synced',
-      updatedAt: 'just now',
-      updatedBy: 'Plex import',
+    if (ids.length === 0) return
+    const statusMap: Record<string, string> = { Publish: 'published', Archive: 'archived' }
+    const results = await Promise.allSettled(
+      ids.map((id) =>
+        action === 'Delete'
+          ? animeApi.remove(id)
+          : animeApi.update(id, { status: statusMap[action] })
+      )
+    )
+    const failed = results.filter((r) => r.status === 'rejected').length
+    await fetchCatalog()
+    if (failed === 0) {
+      toast.success(`${action} applied to ${ids.length} series`)
+    } else {
+      toast.error(`${action} failed for ${failed} series`, {
+        description: 'Some series could not be updated.',
+      })
     }
-    setItems((prev) => [importedItem, ...prev.filter((s) => s.id !== importedItem.id)])
   }
 
-  const handleCreatedFromDialog = (item: SeriesItem) => {
-    setItems((prev) => [item, ...prev.filter((s) => s.id !== item.id)])
+  const removeSeries = async (item: SeriesItem) => {
+    try {
+      await animeApi.remove(item.id)
+      setItems((prev) => prev.filter((s) => s.id !== item.id))
+      toast.success(`"${item.title}" deleted`)
+    } catch (err) {
+      toast.error(formatApiError(err))
+    }
+  }
+
+  const archiveSeries = async (item: SeriesItem) => {
+    try {
+      await animeApi.update(item.id, { status: 'archived' })
+      setItems((prev) =>
+        prev.map((s) => (s.id === item.id ? { ...s, status: 'Archived' } : s))
+      )
+      toast.success(`"${item.title}" archived`)
+    } catch (err) {
+      toast.error(formatApiError(err))
+    }
+  }
+
+  const handleImported = (_result: PlexImportResult) => {
+    void fetchCatalog()
+  }
+
+  const handleSave = async (updated: SeriesItem): Promise<void> => {
+    await animeApi.update(updated.id, seriesItemToAnimeUpdatePayload(updated))
+    setItems((prev) => prev.map((s) => (s.id === updated.id ? updated : s)))
+    toast.success('Changes saved', {
+      description: `${updated.title} was updated.`,
+    })
+  }
+
+  const handleCreatedFromDialog = async (item: SeriesItem): Promise<void> => {
+    if (item.externalIds.plex) {
+      await plexApi.importItem(item.externalIds.plex)
+      await fetchCatalog()
+      return
+    }
+    const created = await animeApi.create(seriesItemToAnimeCreatePayload(item))
+    setItems((prev) => [
+      apiAnimeToSeriesItem(created),
+      ...prev.filter((s) => s.id !== created.id),
+    ])
+  }
+
+  const enrichCatalog = async () => {
+    if (enriching) return
+    setEnriching(true)
+    const outcomes: string[] = []
+    const existingAnilist = new Set(
+      items
+        .map((s) => s.externalIds.anilist)
+        .filter((v): v is string => Boolean(v))
+    )
+    const existingTitles = new Set(items.map((s) => s.title.toLowerCase()))
+
+    let malSynced = false
+    try {
+      await myanimelistApi.runSync('seasonal-sync', 'manual')
+      malSynced = true
+      outcomes.push('MAL seasonal synced')
+    } catch (err) {
+      outcomes.push(
+        isProviderDisabled(err)
+          ? 'MAL disabled'
+          : `MAL: ${formatApiError(err)}`
+      )
+    }
+
+    let created = 0
+    let failed = 0
+    let imports = 0
+    try {
+      const lists = await Promise.allSettled([
+        anilistApi.trending({ perPage: 50 }),
+        anilistApi.popular({ perPage: 50 }),
+        anilistApi.seasonal({ perPage: 50 }),
+      ])
+      const fulfilled = lists.filter(
+        (l): l is PromiseFulfilledResult<AniListSearchResult> =>
+          l.status === 'fulfilled'
+      )
+      if (fulfilled.length === 0) {
+        const firstError = lists.find(
+          (l): l is PromiseRejectedResult => l.status === 'rejected'
+        )
+        outcomes.push(
+          isProviderDisabled(firstError?.reason)
+            ? 'AniList disabled'
+            : `AniList: ${formatApiError(firstError?.reason)}`
+        )
+      } else {
+        const seen = new Set<number>()
+        const candidates: SeriesItem[] = []
+        for (const res of fulfilled) {
+          for (const raw of res.value.items) {
+            if (seen.has(raw.anilistId)) continue
+            seen.add(raw.anilistId)
+            const id = String(raw.anilistId)
+            if (existingAnilist.has(id)) continue
+            if (existingTitles.has(raw.title.toLowerCase())) continue
+            const src = anilistItemToSourceItem(raw)
+            candidates.push(
+              buildImportedSeriesItem({ ...src, source: 'AniList' })
+            )
+          }
+        }
+        imports = candidates.length
+        for (const batch of chunk(candidates, 5)) {
+          const results = await Promise.allSettled(
+            batch.map((item) =>
+              animeApi.create(seriesItemToAnimeCreatePayload(item))
+            )
+          )
+          for (const r of results) {
+            if (r.status === 'fulfilled') created++
+            else failed++
+          }
+        }
+        outcomes.push(
+          `${created} added${imports - created - failed > 0 ? `, ${imports - created - failed} skipped` : ''}${failed > 0 ? `, ${failed} failed` : ''}`
+        )
+      }
+    } catch (err) {
+      outcomes.push(
+        isProviderDisabled(err)
+          ? 'AniList disabled'
+          : `AniList: ${formatApiError(err)}`
+      )
+    }
+
+    await fetchCatalog()
+    setEnriching(false)
+    if (malSynced || created > 0) {
+      toast.success('Catalog enriched', {
+        description: outcomes.join(' · '),
+      })
+    } else {
+      toast.error('Enrichment could not fetch any source', {
+        description: outcomes.join(' · '),
+      })
+    }
   }
 
   return (
@@ -283,13 +434,18 @@ export default function SeriesCatalogPage() {
         title="Series Catalog"
         description="Manage your full series catalog. Edit metadata, sync sources, and control publication state."
       >
-        <Button variant="outline" size="sm">
-          <Eye data-icon="inline-start" />
-          Preview site
-        </Button>
-        <Button variant="outline" size="sm" onClick={() => setImportOpen(true)}>
-          <Tv data-icon="inline-start" />
-          Import from Plex
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => void enrichCatalog()}
+          disabled={enriching}
+        >
+          {enriching ? (
+            <Loader2 className="size-4 animate-spin" />
+          ) : (
+            <RefreshCw data-icon="inline-start" />
+          )}
+          {enriching ? 'Enriching…' : 'Enrich'}
         </Button>
         <Button size="sm" onClick={() => setCreating(true)}>
           <Plus data-icon="inline-start" />
@@ -484,7 +640,16 @@ export default function SeriesCatalogPage() {
         </div>
       )}
 
-      {filtered.length === 0 ? (
+      {loading ? (
+        <div className="flex items-center justify-center gap-2 rounded-lg border bg-card py-10 text-sm text-muted-foreground">
+          <Loader2 className="size-4 animate-spin" />
+          Loading catalog…
+        </div>
+      ) : loadError ? (
+        <div className="rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+          Failed to load catalog: {loadError}
+        </div>
+      ) : filtered.length === 0 ? (
         <Empty className="border">
           <EmptyHeader>
             <EmptyMedia variant="icon">
@@ -559,6 +724,9 @@ export default function SeriesCatalogPage() {
                   <TableHead className="hidden xl:table-cell">
                     Metadata
                   </TableHead>
+                )}
+                {columns.sources && (
+                  <TableHead className="hidden md:table-cell">Sources</TableHead>
                 )}
                 {columns.updated && (
                   <TableHead className="hidden lg:table-cell">
@@ -655,6 +823,25 @@ export default function SeriesCatalogPage() {
                       </StatusBadge>
                     </TableCell>
                   )}
+                  {columns.sources && (
+                    <TableCell className="hidden md:table-cell">
+                      <div className="flex flex-wrap gap-1">
+                        {item.sources.length === 0 ? (
+                          <span className="text-xs text-muted-foreground">—</span>
+                        ) : (
+                          item.sources.map((src) => (
+                            <Badge
+                              key={`${src.provider}-${src.externalId}`}
+                              variant="outline"
+                              className="text-xs font-normal"
+                            >
+                              {src.provider}
+                            </Badge>
+                          ))
+                        )}
+                      </div>
+                    </TableCell>
+                  )}
                   {columns.updated && (
                     <TableCell className="hidden text-muted-foreground lg:table-cell">
                       {item.updatedAt}
@@ -692,12 +879,15 @@ export default function SeriesCatalogPage() {
                         <DropdownMenuSeparator />
                         <DropdownMenuGroup>
                           <DropdownMenuItem
-                            onClick={() => bulkAction('Archive')}
+                            onClick={() => archiveSeries(item)}
                           >
                             <Archive />
                             Archive
                           </DropdownMenuItem>
-                          <DropdownMenuItem variant="destructive">
+                          <DropdownMenuItem
+                            variant="destructive"
+                            onClick={() => removeSeries(item)}
+                          >
                             <X />
                             Delete
                           </DropdownMenuItem>
@@ -772,6 +962,7 @@ export default function SeriesCatalogPage() {
       <SeriesDetailSheet
         item={inspecting}
         onClose={() => setInspecting(null)}
+        onSave={handleSave}
       />
 
       <NewSeriesDialog
@@ -833,10 +1024,61 @@ function cn(...classes: (string | boolean | undefined)[]) {
 function SeriesDetailSheet({
   item,
   onClose,
+  onSave,
 }: {
   item: SeriesItem | null
   onClose: () => void
+  onSave: (item: SeriesItem) => Promise<void>
 }) {
+  const [title, setTitle] = React.useState('')
+  const [titleOriginal, setTitleOriginal] = React.useState('')
+  const [synopsis, setSynopsis] = React.useState('')
+  const [type, setType] = React.useState<string>('anime')
+  const [year, setYear] = React.useState(0)
+  const [ageRating, setAgeRating] = React.useState('')
+  const [status, setStatus] = React.useState<string>('Added')
+  const [airingStatus, setAiringStatus] = React.useState<string>('upcoming')
+  const [saving, setSaving] = React.useState(false)
+  const [error, setError] = React.useState<string | null>(null)
+
+  React.useEffect(() => {
+    if (item) {
+      setTitle(item.title)
+      setTitleOriginal(item.titleOriginal)
+      setSynopsis(item.synopsis)
+      setType(item.type)
+      setYear(item.year)
+      setAgeRating(item.ageRating)
+      setStatus(item.status)
+      setAiringStatus(item.airingStatus)
+      setError(null)
+      setSaving(false)
+    }
+  }, [item])
+
+  const save = async () => {
+    if (!item || saving) return
+    setSaving(true)
+    setError(null)
+    try {
+      await onSave({
+        ...item,
+        title,
+        titleOriginal,
+        synopsis,
+        type: type as SeriesItem['type'],
+        year,
+        ageRating,
+        status: status as PublicationState,
+        airingStatus: airingStatus as SeriesItem['airingStatus'],
+      })
+      onClose()
+    } catch (err) {
+      setError(formatApiError(err))
+      setSaving(false)
+    }
+  }
+
   return (
     <Sheet open={item !== null} onOpenChange={(open) => !open && onClose()}>
       <SheetContent side="right" className="flex w-full flex-col gap-0 sm:max-w-xl">
@@ -872,21 +1114,28 @@ function SeriesDetailSheet({
                   <div className="grid grid-cols-2 gap-4">
                     <Field>
                       <FieldLabel>Title</FieldLabel>
-                      <Input defaultValue={item.title} />
+                      <Input value={title} onChange={(e) => setTitle(e.target.value)} />
                     </Field>
                     <Field>
                       <FieldLabel>Original title</FieldLabel>
-                      <Input defaultValue={item.titleOriginal} />
+                      <Input
+                        value={titleOriginal}
+                        onChange={(e) => setTitleOriginal(e.target.value)}
+                      />
                     </Field>
                   </div>
                   <Field>
                     <FieldLabel>Synopsis</FieldLabel>
-                    <Textarea rows={4} defaultValue={item.synopsis} />
+                    <Textarea
+                      rows={4}
+                      value={synopsis}
+                      onChange={(e) => setSynopsis(e.target.value)}
+                    />
                   </Field>
                   <div className="grid grid-cols-3 gap-4">
                     <Field>
                       <FieldLabel>Type</FieldLabel>
-                      <Select defaultValue={item.type}>
+                      <Select value={type} onValueChange={setType}>
                         <SelectTrigger className="w-full">
                           <SelectValue />
                         </SelectTrigger>
@@ -900,21 +1149,29 @@ function SeriesDetailSheet({
                     </Field>
                     <Field>
                       <FieldLabel>Year</FieldLabel>
-                      <Input type="number" defaultValue={item.year} />
+                      <Input
+                        type="number"
+                        value={year}
+                        onChange={(e) => setYear(Number(e.target.value))}
+                      />
                     </Field>
                     <Field>
                       <FieldLabel>Age rating</FieldLabel>
-                      <Input defaultValue={item.ageRating} />
+                      <Input
+                        value={ageRating}
+                        onChange={(e) => setAgeRating(e.target.value)}
+                      />
                     </Field>
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <Field>
                       <FieldLabel>Status</FieldLabel>
-                      <Select defaultValue={item.status}>
+                      <Select value={status} onValueChange={setStatus}>
                         <SelectTrigger className="w-full">
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
+                          <SelectItem value="Added">Added</SelectItem>
                           <SelectItem value="Draft">Draft</SelectItem>
                           <SelectItem value="Review">Review</SelectItem>
                           <SelectItem value="Approved">Approved</SelectItem>
@@ -926,7 +1183,7 @@ function SeriesDetailSheet({
                     </Field>
                     <Field>
                       <FieldLabel>Airing status</FieldLabel>
-                      <Select defaultValue={item.airingStatus}>
+                      <Select value={airingStatus} onValueChange={setAiringStatus}>
                         <SelectTrigger className="w-full">
                           <SelectValue />
                         </SelectTrigger>
@@ -1178,16 +1435,18 @@ function SeriesDetailSheet({
                 </FieldGroup>
               </TabsContent>
             </Tabs>
-            <SheetFooter className="flex-row border-t">
+            <SheetFooter className="flex-row items-center border-t">
+              {error ? (
+                <span className="min-w-0 flex-1 truncate text-xs text-destructive">
+                  {error}
+                </span>
+              ) : null}
               <Button
                 className="flex-1"
-                onClick={() => {
-                  toast.success('Changes saved', {
-                    description: `${item.title} was updated.`,
-                  })
-                  onClose()
-                }}
+                disabled={saving}
+                onClick={save}
               >
+                {saving ? <Loader2 className="size-4 animate-spin" /> : null}
                 Save changes
               </Button>
               <Button variant="outline" onClick={onClose}>
@@ -1208,11 +1467,75 @@ function formatApiError(err: unknown): string {
   return err instanceof Error ? err.message : 'Unknown error'
 }
 
+function isProviderDisabled(err: unknown): boolean {
+  return (
+    err instanceof ApiError &&
+    (err.code === 'ANILIST_DISABLED' || err.code === 'MYANIMELIST_DISABLED')
+  )
+}
+
 function slugify(value: string): string {
   return value
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/(^-|-$)/g, '')
+}
+
+function chunk<T>(arr: T[], size: number): T[][] {
+  const out: T[][] = []
+  for (let i = 0; i < arr.length; i += size) {
+    out.push(arr.slice(i, i + size))
+  }
+  return out
+}
+
+function buildImportedSeriesItem(item: SourceResultItem): SeriesItem {
+  const source = item.source ?? 'AniList'
+  return {
+    id: `${source.toLowerCase()}-${item.id}`,
+    slug: slugify(item.title),
+    title: item.title,
+    titleOriginal: item.subtitle || item.title,
+    synopsis: item.overview ?? '',
+    type:
+      source === 'AniList' || source === 'MyAnimeList'
+        ? 'anime'
+        : 'animation',
+    status: 'Added' as PublicationState,
+    airingStatus: 'upcoming',
+    genres: item.genres ?? [],
+    studios: [],
+    tags: [],
+    year: item.year ?? new Date().getFullYear(),
+    rating: item.rating ?? 0,
+    seasonCount: 0,
+    totalEpisodes: 0,
+    ageRating: 'Unknown',
+    assets: {
+      poster: item.imageUrl ?? '',
+      banner: item.artUrl ?? '',
+      backdrop: item.artUrl ?? '',
+    },
+    externalIds:
+      source === 'Plex'
+        ? { plex: item.id }
+        : source === 'MyAnimeList'
+          ? { myAnimeList: item.id }
+          : { anilist: item.id },
+    sources: [
+      {
+        provider: source as DataSource,
+        externalId: item.id,
+        lastSyncedAt: new Date().toISOString(),
+        status: 'active',
+      },
+    ],
+    seasons: [],
+    relations: [],
+    metadataStatus: 'synced',
+    updatedAt: 'just now',
+    updatedBy: 'New series',
+  }
 }
 
 function NewSeriesDialog({
@@ -1222,7 +1545,7 @@ function NewSeriesDialog({
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
-  onCreated: (item: SeriesItem) => void
+  onCreated: (item: SeriesItem) => Promise<void>
 }) {
   const [title, setTitle] = React.useState('')
   const [titleOriginal, setTitleOriginal] = React.useState('')
@@ -1240,14 +1563,12 @@ function NewSeriesDialog({
   const [tags, setTags] = React.useState<string[]>([])
   const [tagInput, setTagInput] = React.useState('')
 
-  const [searchSource, setSearchSource] = React.useState<string>('Plex')
   const [sourceQuery, setSourceQuery] = React.useState('')
   const [sourceResults, setSourceResults] = React.useState<SourceResultItem[]>([])
   const [sourceSearching, setSourceSearching] = React.useState(false)
   const [sourceError, setSourceError] = React.useState<string | null>(null)
-  const [sourceUnavailable, setSourceUnavailable] = React.useState<string | null>(null)
-  const [selectedSourceId, setSelectedSourceId] = React.useState<string | null>(null)
-  const [externalId, setExternalId] = React.useState<string | null>(null)
+  const [unavailableSources, setUnavailableSources] = React.useState<string[]>([])
+  const [selectedKeys, setSelectedKeys] = React.useState<Set<string>>(new Set())
 
   const addGenre = () => {
     const trimmed = genreInput.trim()
@@ -1284,29 +1605,73 @@ function NewSeriesDialog({
     const timeout = setTimeout(async () => {
       setSourceSearching(true)
       setSourceError(null)
-      setSourceUnavailable(null)
+      setUnavailableSources([])
       try {
-        if (searchSource === 'Plex') {
-          const res = await plexApi.search(q, { type: 'show', limit: 8 })
+        const [plexRes, anilistRes, malRes] = await Promise.allSettled([
+          plexApi.search(q, { type: 'show', limit: 8 }),
+          anilistApi.search(q, { perPage: 8 }),
+          myanimelistApi.search(q, { type: 'anime', limit: 8 }),
+        ])
+        if (cancelled) return
+        const results: SourceResultItem[] = []
+        const unavailable: string[] = []
+        let error: string | null = null
+
+        if (plexRes.status === 'fulfilled') {
           const wanted = ['Series', 'show']
-          const items = res.items
-            .filter((i) => wanted.includes(i.type ?? ''))
-            .map(plexItemToSourceItem)
-          if (!cancelled) setSourceResults(items)
+          results.push(
+            ...plexRes.value.items
+              .filter((i) => wanted.includes(i.type ?? ''))
+              .map((i) => ({ ...plexItemToSourceItem(i), source: 'Plex' }))
+          )
         } else {
-          const res = await anilistApi.search(q, { perPage: 8 })
-          if (!cancelled) setSourceResults(res.items.map(anilistItemToSourceItem))
+          const err = plexRes.reason
+          if (err instanceof ApiError && err.code === 'PLEX_DISABLED') {
+            unavailable.push('Plex')
+          } else {
+            error = `Plex: ${formatApiError(err)}`
+          }
         }
+
+        if (anilistRes.status === 'fulfilled') {
+          results.push(
+            ...anilistRes.value.items.map((i) => ({
+              ...anilistItemToSourceItem(i),
+              source: 'AniList',
+            }))
+          )
+        } else {
+          const err = anilistRes.reason
+          if (err instanceof ApiError && err.code === 'ANILIST_DISABLED') {
+            unavailable.push('AniList')
+          } else {
+            error = error
+              ? `${error} · AniList: ${formatApiError(err)}`
+              : `AniList: ${formatApiError(err)}`
+          }
+        }
+
+        if (malRes.status === 'fulfilled') {
+          results.push(
+            ...malRes.value.items.map((i) => ({ ...i, source: 'MyAnimeList' }))
+          )
+        } else {
+          const err = malRes.reason
+          if (err instanceof ApiError && err.code === 'MYANIMELIST_DISABLED') {
+            unavailable.push('MyAnimeList')
+          } else {
+            error = error
+              ? `${error} · MyAnimeList: ${formatApiError(err)}`
+              : `MyAnimeList: ${formatApiError(err)}`
+          }
+        }
+
+        setSourceResults(results)
+        setUnavailableSources(unavailable)
+        setSourceError(error)
       } catch (err) {
         if (cancelled) return
-        if (
-          err instanceof ApiError &&
-          (err.code === 'PLEX_DISABLED' || err.code === 'ANILIST_DISABLED')
-        ) {
-          setSourceUnavailable(err.message)
-        } else {
-          setSourceError(formatApiError(err))
-        }
+        setSourceError(formatApiError(err))
         setSourceResults([])
       } finally {
         if (!cancelled) setSourceSearching(false)
@@ -1316,18 +1681,67 @@ function NewSeriesDialog({
       cancelled = true
       clearTimeout(timeout)
     }
-  }, [open, sourceQuery, searchSource])
+  }, [open, sourceQuery])
 
-  const selectResult = (item: SourceResultItem) => {
-    setSelectedSourceId(item.id)
-    setExternalId(item.id)
-    setProvider(searchSource)
-    setTitle(item.title)
-    setTitleOriginal(item.subtitle ?? '')
-    setSynopsis(item.overview ?? '')
-    if (item.year) setYear(item.year)
-    if (item.genres && item.genres.length > 0) setGenres(item.genres)
-    if (searchSource === 'AniList') setType('anime')
+  const toggleSelect = (item: SourceResultItem) => {
+    const key = `${item.source ?? 'AniList'}-${item.id}`
+    setSelectedKeys((prev) => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }
+
+  const selectedItems = React.useMemo(
+    () => sourceResults.filter((r) => selectedKeys.has(`${r.source}-${r.id}`)),
+    [sourceResults, selectedKeys],
+  )
+
+  const buildItemFromResult = (item: SourceResultItem): SeriesItem => {
+    const source = item.source ?? 'AniList'
+    return {
+      id: `${source.toLowerCase()}-${item.id}`,
+      slug: slugify(item.title),
+      title: item.title,
+      titleOriginal: item.subtitle || item.title,
+      synopsis: item.overview ?? '',
+      type: source === 'AniList' || source === 'MyAnimeList' ? 'anime' : 'animation',
+      status: 'Draft' as PublicationState,
+      airingStatus: 'upcoming',
+      genres: item.genres ?? [],
+      studios: [],
+      tags: [],
+      year: item.year ?? new Date().getFullYear(),
+      rating: item.rating ?? 0,
+      seasonCount: 0,
+      totalEpisodes: 0,
+      ageRating: 'Unknown',
+      assets: {
+        poster: item.imageUrl ?? '',
+        banner: item.artUrl ?? '',
+        backdrop: item.artUrl ?? '',
+      },
+      externalIds:
+        source === 'Plex'
+          ? { plex: item.id }
+          : source === 'MyAnimeList'
+            ? { myAnimeList: item.id }
+            : { anilist: item.id },
+      sources: [
+        {
+          provider: source as DataSource,
+          externalId: item.id,
+          lastSyncedAt: new Date().toISOString(),
+          status: 'active',
+        },
+      ],
+      seasons: [],
+      relations: [],
+      metadataStatus: 'synced',
+      updatedAt: 'just now',
+      updatedBy: 'New series',
+    }
   }
 
   const reset = () => {
@@ -1350,71 +1764,72 @@ function NewSeriesDialog({
     setSourceResults([])
     setSourceSearching(false)
     setSourceError(null)
-    setSourceUnavailable(null)
-    setSelectedSourceId(null)
-    setExternalId(null)
+    setUnavailableSources([])
+    setSelectedKeys(new Set())
   }
 
   const handleCreate = async () => {
-    if (selectedSourceId && searchSource === 'Plex') {
-      try {
-        await plexApi.importItem(selectedSourceId)
-      } catch (err) {
-        toast.error(`Could not reach Plex: ${formatApiError(err)}`)
-        return
+    if (selectedItems.length > 0) {
+      const failures: string[] = []
+      for (const item of selectedItems) {
+        try {
+          await onCreated(buildItemFromResult(item))
+        } catch {
+          failures.push(item.title)
+        }
       }
+      reset()
+      onOpenChange(false)
+      if (failures.length === 0) {
+        toast.success('Series added', {
+          description: `${selectedItems.length} series have been added to the catalog.`,
+        })
+      } else {
+        toast.error('Some series could not be added', {
+          description: `These could not be added: ${failures.join(', ')}`,
+        })
+      }
+      return
     }
-    const selected = sourceResults.find((r) => r.id === selectedSourceId) ?? null
-    const source = searchSource
+
     const item: SeriesItem = {
-      id: selected ? `${source.toLowerCase()}-${selected.id}` : `manual-${Date.now()}`,
-      slug: slugify(selected?.title ?? title),
-      title: selected?.title ?? title,
-      titleOriginal: selected?.subtitle || titleOriginal || title,
-      synopsis: selected?.overview ?? synopsis,
-      type: (source === 'AniList' ? 'anime' : type) as SeriesType,
+      id: `manual-${Date.now()}`,
+      slug: slugify(title),
+      title,
+      titleOriginal: titleOriginal || title,
+      synopsis,
+      type: type as SeriesType,
       status: status as PublicationState,
       airingStatus: airingStatus as SeriesItem['airingStatus'],
-      genres: selected?.genres && selected.genres.length > 0 ? selected.genres : genres,
+      genres,
       studios,
       tags,
-      year: selected?.year ?? year,
-      rating: selected?.rating ?? 0,
+      year,
+      rating: 0,
       seasonCount: 0,
       totalEpisodes: 0,
       ageRating: ageRating || 'Unknown',
-      assets: {
-        poster: selected?.imageUrl ?? '',
-        banner: selected?.artUrl ?? '',
-        backdrop: selected?.artUrl ?? '',
-      },
-      externalIds: selected
-        ? source === 'Plex'
-          ? { plex: selected.id }
-          : { anilist: selected.id }
-        : {},
-      sources: selected
-        ? [
-            {
-              provider: source as DataSource,
-              externalId: selected.id,
-              lastSyncedAt: new Date().toISOString(),
-              status: 'active',
-            },
-          ]
-        : [],
+      assets: { poster: '', banner: '', backdrop: '' },
+      externalIds: {},
+      sources: [],
       seasons: [],
       relations: [],
-      metadataStatus: selected ? 'synced' : 'missing',
+      metadataStatus: 'missing',
       updatedAt: 'just now',
       updatedBy: 'New series',
     }
-    onCreated(item)
-    toast.success('Series created', {
-      description: `"${item.title}" has been added to the catalog.`,
-    })
-    reset()
-    onOpenChange(false)
+    try {
+      await onCreated(item)
+      toast.success('Series created', {
+        description: `"${item.title}" has been added to the catalog.`,
+      })
+      reset()
+      onOpenChange(false)
+    } catch (err) {
+      toast.error('Could not create series', {
+        description: formatApiError(err),
+      })
+    }
   }
 
   return (
@@ -1423,57 +1838,39 @@ function NewSeriesDialog({
         <DialogHeader>
           <DialogTitle>New series</DialogTitle>
           <DialogDescription>
-            Search a title in a connected source to verify it exists and prefill
-            the details, or create the series manually.
+            Search across your connected sources, select one or more titles, and
+            add them to the catalog — or create a series manually.
           </DialogDescription>
         </DialogHeader>
 
         <div className="flex flex-col gap-3 rounded-lg border bg-card p-3">
           <div className="flex items-center gap-2">
-            <Select
-              value={searchSource}
-              onValueChange={(v) => {
-                setSearchSource(v)
-                setSelectedSourceId(null)
-                setExternalId(null)
-                setSourceResults([])
-              }}
-            >
-              <SelectTrigger className="w-40">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectGroup>
-                  <SelectItem value="Plex">Plex</SelectItem>
-                  <SelectItem value="AniList">AniList</SelectItem>
-                </SelectGroup>
-              </SelectContent>
-            </Select>
             <div className="relative flex-1">
               <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
               <Input
                 className="pl-9"
-                placeholder={`Search ${searchSource} by title...`}
+                placeholder="Search all sources by title..."
                 value={sourceQuery}
                 onChange={(e) => setSourceQuery(e.target.value)}
               />
             </div>
           </div>
 
-          {selectedSourceId ? (
+          {selectedItems.length > 0 ? (
             <p className="rounded-md bg-primary/10 px-3 py-1.5 text-xs text-primary">
-              Using{' '}
-              <span className="font-medium">
-                {sourceResults.find((r) => r.id === selectedSourceId)?.title ?? title}
-              </span>{' '}
-              from {searchSource} — it will be linked as an external source.
+              <span className="font-medium">{selectedItems.length}</span> title
+              {selectedItems.length === 1 ? '' : 's'} selected — they will be
+              added to the catalog.
             </p>
           ) : null}
 
-          {sourceUnavailable ? (
+          {unavailableSources.length > 0 ? (
             <div className="flex items-center justify-between gap-2 rounded-md border bg-warning/10 px-3 py-2 text-xs text-warning">
-              <span>{sourceUnavailable}</span>
-              {searchSource === 'Plex' ? (
+              <span>
+                {unavailableSources.join(' and ')}{' '}
+                {unavailableSources.length === 1 ? 'is' : 'are'} not configured.
+              </span>
+              {unavailableSources.includes('Plex') ? (
                 <Link
                   href="/dash/sources/plex"
                   className="shrink-0 font-medium underline underline-offset-2"
@@ -1481,42 +1878,92 @@ function NewSeriesDialog({
                   Open Plex settings
                 </Link>
               ) : null}
+              {unavailableSources.includes('MyAnimeList') ? (
+                <Link
+                  href="/dash/sources/myanimelist"
+                  className="shrink-0 font-medium underline underline-offset-2"
+                >
+                  Open MyAnimeList settings
+                </Link>
+              ) : null}
             </div>
-          ) : sourceError ? (
+          ) : null}
+
+          {sourceError ? (
             <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
               Search failed: {sourceError}
             </div>
-          ) : sourceSearching ? (
+          ) : null}
+
+          {sourceSearching ? (
             <div className="flex items-center justify-center gap-2 py-4 text-xs text-muted-foreground">
               <Loader2 className="size-3.5 animate-spin" />
-              Searching {searchSource}…
+              Searching Plex, AniList and MyAnimeList…
             </div>
           ) : sourceQuery.trim() === '' ? (
             <p className="py-2 text-center text-xs text-muted-foreground">
-              Search a title to verify it is available in {searchSource}.
+              Search a title to verify it is available in Plex, AniList or MyAnimeList.
             </p>
           ) : sourceResults.length === 0 ? (
             <p className="py-2 text-center text-xs text-muted-foreground">
-              No results for “{sourceQuery.trim()}” in {searchSource}.
+              No results for “{sourceQuery.trim()}” in Plex, AniList or MyAnimeList.
             </p>
           ) : (
-            <div className="flex max-h-72 flex-col gap-3 overflow-y-auto pr-1">
-              {sourceResults.map((item) => (
-                <SourceResultCard
-                  key={item.id}
-                  item={item}
-                  icon="series"
-                  actionLabel="Select"
-                  doneLabel="Selected"
-                  done={item.id === selectedSourceId}
-                  onAction={(it) => selectResult(it)}
-                />
-              ))}
+            <div className="flex max-h-72 flex-col divide-y divide-border overflow-y-auto rounded-md border">
+              {sourceResults.map((item) => {
+                const key = `${item.source}-${item.id}`
+                const selected = selectedKeys.has(key)
+                const meta = [
+                  item.year ? String(item.year) : null,
+                  item.type,
+                  ...(item.extraMeta ?? []),
+                ].filter(Boolean)
+                const sub = [item.subtitle, meta.join(' · ') || null]
+                  .filter(Boolean)
+                  .join(' · ')
+                return (
+                  <div
+                    key={key}
+                    className={`flex items-center gap-3 px-3 py-2.5 transition-colors ${
+                      selected ? 'bg-primary/10' : 'hover:bg-muted/50'
+                    }`}
+                  >
+                    <Checkbox
+                      checked={selected}
+                      onCheckedChange={() => toggleSelect(item)}
+                      aria-label={`Select ${item.title}`}
+                    />
+                    <button
+                      type="button"
+                      className="min-w-0 flex-1 text-left"
+                      onClick={() => toggleSelect(item)}
+                    >
+                      <span className="flex items-center gap-2">
+                        <span className="truncate text-sm font-medium">{item.title}</span>
+                        <Badge variant="outline" className="shrink-0 text-[10px] font-medium">
+                          {item.source}
+                        </Badge>
+                      </span>
+                      {sub ? (
+                        <span className="block truncate font-mono text-xs text-muted-foreground">
+                          {sub}
+                        </span>
+                      ) : null}
+                    </button>
+                  </div>
+                )
+              })}
             </div>
           )}
         </div>
 
-        <div className="flex flex-col gap-4">
+        {selectedItems.length > 0 ? (
+          <p className="text-sm text-muted-foreground">
+            {selectedItems.length} title{selectedItems.length === 1 ? '' : 's'} added with
+            their metadata. Adjust the details later from the catalog.
+          </p>
+        ) : (
+          <div className="flex flex-col gap-4">
           <div className="grid grid-cols-2 gap-4">
             <Field>
               <FieldLabel>Title *</FieldLabel>
@@ -1587,6 +2034,7 @@ function NewSeriesDialog({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
+                  <SelectItem value="Added">Added</SelectItem>
                   <SelectItem value="Draft">Draft</SelectItem>
                   <SelectItem value="Review">Review</SelectItem>
                   <SelectItem value="Approved">Approved</SelectItem>
@@ -1714,14 +2162,21 @@ function NewSeriesDialog({
             />
           </Field>
         </div>
+        )}
 
         <DialogFooter>
           <Button variant="outline" onClick={() => { reset(); onOpenChange(false) }}>
             Cancel
           </Button>
-          <Button disabled={!title.trim()} onClick={handleCreate}>
-            Create series
-          </Button>
+          {selectedItems.length > 0 ? (
+            <Button onClick={handleCreate}>
+              Add {selectedItems.length} series to catalog
+            </Button>
+          ) : (
+            <Button disabled={!title.trim()} onClick={handleCreate}>
+              Create series
+            </Button>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>

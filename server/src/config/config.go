@@ -20,6 +20,7 @@ type Config struct {
 	OAuth       OAuthConfig
 	CORS        CORSConfig
 	Anilist     AnilistConfig
+	MyAnimeList MyAnimeListConfig
 	MediaSource MediaSourceConfig
 }
 
@@ -109,6 +110,17 @@ type CORSConfig struct {
 type AnilistConfig struct {
 	Enabled  bool
 	CacheTTL time.Duration
+}
+
+// MyAnimeListConfig configures the MyAnimeList v2 integration. The client ID
+// is used as the API key passed via the X-MAL-CLIENT-ID header for public
+// endpoints. It can be overridden at runtime by saving settings through the UI
+// (persisted in source_configs).
+type MyAnimeListConfig struct {
+	Enabled       bool
+	ClientID      string
+	BaseURL       string
+	SyncInterval  time.Duration
 }
 
 type MediaSourceConfig struct {
@@ -236,6 +248,12 @@ func Load() (Config, error) {
 		Anilist: AnilistConfig{
 			Enabled:  getEnvBool("ANILIST_ENABLED", false),
 			CacheTTL: getEnvDuration("ANILIST_CACHE_TTL", 5*time.Minute),
+		},
+		MyAnimeList: MyAnimeListConfig{
+			Enabled:      getEnvBool("MYANIMELIST_ENABLED", false),
+			ClientID:     getEnv("MYANIMELIST_CLIENT_ID", ""),
+			BaseURL:      getEnv("MYANIMELIST_BASE_URL", "https://api.myanimelist.net/v2"),
+			SyncInterval: getEnvDuration("MYANIMELIST_SYNC_INTERVAL", time.Hour),
 		},
 		MediaSource: MediaSourceConfig{
 			Enabled: getEnvBool("MEDIA_SOURCE_ENABLED", false),
