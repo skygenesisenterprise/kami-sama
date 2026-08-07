@@ -62,7 +62,11 @@ services:
       NODE_ENV: ${NODE_ENV:-development}
       USE_EMBEDDED_DB: "false"
       LOG_LEVEL: ${LOG_LEVEL:-info}
-      PRISMA_SCHEMA_DEPLOY: "true"
+      # GORM AutoMigrate (server/main.go) is the single schema owner.
+      # prisma db push --accept-data-loss was dropping/recreating the
+      # collections status/type/visibility/metadata_status columns on every
+      # boot (GORM stores them as text, Prisma expects enums), wiping data.
+      PRISMA_SCHEMA_DEPLOY: "false"
       PRISMA_SCHEMA_DEPLOY_STRATEGY: ${PRISMA_SCHEMA_DEPLOY_STRATEGY:-push}
       ALLOW_MIGRATION_FAILURE: ${ALLOW_MIGRATION_FAILURE:-false}
       REDIS_ENABLED: "true"
@@ -141,10 +145,13 @@ services:
       POSTGRES_USER: ${PG_USER:-postgres}
       POSTGRES_DB: ${PG_DB:-postgres}
       DATABASE_URL: postgresql://${PG_USER:-postgres}:${PG_PASS:-postgres}@localhost:5432/${PG_DB:-postgres}
-      PRISMA_SCHEMA_DEPLOY: "true"
+      # Schema ownership is delegated to GORM AutoMigrate (see worker). Prisma
+      # auto-deploy is disabled to stop db push from resetting collection
+      # status/type/visibility columns on every container start.
+      PRISMA_SCHEMA_DEPLOY: "false"
       PRISMA_SCHEMA_DEPLOY_STRATEGY: ${PRISMA_SCHEMA_DEPLOY_STRATEGY:-push}
-      PRISMA_MIGRATE_DEPLOY: "true"
-      PRISMA_HOT_RELOAD: ${PRISMA_HOT_RELOAD:-true}
+      PRISMA_MIGRATE_DEPLOY: "false"
+      PRISMA_HOT_RELOAD: "false"
       PRISMA_POLL_INTERVAL: ${PRISMA_POLL_INTERVAL:-5}
       ALLOW_MIGRATION_FAILURE: "true"
     expose:

@@ -103,7 +103,7 @@ import {
   DISCOVER_FILTER_LABEL,
   METADATA_STATUS_LABEL,
   getCollectionStats,
-  setCollectionDiscover,
+  updateCollectionItem,
   type CollectionItem,
   type CollectionType,
   type DiscoverSection,
@@ -113,6 +113,16 @@ import {
 
 type SortKey = 'created' | 'title' | 'type' | 'entries' | 'updated'
 type SortDir = 'asc' | 'desc'
+
+interface CollectionEditPayload {
+  title: string
+  description: string
+  type: CollectionType
+  visibility: 'public' | 'private' | 'unlisted'
+  status: PublicationState
+  tags: string[]
+  discover: DiscoverSection
+}
 
 const SORT_OPTIONS: { value: SortKey; label: string }[] = [
   { value: 'created', label: 'Date created' },
@@ -240,24 +250,39 @@ export default function CollectionsCatalogPage() {
     return items
   }, [query, status, source, collectionType, discoverFilter, sortKey, sortDir, collections])
 
-  const handleSaveDiscover = async (item: CollectionItem, draft: DiscoverSection) => {
-    const description = `Discover settings updated for ${item.title}.`
+  const handleSave = async (item: CollectionItem, payload: CollectionEditPayload) => {
     if (apiMode) {
       try {
-        const updated = await collectionsApi.update(item.id, { discover: { ...draft } })
+        const updated = await collectionsApi.update(item.id, {
+          title: payload.title,
+          description: payload.description,
+          type: payload.type,
+          visibility: payload.visibility,
+          status: payload.status,
+          tags: payload.tags,
+          discover: { ...payload.discover },
+        })
         const mapped = mapApiCollectionToCollectionItem(updated)
         setCollections((prev) => prev.map((c) => (c.id === item.id ? mapped : c)))
-        toast.success('Changes saved', { description })
+        toast.success('Changes saved', {
+          description: `${updated.title} was updated.`,
+        })
         setInspecting(null)
       } catch (error) {
-        console.error('Failed to update collection discover settings', error)
+        console.error('Failed to update collection', error)
         toast.error('Update failed', {
           description: 'The API could not update this collection.',
         })
       }
     } else {
-      setCollectionDiscover(item.id, draft)
-      toast.success('Changes saved', { description })
+      const updated = updateCollectionItem(item.id, {
+        ...payload,
+        discover: { ...payload.discover },
+      })
+      if (updated) setCollections([...COLLECTIONS_MOCK])
+      toast.success('Changes saved', {
+        description: `${payload.title} was updated.`,
+      })
       setInspecting(null)
     }
   }
@@ -283,11 +308,50 @@ export default function CollectionsCatalogPage() {
     })
   }
 
-  const bulkAction = (action: string) => {
-    toast.success(`${action} applied to ${selected.size} collections`, {
-      description: 'Changes will sync to the API when connected.',
-    })
+  const bulkAction = async (action: 'Publish' | 'Archive' | 'Delete') => {
+    const ids = Array.from(selected)
+    if (ids.length === 0) return
     setSelected(new Set())
+
+    if (apiMode) {
+      try {
+        if (action === 'Delete') {
+          await Promise.all(ids.map((id) => collectionsApi.delete(id)))
+          setCollections((prev) => prev.filter((c) => !ids.includes(c.id)))
+        } else {
+          const status: PublicationState = action === 'Publish' ? 'Published' : 'Archived'
+          const updated = await Promise.all(
+            ids.map((id) => collectionsApi.update(id, { status })),
+          )
+          const mapped = new Map(
+            updated.map((u) => [u.id, mapApiCollectionToCollectionItem(u)]),
+          )
+          setCollections((prev) => prev.map((c) => mapped.get(c.id) ?? c))
+        }
+        toast.success(`${action} applied to ${ids.length} collections`, {
+          description: 'Changes synced to the API.',
+        })
+      } catch (error) {
+        console.error(`Bulk ${action} failed`, error)
+        toast.error(`${action} failed`, {
+          description: 'The API could not update these collections.',
+        })
+      }
+    } else {
+      for (const id of ids) {
+        if (action === 'Delete') {
+          const index = COLLECTIONS_MOCK.findIndex((c) => c.id === id)
+          if (index !== -1) COLLECTIONS_MOCK.splice(index, 1)
+        } else {
+          const status: PublicationState = action === 'Publish' ? 'Published' : 'Archived'
+          updateCollectionItem(id, { status })
+        }
+      }
+      setCollections([...COLLECTIONS_MOCK])
+      toast.success(`${action} applied to ${ids.length} collections`, {
+        description: 'Changes will sync to the API when connected.',
+      })
+    }
   }
 
   return (
@@ -785,7 +849,7 @@ export default function CollectionsCatalogPage() {
         item={inspecting}
         collections={collections}
         onClose={() => setInspecting(null)}
-        onSaveDiscover={handleSaveDiscover}
+        onSave={handleSave}
       />
 
       <NewCollectionDialog
@@ -845,26 +909,62 @@ function CollectionDetailSheet({
   item,
   collections,
   onClose,
-  onSaveDiscover,
+  onSave,
 }: {
   item: CollectionItem | null
   collections: CollectionItem[]
   onClose: () => void
-  onSaveDiscover: (item: CollectionItem, draft: DiscoverSection) => void | Promise<void>
+  onSave: (item: CollectionItem, payload: CollectionEditPayload) => void | Promise<void>
 }) {
-  const [discoverDraft, setDiscoverDraft] = React.useState<DiscoverSection>({
-    enabled: true,
-    order: 1,
+  const [form, setForm] = React.useState<CollectionEditPayload>({
+    title: '',
+    description: '',
+    type: 'editorial',
+    visibility: 'private',
+    status: 'Draft',
+    tags: [],
+    discover: { enabled: true, order: 1 },
   })
+  const [saving, setSaving] = React.useState(false)
 
   React.useEffect(() => {
     if (!item) return
-    setDiscoverDraft(
-      item.discover
+    setForm({
+      title: item.title,
+      description: item.description,
+      type: item.type,
+      visibility: item.visibility,
+      status: item.status,
+      tags: item.tags,
+      discover: item.discover
         ? { ...item.discover, enabled: true }
         : { enabled: true, order: nextDiscoverOrder(collections) },
-    )
+    })
   }, [item, collections])
+
+  const update = <K extends keyof CollectionEditPayload>(
+    key: K,
+    value: CollectionEditPayload[K],
+  ) => setForm((prev) => ({ ...prev, [key]: value }))
+
+  const updateDiscover = <K extends keyof DiscoverSection>(
+    key: K,
+    value: DiscoverSection[K],
+  ) =>
+    setForm((prev) => ({
+      ...prev,
+      discover: { ...prev.discover, [key]: value },
+    }))
+
+  const handleSave = async () => {
+    if (!item || saving) return
+    setSaving(true)
+    try {
+      await onSave(item, form)
+    } finally {
+      setSaving(false)
+    }
+  }
 
   return (
     <Sheet open={item !== null} onOpenChange={(open) => !open && onClose()}>
@@ -900,16 +1000,26 @@ function CollectionDetailSheet({
                 <FieldGroup>
                   <Field>
                     <FieldLabel>Title</FieldLabel>
-                    <Input defaultValue={item.title} />
+                    <Input
+                      value={form.title}
+                      onChange={(e) => update('title', e.target.value)}
+                    />
                   </Field>
                   <Field>
                     <FieldLabel>Description</FieldLabel>
-                    <Textarea rows={4} defaultValue={item.description} />
+                    <Textarea
+                      rows={4}
+                      value={form.description}
+                      onChange={(e) => update('description', e.target.value)}
+                    />
                   </Field>
                   <div className="grid grid-cols-2 gap-4">
                     <Field>
                       <FieldLabel>Type</FieldLabel>
-                      <Select defaultValue={item.type}>
+                      <Select
+                        value={form.type}
+                        onValueChange={(v) => update('type', v as CollectionType)}
+                      >
                         <SelectTrigger className="w-full">
                           <SelectValue />
                         </SelectTrigger>
@@ -924,7 +1034,12 @@ function CollectionDetailSheet({
                     </Field>
                     <Field>
                       <FieldLabel>Visibility</FieldLabel>
-                      <Select defaultValue={item.visibility}>
+                      <Select
+                        value={form.visibility}
+                        onValueChange={(v) =>
+                          update('visibility', v as 'public' | 'private' | 'unlisted')
+                        }
+                      >
                         <SelectTrigger className="w-full">
                           <SelectValue />
                         </SelectTrigger>
@@ -939,17 +1054,19 @@ function CollectionDetailSheet({
                   <div className="grid grid-cols-2 gap-4">
                     <Field>
                       <FieldLabel>Status</FieldLabel>
-                      <Select defaultValue={item.status}>
+                      <Select
+                        value={form.status}
+                        onValueChange={(v) => update('status', v as PublicationState)}
+                      >
                         <SelectTrigger className="w-full">
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="Draft">Draft</SelectItem>
-                          <SelectItem value="Review">Review</SelectItem>
-                          <SelectItem value="Approved">Approved</SelectItem>
-                          <SelectItem value="Scheduled">Scheduled</SelectItem>
-                          <SelectItem value="Published">Published</SelectItem>
-                          <SelectItem value="Archived">Archived</SelectItem>
+                          {ALL_COLLECTION_STATUSES.filter((s) => s !== 'all').map((s) => (
+                            <SelectItem key={s} value={s}>
+                              {s}
+                            </SelectItem>
+                          ))}
                         </SelectContent>
                       </Select>
                     </Field>
@@ -961,7 +1078,7 @@ function CollectionDetailSheet({
                   <Field>
                     <FieldLabel>Tags</FieldLabel>
                     <div className="flex flex-wrap gap-1.5">
-                      {item.tags.map((t) => (
+                      {form.tags.map((t) => (
                         <Badge key={t} variant="secondary">
                           {t}
                         </Badge>
@@ -1151,12 +1268,9 @@ function CollectionDetailSheet({
                     <Input
                       type="number"
                       min={1}
-                      value={discoverDraft.order}
+                      value={form.discover.order}
                       onChange={(e) =>
-                        setDiscoverDraft((prev) => ({
-                          ...prev,
-                          order: parseInt(e.target.value, 10) || 1,
-                        }))
+                        updateDiscover('order', parseInt(e.target.value, 10) || 1)
                       }
                     />
                     <FieldDescription>
@@ -1166,13 +1280,10 @@ function CollectionDetailSheet({
                   <Field>
                     <FieldLabel>Section title</FieldLabel>
                     <Input
-                      value={discoverDraft.title ?? ''}
-                      placeholder={item.title}
+                      value={form.discover.title ?? ''}
+                      placeholder={form.title}
                       onChange={(e) =>
-                        setDiscoverDraft((prev) => ({
-                          ...prev,
-                          title: e.target.value || undefined,
-                        }))
+                        updateDiscover('title', e.target.value || undefined)
                       }
                     />
                     <FieldDescription>
@@ -1182,13 +1293,10 @@ function CollectionDetailSheet({
                   <Field>
                     <FieldLabel>Section subtitle</FieldLabel>
                     <Input
-                      value={discoverDraft.subtitle ?? ''}
-                      placeholder={item.description}
+                      value={form.discover.subtitle ?? ''}
+                      placeholder={form.description}
                       onChange={(e) =>
-                        setDiscoverDraft((prev) => ({
-                          ...prev,
-                          subtitle: e.target.value || undefined,
-                        }))
+                        updateDiscover('subtitle', e.target.value || undefined)
                       }
                     />
                     <FieldDescription>
@@ -1199,26 +1307,20 @@ function CollectionDetailSheet({
                     <Field>
                       <FieldLabel>CTA label</FieldLabel>
                       <Input
-                        value={discoverDraft.ctaLabel ?? ''}
+                        value={form.discover.ctaLabel ?? ''}
                         placeholder="View all"
                         onChange={(e) =>
-                          setDiscoverDraft((prev) => ({
-                            ...prev,
-                            ctaLabel: e.target.value || undefined,
-                          }))
+                          updateDiscover('ctaLabel', e.target.value || undefined)
                         }
                       />
                     </Field>
                     <Field>
                       <FieldLabel>Destination</FieldLabel>
                       <Input
-                        value={discoverDraft.href ?? ''}
+                        value={form.discover.href ?? ''}
                         placeholder={`/catalog?collection=${item.slug}`}
                         onChange={(e) =>
-                          setDiscoverDraft((prev) => ({
-                            ...prev,
-                            href: e.target.value || undefined,
-                          }))
+                          updateDiscover('href', e.target.value || undefined)
                         }
                       />
                     </Field>
@@ -1229,13 +1331,12 @@ function CollectionDetailSheet({
             <SheetFooter className="flex-row border-t">
               <Button
                 className="flex-1"
-                onClick={() => {
-                  void onSaveDiscover(item, discoverDraft)
-                }}
+                onClick={() => void handleSave()}
+                disabled={saving}
               >
-                Save changes
+                {saving ? 'Saving…' : 'Save changes'}
               </Button>
-              <Button variant="outline" onClick={onClose}>
+              <Button variant="outline" onClick={onClose} disabled={saving}>
                 Cancel
               </Button>
             </SheetFooter>

@@ -426,12 +426,22 @@ export function setCollectionDiscover(
   id: string,
   patch: Partial<DiscoverSection>,
 ) {
+  updateCollectionItem(id, {
+    discover: {
+      enabled: false,
+      order: 1,
+      ...(COLLECTIONS_MOCK.find((c) => c.id === id)?.discover ?? {}),
+      ...patch,
+    },
+  })
+}
+
+export function updateCollectionItem(
+  id: string,
+  patch: Partial<CollectionItem>,
+): CollectionItem | undefined {
   const item = COLLECTIONS_MOCK.find((c) => c.id === id)
-  if (!item) return
-  item.discover = {
-    enabled: false,
-    order: 1,
-    ...item.discover,
-    ...patch,
-  }
+  if (!item) return undefined
+  Object.assign(item, patch)
+  return item
 }
