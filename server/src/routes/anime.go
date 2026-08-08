@@ -213,3 +213,27 @@ func (h *AnimeHandler) Delete(c *gin.Context) {
 	}
 	utils.Success(c, http.StatusOK, gin.H{"deleted": true})
 }
+
+func (h *AnimeHandler) Sync(c *gin.Context) {
+	id := c.Param("animeId")
+	if id == "" {
+		utils.Error(c, utils.ErrValidationFailed)
+		return
+	}
+	item, err := h.deps.AnimeService.GetByID(c.Request.Context(), id)
+	if err != nil {
+		utils.Error(c, err)
+		return
+	}
+	// Always try to enrich with seasons/episodes from AniList
+	if h.deps.AnilistService != nil {
+		h.deps.AnilistService.EnsureSeasonsAndEpisodes(c.Request.Context(), item, nil)
+	}
+	// Reload from DB to get updated data
+	item, err = h.deps.AnimeService.GetByID(c.Request.Context(), id)
+	if err != nil {
+		utils.Error(c, err)
+		return
+	}
+	utils.Success(c, http.StatusOK, item)
+}

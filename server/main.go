@@ -155,7 +155,9 @@ func main() {
 
 	oauthService := services.NewOAuthService(cfg.OAuth, repos, authService, identityProvider, workspaceService, nil)
 
-	animeService := services.NewAnimeService(repos)
+	anilistService := services.NewAnilistService(cfg.Anilist, repos, logger)
+
+	animeService := services.NewAnimeService(repos, anilistService)
 	_episodeService := services.NewEpisodeService(repos)
 	genreService := services.NewGenreService(repos)
 	studioService := services.NewStudioService(repos)
@@ -186,7 +188,6 @@ func main() {
 	systemService := services.NewSystemService(db.Gorm(), redis)
 	settingsAdminService := services.NewSettingsAdminService(db.Gorm(), repos)
 	profileService := services.NewProfileService(db, repos)
-	anilistService := services.NewAnilistService(cfg.Anilist, repos, logger)
 	malService := services.NewMalService(cfg.MyAnimeList, db.Gorm(), logger)
 	mfaService := services.NewMfaService(cfg.Auth, db, repos)
 	recommendationService := services.NewRecommendationService(db.Gorm())

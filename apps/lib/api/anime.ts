@@ -52,10 +52,12 @@ export interface ApiAnime {
   ageRating?: string | null;
   isFeatured: boolean;
   isTrending: boolean;
+  parentAnimeId?: string | null;
   metadata?: Record<string, unknown> | null;
   genres?: { id: string; name: string; slug: string }[];
   studios?: { id: string; name: string; slug: string; logoUrl?: string | null }[];
   seasons?: ApiAnimeSeason[];
+  children?: ApiAnime[];
   createdAt: string;
   updatedAt: string;
 }
@@ -138,6 +140,12 @@ export const animeApi = {
       method: "DELETE",
     });
   },
+
+  sync(animeId: string): Promise<ApiAnime> {
+    return apiRequest<ApiAnime>(`/anime/${encodeURIComponent(animeId)}/sync`, {
+      method: "POST",
+    });
+  },
 };
 
 // ──────────────────────────────────────────────────────────────
@@ -165,6 +173,38 @@ export function apiAnimeToSeriesItem(a: ApiAnime): SeriesItem {
   const banner =
     a.bannerImageUrl || str(meta.artUrl) || str(meta.bannerImage) || poster;
 
+  // Collect seasons from this anime and all its children
+  const allSeasons: { id: string; number: number; title: string; episodeCount: number; year: number; aired: boolean }[] = [];
+  
+  // Add seasons from this anime
+  for (const s of a.seasons ?? []) {
+    allSeasons.push({
+      id: s.id,
+      number: s.number,
+      title: s.title ?? "",
+      episodeCount: s.episodeCount,
+      year: yearFromAirDate(s.airDate) ?? a.releaseYear,
+      aired: !s.airDate,
+    });
+  }
+  
+  // Add seasons from children (sequels/prequels)
+  for (const child of a.children ?? []) {
+    for (const s of child.seasons ?? []) {
+      allSeasons.push({
+        id: s.id,
+        number: s.number,
+        title: s.title ?? "",
+        episodeCount: s.episodeCount,
+        year: yearFromAirDate(s.airDate) ?? child.releaseYear,
+        aired: !s.airDate,
+      });
+    }
+  }
+
+  // Sort seasons by number
+  allSeasons.sort((x, y) => x.number - y.number);
+
   return {
     id: a.id,
     slug: a.slug,
@@ -179,20 +219,13 @@ export function apiAnimeToSeriesItem(a: ApiAnime): SeriesItem {
     tags: [],
     year: a.releaseYear,
     rating: a.rating,
-    seasonCount: (a.seasons ?? []).length,
+    seasonCount: allSeasons.length,
     totalEpisodes: a.totalEpisodes,
     ageRating: a.ageRating ?? "Unknown",
     assets: { poster, banner, backdrop: banner || poster },
     externalIds: external,
     sources,
-    seasons: (a.seasons ?? []).map((s) => ({
-      id: s.id,
-      number: s.number,
-      title: s.title ?? "",
-      episodeCount: s.episodeCount,
-      year: yearFromAirDate(s.airDate) ?? a.releaseYear,
-      aired: !s.airDate,
-    })),
+    seasons: allSeasons,
     relations: [],
     metadataStatus: sources.length > 0 ? "synced" : "missing",
     updatedAt: timeAgo(a.updatedAt),

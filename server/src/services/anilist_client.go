@@ -14,6 +14,25 @@ import (
 
 const anilistGraphQLURL = "https://graphql.anilist.co"
 
+// FlexString unmarshals both string and numeric JSON values. AniList returns
+// some identifiers as strings (e.g. trailer.id is a YouTube video id), so the
+// field type must accept both.
+type FlexString string
+
+func (f *FlexString) UnmarshalJSON(data []byte) error {
+	var s string
+	if err := json.Unmarshal(data, &s); err == nil {
+		*f = FlexString(s)
+		return nil
+	}
+	var n int
+	if err := json.Unmarshal(data, &n); err == nil {
+		*f = FlexString(strconv.Itoa(n))
+		return nil
+	}
+	return nil
+}
+
 type AnilistClient struct {
 	httpClient *http.Client
 	logger     *slog.Logger
@@ -134,9 +153,9 @@ type AnilistMedia struct {
 	MeanScore    *int     `json:"meanScore"`
 	Popularity   *int     `json:"popularity"`
 	Trailer      *struct {
-		ID        *int   `json:"id"`
-		Site      string `json:"site"`
-		Thumbnail string `json:"thumbnail"`
+		ID        *FlexString `json:"id"`
+		Site      string      `json:"site"`
+		Thumbnail string      `json:"thumbnail"`
 	} `json:"trailer"`
 	Studios struct {
 		Edges []struct {
@@ -262,9 +281,16 @@ type AnilistStaff struct {
 	SiteURL   string  `json:"siteUrl"`
 }
 
+const searchMediaIDQuery = `
+query ($search: String) {
+  Media(search: $search, type: ANIME, sort: SEARCH_MATCH) {
+    id
+  }
+}
+`
+
 const searchMediaQuery = `
-query ($search: String, $type: MediaType, $page: Int, $perPage: Int) {
-  Page(page: $page, perPage: $perPage) {
+query ($search: String, $type: MediaType, $page: Int, $perPage: Int) {  Page(page: $page, perPage: $perPage) {
     pageInfo {
       total
       perPage
@@ -297,6 +323,24 @@ query ($search: String, $type: MediaType, $page: Int, $perPage: Int) {
   }
 }
 `
+
+// SearchMediaID returns the AniList ID of the best matching anime for a title.
+// Returns 0 if nothing is found or the request fails.
+func (c *AnilistClient) SearchMediaID(ctx context.Context, query string) int {
+	data, err := c.do(ctx, searchMediaIDQuery, map[string]any{"search": query})
+	if err != nil {
+		return 0
+	}
+	var raw struct {
+		Media struct {
+			ID int `json:"id"`
+		} `json:"Media"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return 0
+	}
+	return raw.Media.ID
+}
 
 func (c *AnilistClient) SearchMedia(ctx context.Context, query string, mediaType string, page, perPage int) (*AnilistSearchResult, error) {
 	if page < 1 {

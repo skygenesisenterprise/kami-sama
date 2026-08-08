@@ -837,11 +837,14 @@ model Anime {
   contentType     ContentType @default(series)
   isFeatured      Boolean     @default(false) @map("is_featured")
   isTrending      Boolean     @default(false) @map("is_trending")
+  parentAnimeId   String?     @map("parent_anime_id")
   metadata        Json?
   deletedAt       DateTime?   @map("deleted_at")
   createdAt       DateTime    @default(now()) @map("created_at")
   updatedAt       DateTime    @updatedAt @map("updated_at")
 
+  parentAnime     Anime?      @relation("AnimeChildren", fields: [parentAnimeId], references: [id])
+  children        Anime[]     @relation("AnimeChildren")
   genres           AnimeGenre[]
   studios          AnimeStudio[]
   characters       AnimeCharacter[]
@@ -860,6 +863,7 @@ model Anime {
   @@index([isFeatured])
   @@index([isTrending])
   @@index([contentType])
+  @@index([parentAnimeId])
   @@map("anime")
 }
 

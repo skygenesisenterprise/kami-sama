@@ -442,20 +442,38 @@ func (r *animeRepository) Create(ctx context.Context, anime *models.Anime) error
 
 func (r *animeRepository) GetByID(ctx context.Context, id string) (*models.Anime, error) {
 	var item models.Anime
-	err := r.db.WithContext(ctx).First(&item, "id = ?", id).Error
+	err := r.db.WithContext(ctx).
+		Preload("Seasons", func(db *gorm.DB) *gorm.DB { return db.Order("number asc") }).
+		Preload("Seasons.Episodes", func(db *gorm.DB) *gorm.DB { return db.Order("number asc") }).
+		Preload("Children", func(db *gorm.DB) *gorm.DB { return db.Order("release_year asc") }).
+		Preload("Children.Seasons", func(db *gorm.DB) *gorm.DB { return db.Order("number asc") }).
+		Preload("Children.Seasons.Episodes", func(db *gorm.DB) *gorm.DB { return db.Order("number asc") }).
+		Preload("Genres").
+		Preload("Studios").
+		Preload("Characters").
+		First(&item, "id = ?", id).Error
 	return &item, normalizeNotFound(err, utils.NewError(404, "ANIME_NOT_FOUND", "The requested anime was not found.", nil))
 }
 
 func (r *animeRepository) GetBySlug(ctx context.Context, slug string) (*models.Anime, error) {
 	var item models.Anime
-	err := r.db.WithContext(ctx).First(&item, "slug = ?", slug).Error
+	err := r.db.WithContext(ctx).
+		Preload("Seasons", func(db *gorm.DB) *gorm.DB { return db.Order("number asc") }).
+		Preload("Seasons.Episodes", func(db *gorm.DB) *gorm.DB { return db.Order("number asc") }).
+		Preload("Children", func(db *gorm.DB) *gorm.DB { return db.Order("release_year asc") }).
+		Preload("Children.Seasons", func(db *gorm.DB) *gorm.DB { return db.Order("number asc") }).
+		Preload("Children.Seasons.Episodes", func(db *gorm.DB) *gorm.DB { return db.Order("number asc") }).
+		Preload("Genres").
+		Preload("Studios").
+		Preload("Characters").
+		First(&item, "slug = ?", slug).Error
 	return &item, normalizeNotFound(err, utils.NewError(404, "ANIME_NOT_FOUND", "The requested anime was not found.", nil))
 }
 
 func (r *animeRepository) List(ctx context.Context, opts interfaces.ListAnimeOpts) ([]models.Anime, int64, error) {
 	var items []models.Anime
 	var total int64
-	query := r.db.WithContext(ctx).Model(&models.Anime{}).Where("deleted_at IS NULL")
+	query := r.db.WithContext(ctx).Model(&models.Anime{}).Where("deleted_at IS NULL AND parent_anime_id IS NULL")
 
 	if opts.Status != "" {
 		query = query.Where("status = ?", opts.Status)
@@ -511,6 +529,20 @@ func (r *animeRepository) List(ctx context.Context, opts interfaces.ListAnimeOpt
 	if err := query.Find(&items).Error; err != nil {
 		return nil, 0, err
 	}
+
+	// Preload relationships for each item
+	for i := range items {
+		r.db.WithContext(ctx).
+			Preload("Seasons", func(db *gorm.DB) *gorm.DB { return db.Order("number asc") }).
+			Preload("Seasons.Episodes", func(db *gorm.DB) *gorm.DB { return db.Order("number asc") }).
+			Preload("Children", func(db *gorm.DB) *gorm.DB { return db.Order("release_year asc") }).
+			Preload("Children.Seasons", func(db *gorm.DB) *gorm.DB { return db.Order("number asc") }).
+			Preload("Children.Seasons.Episodes", func(db *gorm.DB) *gorm.DB { return db.Order("number asc") }).
+			Preload("Genres").
+			Preload("Studios").
+			First(&items[i], "id = ?", items[i].ID)
+	}
+
 	return items, total, nil
 }
 

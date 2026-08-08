@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"time"
 
@@ -13,11 +14,12 @@ import (
 )
 
 type AnimeService struct {
-	repos *Repositories
+	repos  *Repositories
+	anilist *AnilistService
 }
 
-func NewAnimeService(repos *Repositories) *AnimeService {
-	return &AnimeService{repos: repos}
+func NewAnimeService(repos *Repositories, anilist *AnilistService) *AnimeService {
+	return &AnimeService{repos: repos, anilist: anilist}
 }
 
 // AnimeSourceRef is a single provider link persisted on the Anime row, mirroring
@@ -57,7 +59,7 @@ func (s *AnimeService) Create(ctx context.Context, userID string, input CreateAn
 	if strings.TrimSpace(input.Title) == "" {
 		return nil, utils.ErrValidationFailed
 	}
-	slug := generateSlug(input.Title)
+	slug := uniqueSlug(ctx, s.repos.db, generateSlug(input.Title))
 	now := time.Now().UTC()
 	anime := &models.Anime{
 		Common:         models.Common{ID: utils.NewID(), CreatedAt: now, UpdatedAt: now},
@@ -88,7 +90,19 @@ func (s *AnimeService) Create(ctx context.Context, userID string, input CreateAn
 	for _, studioID := range input.StudioIDs {
 		s.repos.db.Exec("INSERT INTO anime_studios (anime_id, studio_id) VALUES (?, ?) ON CONFLICT DO NOTHING", anime.ID, studioID)
 	}
+	// Enrich the freshly created anime with seasons/episodes from AniList so the
+	// catalog is not left empty when the item was added from another provider.
+	s.enrichFromAnilist(ctx, anime)
 	return anime, nil
+}
+
+// enrichFromAnilist fills in seasons/episodes from AniList for an anime that was
+// created from another provider (e.g. MAL). Falls back to a title lookup.
+func (s *AnimeService) enrichFromAnilist(ctx context.Context, anime *models.Anime) {
+	if s.anilist == nil || !s.anilist.cfg.Enabled {
+		return
+	}
+	s.anilist.EnsureSeasonsAndEpisodes(ctx, anime, nil)
 }
 
 func (s *AnimeService) GetByID(ctx context.Context, id string) (*models.Anime, error) {
@@ -269,4 +283,41 @@ func derefSources(v *[]AnimeSourceRef) []AnimeSourceRef {
 		return nil
 	}
 	return *v
+}
+
+// ensureSeasonsAndEpisodes creates a default Season 1 with placeholder
+// episodes when no seasons exist yet for the given anime. This is used by
+// importers (AniList, MAL, Plex) to seed basic season/episode structure
+// from the total episode count.
+func (s *AnimeService) ensureSeasonsAndEpisodes(ctx context.Context, anime *models.Anime) {
+	if anime.TotalEpisodes <= 0 {
+		return
+	}
+	var count int64
+	s.repos.db.WithContext(ctx).Model(&models.AnimeSeason{}).Where("anime_id = ?", anime.ID).Count(&count)
+	if count > 0 {
+		return
+	}
+	now := time.Now().UTC()
+	season := &models.AnimeSeason{
+		Common:       models.Common{ID: utils.NewID(), CreatedAt: now, UpdatedAt: now},
+		AnimeID:      anime.ID,
+		Number:       1,
+		Title:        "Season 1",
+		EpisodeCount: anime.TotalEpisodes,
+	}
+	if err := s.repos.db.WithContext(ctx).Create(season).Error; err != nil {
+		return
+	}
+	for ep := 1; ep <= anime.TotalEpisodes; ep++ {
+		episode := &models.Episode{
+			Common:   models.Common{ID: utils.NewID(), CreatedAt: now, UpdatedAt: now},
+			AnimeID:  anime.ID,
+			SeasonID: &season.ID,
+			Number:   ep,
+			Title:    fmt.Sprintf("Episode %d", ep),
+			IsSubbed: true,
+		}
+		s.repos.db.WithContext(ctx).Create(episode)
+	}
 }

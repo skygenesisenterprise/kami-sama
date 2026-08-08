@@ -793,6 +793,14 @@ func (s *MalService) upsertMalNode(ctx context.Context, node malNode, mediaType 
 	malID := strconv.Itoa(node.ID)
 	title := malTitle(node)
 
+	// If MAL doesn't provide episode count, try to fetch from AniList
+	totalEpisodes := node.NumEpisodes
+	anilistID := 0
+	if totalEpisodes == 0 && mediaType == "anime" {
+		totalEpisodes = s.fetchEpisodeCountFromAnilist(ctx, title)
+		anilistID = s.fetchAnilistIdFromTitle(ctx, title)
+	}
+
 	var existing models.Anime
 	err := s.db.WithContext(ctx).Where("metadata->>'mal_id' = ?", malID).First(&existing).Error
 	if err == nil {
@@ -808,7 +816,7 @@ func (s *MalService) upsertMalNode(ctx context.Context, node malNode, mediaType 
 			existing.Status = "added"
 		}
 		existing.Rating = malMean(node)
-		existing.TotalEpisodes = node.NumEpisodes
+		existing.TotalEpisodes = totalEpisodes
 		if node.StartSeason != nil {
 			existing.ReleaseYear = node.StartSeason.Year
 			existing.Season = strings.ToLower(node.StartSeason.Season)
@@ -817,44 +825,88 @@ func (s *MalService) upsertMalNode(ctx context.Context, node malNode, mediaType 
 		existing.AgeRating = strings.ToLower(node.Rating)
 		existing.Metadata = buildMalMetadata(node, mediaType)
 		existing.UpdatedAt = time.Now().UTC()
-		return s.db.WithContext(ctx).Save(&existing).Error
+		if err := s.db.WithContext(ctx).Save(&existing).Error; err != nil {
+			return err
+		}
+		s.ensureSeasonsAndEpisodes(ctx, &existing, nil)
+		return nil
 	}
 	if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return err
 	}
 
 	now := time.Now().UTC()
+	metadata := buildMalMetadata(node, mediaType)
+	// Add anilist_id to metadata if found
+	if anilistID > 0 {
+		var metaMap map[string]any
+		if len(metadata) > 0 {
+			_ = json.Unmarshal(metadata, &metaMap)
+		}
+		if metaMap == nil {
+			metaMap = make(map[string]any)
+		}
+		metaMap["anilist_id"] = anilistID
+		raw, _ := json.Marshal(metaMap)
+		metadata = datatypes.JSON(raw)
+	}
+
 	anime := &models.Anime{
 		Common:         models.Common{ID: utils.NewID(), CreatedAt: now, UpdatedAt: now},
-		Slug:           s.uniqueSlug(ctx, generateSlug(title)),
+		Slug:           uniqueSlug(ctx, s.db, generateSlug(title)),
 		Title:          title,
 		JapaneseTitle:  malAltTitle(node, "ja"),
 		Synopsis:       cleanDescription(node.Synopsis),
 		CoverImageUrl:  malPicture(node),
 		Status:         "added",
 		Rating:         malMean(node),
-		TotalEpisodes:  node.NumEpisodes,
+		TotalEpisodes:  totalEpisodes,
 		Source:         strings.ToLower(node.Source),
 		AgeRating:      strings.ToLower(node.Rating),
-		Metadata:       buildMalMetadata(node, mediaType),
+		Metadata:       metadata,
 	}
 	if node.StartSeason != nil {
 		anime.ReleaseYear = node.StartSeason.Year
 		anime.Season = strings.ToLower(node.StartSeason.Season)
 	}
-	return s.db.WithContext(ctx).Create(anime).Error
+	if err := s.db.WithContext(ctx).Create(anime).Error; err != nil {
+		return err
+	}
+	s.ensureSeasonsAndEpisodes(ctx, anime, nil)
+	return nil
 }
 
-func (s *MalService) uniqueSlug(ctx context.Context, base string) string {
-	slug := base
-	for i := 2; ; i++ {
-		var count int64
-		s.db.WithContext(ctx).Model(&models.Anime{}).Where("slug = ?", slug).Count(&count)
-		if count == 0 {
-			return slug
-		}
-		slug = fmt.Sprintf("%s-%d", base, i)
+// fetchEpisodeCountFromAnilist tries to get the episode count from AniList
+// when MAL doesn't provide it. Returns 0 if not found.
+func (s *MalService) fetchEpisodeCountFromAnilist(ctx context.Context, title string) int {
+	query := `{"query":"{ Media(search: \"` + strings.ReplaceAll(title, `"`, `\\"`) + `\", type: ANIME) { episodes } }"}`
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Post("https://graphql.anilist.co", "application/json", strings.NewReader(query))
+	if err != nil {
+		return 0
 	}
+	defer resp.Body.Close()
+	var result struct {
+		Data struct {
+			Media struct {
+				Episodes *int `json:"episodes"`
+			} `json:"Media"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return 0
+	}
+	if result.Data.Media.Episodes != nil {
+		return *result.Data.Media.Episodes
+	}
+	return 0
+}
+
+// fetchAnilistIdFromTitle searches AniList for an anime by title and returns the AniList ID.
+// Returns 0 if not found.
+func (s *MalService) fetchAnilistIdFromTitle(ctx context.Context, title string) int {
+	client := NewAnilistClient(s.logger)
+	return client.SearchMediaID(ctx, title)
 }
 
 func (s *MalService) updateLastSyncAt(ctx context.Context, ts time.Time) {
@@ -1196,4 +1248,127 @@ func currentYearSeason(t time.Time) (int, string) {
 func currentSeasonLabel() string {
 	year, season := currentYearSeason(time.Now())
 	return fmt.Sprintf("%s %d", strings.Title(season), year)
+}
+
+// ensureSeasonsAndEpisodes creates a default Season 1 with placeholder
+// episodes when no seasons exist yet for the given anime.
+// parentID is always nil for MAL imports (no relation data available yet).
+func (s *MalService) ensureSeasonsAndEpisodes(ctx context.Context, anime *models.Anime, parentID *string) {
+	// If total episodes is 0, try to fetch from AniList
+	if anime.TotalEpisodes <= 0 {
+		anilistID := 0
+		if anime.Metadata != nil {
+			var metaMap map[string]any
+			if err := json.Unmarshal(anime.Metadata, &metaMap); err == nil {
+				if v, ok := metaMap["anilist_id"].(float64); ok {
+					anilistID = int(v)
+				}
+			}
+		}
+		// If no anilist_id in metadata, search by title
+		if anilistID == 0 {
+			anilistID = s.fetchAnilistIdFromTitle(ctx, anime.Title)
+			// Store anilist_id in metadata for future use
+			if anilistID > 0 {
+				var metaMap map[string]any
+				if anime.Metadata != nil {
+					_ = json.Unmarshal(anime.Metadata, &metaMap)
+				}
+				if metaMap == nil {
+					metaMap = make(map[string]any)
+				}
+				metaMap["anilist_id"] = anilistID
+				raw, _ := json.Marshal(metaMap)
+				anime.Metadata = datatypes.JSON(raw)
+				s.db.WithContext(ctx).Model(anime).Update("metadata", anime.Metadata)
+			}
+		}
+		if anilistID > 0 {
+			episodeCount := s.fetchEpisodeCountByID(ctx, anilistID)
+			if episodeCount > 0 {
+				anime.TotalEpisodes = episodeCount
+				s.db.WithContext(ctx).Model(anime).Update("total_episodes", anime.TotalEpisodes)
+			}
+		}
+		if anime.TotalEpisodes <= 0 {
+			return
+		}
+	}
+
+	targetAnimeID := anime.ID
+	var seasonNumber int
+	var maxEpisodeNumber int
+
+	if parentID != nil {
+		targetAnimeID = *parentID
+		var maxSeason int
+		s.db.WithContext(ctx).
+			Model(&models.AnimeSeason{}).
+			Where("anime_id = ?", *parentID).
+			Select("COALESCE(MAX(number), 0)").
+			Scan(&maxSeason)
+		seasonNumber = maxSeason + 1
+		// Get max episode number across all existing seasons
+		s.db.WithContext(ctx).
+			Model(&models.Episode{}).
+			Where("anime_id = ?", *parentID).
+			Select("COALESCE(MAX(number), 0)").
+			Scan(&maxEpisodeNumber)
+	} else {
+		var count int64
+		s.db.WithContext(ctx).Model(&models.AnimeSeason{}).Where("anime_id = ?", anime.ID).Count(&count)
+		if count > 0 {
+			return
+		}
+		seasonNumber = 1
+		maxEpisodeNumber = 0
+	}
+
+	now := time.Now().UTC()
+	season := &models.AnimeSeason{
+		Common:       models.Common{ID: utils.NewID(), CreatedAt: now, UpdatedAt: now},
+		AnimeID:      targetAnimeID,
+		Number:       seasonNumber,
+		Title:        fmt.Sprintf("Season %d", seasonNumber),
+		EpisodeCount: anime.TotalEpisodes,
+	}
+	if err := s.db.WithContext(ctx).Create(season).Error; err != nil {
+		return
+	}
+	for ep := 1; ep <= anime.TotalEpisodes; ep++ {
+		episode := &models.Episode{
+			Common:   models.Common{ID: utils.NewID(), CreatedAt: now, UpdatedAt: now},
+			AnimeID:  targetAnimeID,
+			SeasonID: &season.ID,
+			Number:   maxEpisodeNumber + ep,
+			Title:    fmt.Sprintf("Episode %d", maxEpisodeNumber+ep),
+			IsSubbed: true,
+		}
+		s.db.WithContext(ctx).Create(episode)
+	}
+}
+
+// fetchEpisodeCountByID fetches episode count from AniList by ID.
+func (s *MalService) fetchEpisodeCountByID(ctx context.Context, anilistID int) int {
+	query := fmt.Sprintf(`{"query":"{ Media(id: %d, type: ANIME) { episodes } }"}`, anilistID)
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Post("https://graphql.anilist.co", "application/json", strings.NewReader(query))
+	if err != nil {
+		return 0
+	}
+	defer resp.Body.Close()
+	var result struct {
+		Data struct {
+			Media struct {
+				Episodes *int `json:"episodes"`
+			} `json:"Media"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return 0
+	}
+	if result.Data.Media.Episodes != nil {
+		return *result.Data.Media.Episodes
+	}
+	return 0
 }

@@ -202,6 +202,7 @@ func SetupRoutes(router *gin.Engine, deps Dependencies) {
 			animeGroup.GET("/slug/:slug", anime.GetBySlug)
 			animeGroup.PATCH("/:animeId", anime.Update)
 			animeGroup.DELETE("/:animeId", anime.Delete)
+			animeGroup.POST("/:animeId/sync", anime.Sync)
 		}
 
 		genreGroup := protected.Group("/genres")

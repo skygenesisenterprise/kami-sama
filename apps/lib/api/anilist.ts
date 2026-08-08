@@ -76,4 +76,12 @@ export const anilistApi = {
       `/integrations/anilist/seasonal${qs({ type, page, perPage, season, year })}`
     );
   },
+
+  /** Import media from AniList. Returns the created/updated Anime. */
+  import(anilistId: number) {
+    return apiRequest<{ id: string; title: string }>(
+      `/integrations/anilist/${anilistId}/import`,
+      { method: "POST" }
+    );
+  },
 };
