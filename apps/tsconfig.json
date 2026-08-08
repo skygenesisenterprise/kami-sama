@@ -26,8 +26,11 @@
       "@/*": [
         "./*"
       ],
+      "@/mobile/*": [
+        "./mobile/*"
+      ],
       "@/assets/*": [
-        "./assets"
+        "./assets/*"
       ],
       "@/components/*": [
         "./components/*"
@@ -45,7 +48,7 @@
         "./hooks/*"
       ],
       "@/services/*": [
-        "./services"
+        "./services/*"
       ],
       "@/i18n/*": [
         "./i18n/*"
@@ -59,14 +62,14 @@
       "@/content/*": [
         "./content/*"
       ],
-      "@/constants/*": [
-        "./constants/*"
-      ],
       "@/data/*": [
         "./data/*"
       ],
       "@/utils/*": [
         "./utils/*"
+      ],
+      "@/constents/*": [
+        "./constents/*"
       ]
     },
     "types": [
@@ -77,11 +80,15 @@
   },
   "include": [
     "next-env.d.ts",
+    "expo-env.d.ts",
+    "mobile/expo-env.d.ts",
+    ".expo/types/**/*.ts",
+    "mobile/.expo/types/**/*.ts",
     "**/*.ts",
     "**/*.tsx",
     ".next/types/**/*.ts",
     ".next/dev/types/**/*.ts",
-    "**/*.mts",
+    "**/*.mts"
   ],
   "exclude": [
     "node_modules",

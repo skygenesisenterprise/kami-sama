@@ -8,11 +8,11 @@
     "scheme": "mobile",
     "userInterfaceStyle": "automatic",
     "ios": {
-      "bundleIdentifier": "com.aetherbank.mobile",
+      "bundleIdentifier": "com.kamisama.mobile",
       "icon": "./assets/expo.icon"
     },
     "android": {
-      "package": "com.aetherbank.mobile",
+      "package": "com.kamisama.mobile",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
@@ -45,13 +45,13 @@
       [
         "expo-local-authentication",
         {
-          "faceIDPermission": "Autorisez Aether Meet a utiliser Face ID pour deverrouiller l'application et confirmer votre identite."
+          "faceIDPermission": "Autorisez Kami-Sama a utiliser Face ID pour deverrouiller l'application et confirmer votre identite."
         }
       ],
       [
         "expo-camera",
         {
-          "cameraPermission": "Autorisez Aether Meet a utiliser la camera pour rejoindre une reunion ou scanner une invitation."
+          "cameraPermission": "Autorisez Kami-Sama a utiliser la camera pour rejoindre une reunion ou scanner une invitation."
         }
       ],
       "expo-font",
