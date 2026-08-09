@@ -121,7 +121,40 @@ func (s *DatabaseService) AutoMigrate() error {
 	); err != nil {
 		return err
 	}
-	return s.migrateDuplicateGuardrails()
+	if err := s.migrateDuplicateGuardrails(); err != nil {
+		return err
+	}
+	return s.BackfillAnimeSlugs(context.Background())
+}
+
+// BackfillAnimeSlugs rewrites machine-generated slugs of already-imported
+// catalog rows into human-readable kebab-case slugs derived from their title.
+// Provider sync paths used to store the source id (Plex numeric rating keys,
+// Jellyfin UUIDs) directly as the slug, which made public URLs look like
+// /movies/848238 — this restores readable ones like /movies/the-gorge.
+func (s *DatabaseService) BackfillAnimeSlugs(ctx context.Context) error {
+	if s.isLite {
+		return nil
+	}
+	// Matches Plex numeric rating keys and Jellyfin UUIDs (case-insensitive).
+	const machineSlugPattern = `^([0-9]+|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$`
+	var rows []models.Anime
+	if err := s.db.WithContext(ctx).Unscoped().
+		Where("slug ~* ?", machineSlugPattern).
+		Find(&rows).Error; err != nil {
+		return err
+	}
+	for i := range rows {
+		row := &rows[i]
+		newSlug := uniqueSlug(ctx, s.db, generateSlug(row.Title))
+		if newSlug == row.Slug {
+			continue
+		}
+		if err := s.db.WithContext(ctx).Unscoped().Model(row).Update("slug", newSlug).Error; err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // migrateDuplicateGuardrails adds unique indexes on the provider external IDs

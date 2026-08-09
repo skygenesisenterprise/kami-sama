@@ -44,7 +44,8 @@ export function mapApiItemToAnime(item: ApiContentItem): Anime {
   return {
     id: item.id,
     slug: item.slug,
-    type: item.format === 'movie' ? 'movies' : 'series',
+    type:
+      item.format === 'movie' || item.type === 'movie' ? 'movies' : 'series',
     title: item.title,
     japaneseTitle: item.metadata.japaneseTitle ?? '',
     synopsis: item.metadata.synopsis ?? '',

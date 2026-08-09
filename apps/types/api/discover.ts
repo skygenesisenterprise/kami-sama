@@ -96,6 +96,37 @@ export interface ApiContentItem {
 }
 
 /* ---------------------------------------------------------------------------
+ * Detail page — single item with its seasons & episodes
+ * ------------------------------------------------------------------------- */
+
+export interface ApiEpisode {
+  id: string
+  number: number
+  title: string
+  synopsis?: string
+  thumbnailUrl: string
+  /** Duration in seconds. */
+  duration: number
+  isSubbed: boolean
+  isDubbed: boolean
+}
+
+export interface ApiSeasonDetail {
+  id: string
+  number: number
+  title: string
+  episodeCount: number
+  episodes: ApiEpisode[]
+}
+
+export interface ApiContentDetailResponse {
+  /** The content item header (same shape as catalog/search results). */
+  item: ApiContentItem
+  /** Real seasons with their episodes (empty for movies). */
+  seasons: ApiSeasonDetail[]
+}
+
+/* ---------------------------------------------------------------------------
  * Section types inside the page response
  * ------------------------------------------------------------------------- */
 

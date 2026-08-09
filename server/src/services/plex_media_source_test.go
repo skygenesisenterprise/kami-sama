@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"net/http"
+	"net/url"
 	"testing"
 
 	"gorm.io/driver/sqlite"
@@ -120,6 +121,87 @@ func newPlexTestDB(t *testing.T) *gorm.DB {
 		t.Fatalf("open sqlite: %v", err)
 	}
 	return db
+}
+
+// TestBuildPlexStreamURL_ProducesUniversalStartURL locks the shape of the
+// stream URL handed to the browser: it must target the universal transcode
+// endpoint (not the server root, which serves the Plex web app HTML), carry
+// the media part path, and embed the token so the <video> element can fetch
+// the stream directly.
+func TestBuildPlexStreamURL_ProducesUniversalStartURL(t *testing.T) {
+	_, client := plexTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"MediaContainer":{"Metadata":[{"ratingKey":"1","Media":[{"Part":[{"key":"/library/parts/100/file.mkv"}]}]}]}}`))
+	})
+
+	got, err := BuildPlexStreamURL(context.Background(), client, "1", "native")
+	if err != nil {
+		t.Fatalf("BuildPlexStreamURL: %v", err)
+	}
+
+	u, err := url.Parse(got)
+	if err != nil {
+		t.Fatalf("parsing produced URL: %v", err)
+	}
+	if u.Path != "/video/:/transcode/universal/start" {
+		t.Fatalf("expected universal start path, got %q (full URL: %s)", u.Path, got)
+	}
+	q := u.Query()
+	if q.Get("path") != "/library/parts/100/file.mkv" {
+		t.Fatalf("expected part path query, got %q", q.Get("path"))
+	}
+	if q.Get("X-Plex-Token") != "fake-token" {
+		t.Fatalf("expected token to be embedded, got %q", q.Get("X-Plex-Token"))
+	}
+	if q.Get("protocol") != "http" {
+		t.Fatalf("expected http protocol for a plain http server, got %q", q.Get("protocol"))
+	}
+}
+
+// TestBuildPlexUniversalStreamURL_ProtocolDerivation locks the protocol query
+// param to the base URL scheme, so https (plex.direct) servers don't get an
+// http stream link.
+func TestBuildPlexUniversalStreamURL_ProtocolDerivation(t *testing.T) {
+	cases := []struct {
+		name     string
+		baseURL  string
+		protocol string
+	}{
+		{"http", "http://192.168.1.50:32400", "http"},
+		{"https", "https://abc-123.plex.direct:32400", "https"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := buildPlexUniversalStreamURL(tc.baseURL, "/library/parts/1/file.mkv", "tok", "")
+			if err != nil {
+				t.Fatalf("buildPlexUniversalStreamURL: %v", err)
+			}
+			u, err := url.Parse(got)
+			if err != nil {
+				t.Fatalf("parsing produced URL: %v", err)
+			}
+			if u.Path != "/video/:/transcode/universal/start" {
+				t.Fatalf("expected universal start path, got %q", u.Path)
+			}
+			if q := u.Query(); q.Get("protocol") != tc.protocol {
+				t.Fatalf("expected protocol=%s, got %q", tc.protocol, q.Get("protocol"))
+			}
+		})
+	}
+}
+
+// TestBuildPlexStreamURL_RequiresPartKey ensures the builder fails cleanly
+// when the Plex metadata has no playable media part, instead of producing a
+// malformed URL.
+func TestBuildPlexStreamURL_RequiresPartKey(t *testing.T) {
+	_, client := plexTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"MediaContainer":{"Metadata":[{"ratingKey":"1","Media":[]}]}}`))
+	})
+
+	if _, err := BuildPlexStreamURL(context.Background(), client, "1", "native"); err == nil {
+		t.Fatal("expected error when the item has no media part")
+	}
 }
 
 // TestPlexMediaSource_ListItemsReturnShape locks the return signature of

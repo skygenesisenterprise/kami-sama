@@ -9,7 +9,7 @@ services:
       args:
         NODE_ENV: ${NODE_ENV:-development}
         BUILD_STATIC: ${BUILD_STATIC:-1}
-        DATABASE_URL: postgresql://${PG_USER:-postgres}:${PG_PASS:-postgres}@postgresql:5432/${PG_DB:-postgres}
+        DATABASE_URL: postgresql://${PG_USER:-postgres}:${PG_PASS:-postgres}@postgresql:5432/${PG_DB:-postgres}?sslmode=disable
     image: skygenesisenterprise/kami-sama:${APP_IMAGE_TAG:-latest}
     restart: unless-stopped
     expose:
@@ -46,7 +46,7 @@ services:
       args:
         NODE_ENV: ${NODE_ENV:-development}
         BUILD_STATIC: ${BUILD_STATIC:-1}
-        DATABASE_URL: postgresql://${PG_USER:-postgres}:${PG_PASS:-postgres}@postgresql:5432/${PG_DB:-postgres}
+        DATABASE_URL: postgresql://${PG_USER:-postgres}:${PG_PASS:-postgres}@postgresql:5432/${PG_DB:-postgres}?sslmode=disable
     image: skygenesisenterprise/kami-sama:${APP_IMAGE_TAG:-latest}
     restart: unless-stopped
     expose:
@@ -89,7 +89,7 @@ services:
       POSTGRESQL__USER: ${PG_USER:-postgres}
       POSTGRESQL__NAME: ${PG_DB:-postgres}
       POSTGRESQL__PASSWORD: ${PG_PASS:-postgres}
-      DATABASE_URL: postgresql://${PG_USER:-postgres}:${PG_PASS:-postgres}@postgresql:5432/${PG_DB:-postgres}
+      DATABASE_URL: postgresql://${PG_USER:-postgres}:${PG_PASS:-postgres}@postgresql:5432/${PG_DB:-postgres}?sslmode=disable
       RABBITMQ_URL: amqp://${RABBITMQ_USER:-guest}:${RABBITMQ_PASSWORD:-guest}@rabbitmq:5672
       MEILI_HOST: http://meilisearch:7700
       MEILI_API_KEY: ${MEILI_MASTER_KEY:-dev-master-key}

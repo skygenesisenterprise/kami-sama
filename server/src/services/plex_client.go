@@ -171,6 +171,52 @@ func (c *PlexClient) BaseURL() string { return c.baseURL }
 // Token returns the configured X-Plex-Token.
 func (c *PlexClient) Token() string { return c.token }
 
+// PlexIdentity returns the non-secret identification headers Plex Media
+// Server expects on every authenticated request — sending only the token is
+// enough for JSON queries, but the universal transcode endpoint responds
+// with HTTP 400 if `X-Plex-Client-Identifier`, `X-Plex-Product`,
+// `X-Plex-Version` or `X-Plex-Device` are missing. Callers that proxy raw
+// Plex traffic (the stream proxy for HLS playlists + segments) MUST copy
+// these onto their upstream request or Plex will refuse to start a session.
+//
+// Falls back to deterministic defaults when the persisted source config
+// left any of those fields blank — a frequent case where the operator only
+// stored `url` + `token` and never ran the OAuth connect flow that surfaces
+// a real `clientIdentifier`.
+func (c *PlexClient) PlexIdentity() map[string]string {
+	clientID := c.clientIdentifier
+	if clientID == "" {
+		// Persisted source configs often only carry machineIdentifier.
+		// That field is unique per Plex server, so it's a stable base for
+		// the synthetic Client-Identifier Plex requires on transcode
+		// sessions. Trim the typical hex length so we stay under Plex's
+		// 50-char limit on the header value.
+		if c.machineIdentifier != "" {
+			clientID = "kami-sama-" + c.machineIdentifier
+		} else {
+			clientID = "kami-sama-server"
+		}
+	}
+	device := c.device
+	if device == "" {
+		device = "Server"
+	}
+	product := c.product
+	if product == "" {
+		product = "Kami-Sama"
+	}
+	version := c.version
+	if version == "" {
+		version = "1.0.0"
+	}
+	return map[string]string{
+		"X-Plex-Client-Identifier": clientID,
+		"X-Plex-Product":           product,
+		"X-Plex-Version":           version,
+		"X-Plex-Device":            device,
+	}
+}
+
 // plexResponse mirrors Plex's standard JSON envelope.
 type plexResponse struct {
 	MediaContainer *plexMediaContainer `json:"MediaContainer"`
@@ -353,6 +399,17 @@ func (c *PlexClient) GetItemMetadata(ctx context.Context, ratingKey string) (map
 // GetItemChildren returns the children of a ratingKey (e.g. seasons under a show, episodes under a season).
 func (c *PlexClient) GetItemChildren(ctx context.Context, ratingKey string) ([]map[string]interface{}, error) {
 	mc, err := c.doRequest(ctx, http.MethodGet, "/library/metadata/"+ratingKey+"/children", nil)
+	if err != nil {
+		return nil, err
+	}
+	return mc.Metadata, nil
+}
+
+// GetShowEpisodes returns every episode of a show (flat), each carrying
+// parentIndex (season number), index (episode number) and its own ratingKey.
+// Used to resolve a playable key for a catalog episode at stream time.
+func (c *PlexClient) GetShowEpisodes(ctx context.Context, showKey string) ([]map[string]interface{}, error) {
+	mc, err := c.doRequest(ctx, http.MethodGet, "/library/metadata/"+showKey+"/allLeaves", nil)
 	if err != nil {
 		return nil, err
 	}

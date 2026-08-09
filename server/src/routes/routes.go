@@ -442,7 +442,18 @@ func SetupRoutes(router *gin.Engine, deps Dependencies) {
 		{
 			discoverGroup.GET("", discover.GetDiscover)
 			discoverGroup.GET("/catalog", discover.GetPublishedCatalog)
-			discoverGroup.GET("/sections", discover.GetDiscoverSections)
+			discoverGroup.GET("/search", discover.Search)
+		discoverGroup.GET("/item/:slug", discover.GetItemBySlug)
+		discoverGroup.GET("/item/:slug/stream", discover.GetStreamURL)
+		// Same-origin Plex stream proxy: serves the HLS manifest (rewritten
+		// to point every URL line back at /segment/*) and every variant /
+		// segment which hls.js dereferences through /segment/<origin>. Keeps
+		// the X-Plex-Token off the browser network trace and dodges Plex's
+		// flaky CORS headers.
+		discoverGroup.GET("/item/:slug/stream/proxy", discover.ProxyStream)
+		discoverGroup.GET("/item/:slug/stream/proxy/manifest", discover.ProxyStream)
+		discoverGroup.GET("/item/:slug/stream/proxy/segment/*subpath", discover.ProxyStream)
+		discoverGroup.GET("/sections", discover.GetDiscoverSections)
 			discoverGroup.GET("/continue-watching", discover.GetDiscoverContinueWatching)
 			discoverGroup.GET("/content/:anilistId", discover.GetContentDetail)
 		}

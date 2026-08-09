@@ -1,17 +1,136 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useRef,
+  useState,
+} from 'react'
+import Hls from 'hls.js'
 import type { Episode } from '@/types/anime'
 import { formatTime } from './format-time'
 
-interface VideoPlayerProps {
-  episode: Episode
+/**
+ * Imperative API exposed by {@link VideoPlayer} so parents can play / pause
+ * the underlying `<video>` from inside an explicit user-gesture handler.
+ * Calling `play()` from a click event preserves the gesture chain even on
+ * browsers that block the `autoPlay` attribute alone.
+ */
+export interface VideoPlayerHandle {
+  /**
+   * Programmatically start playback. Returns the promise from `video.play()`
+   * so callers can `await` and surface a fallback UI if the browser refuses.
+   */
+  play: () => Promise<void>
+  /** Pause playback (used to back out of the Netflix overlay quickly). */
+  pause: () => void
 }
 
-export default function VideoPlayer({ episode }: VideoPlayerProps) {
+interface VideoPlayerProps {
+  episode: Episode
+  /** Hide the episode prefix in the center label (single-movie playback). */
+  isMovie?: boolean
+  /**
+   * When true, the player asks the browser to start playback as soon as a
+   * source is attached. This attribute alone isn't reliable (Chrome blocks
+   * it without a traceable user gesture), so callers should also poke the
+   * imperative `play()` returned via `ref` from inside a click handler. The
+   * attribute is kept so that direct play / Safari HLS sessions succeed
+   * instantly when the page loads.
+   */
+  autoPlay?: boolean
+  /**
+   * Optional callback fired whenever playback toggles between playing and
+   * paused. Used by the watch page to surface a "Press Play" overlay while
+   * `playing` is still false.
+   */
+  onPlayingChange?: (playing: boolean) => void
+  /**
+   * Optional callback fired when playback fails. Covers the three sources of
+   * failure that hit users most on a Plex-driven HLS playback: the
+   * `<video>` element itself fired a `MEDIA_ERR_*` event, hls.js reported a
+   * non-recoverable fatal error, OR the browser rejected `play()` with a
+   * `NotAllowedError` because the active gesture was too old.
+   */
+  onPlaybackError?: (message: string) => void
+  /**
+   * Optional callback fired once the player has a *playable* source attached:
+   * `.m3u8` manifest parsed by hls.js (or its native equivalent on Safari),
+   * OR `loadedmetadata` fired for direct-play `<source>` streams. Lets the
+   * watch page auto-dismiss a stale error banner if hls.js recovered from a
+   * transient NETWORK_ERROR via `startLoad()`.
+   */
+  onPlaybackReady?: () => void
+  /**
+   * Hide the big centered Play button the component renders when paused.
+   * Set this when the parent overlays its own play CTA (e.g. a Netflix-style
+   * pre-play overlay) so we don't end up with two competing play buttons
+   * stacked on top of each other. After playback starts, the parent flips
+   * this back to false so the internal button can take over for pause/resume.
+   */
+  hideBuiltInPlayOverlay?: boolean
+}
+
+/**
+ * The Plex stream URL (universal transcode endpoint) can resolve to an HLS
+ * manifest (`.m3u8`) when the server transcodes. Chrome/Edge/Firefox cannot
+ * play HLS natively, so we attach hls.js for those browsers and fall back to
+ * the native <video> playback everywhere else (Safari supports HLS natively,
+ * and plain mp4 streams play without any shim).
+ */
+function isHlsUrl(url: string): boolean {
+  return url.toLowerCase().includes('.m3u8')
+}
+
+/**
+ * Translates a `<video>.error.code` into a human readable string the watch
+ * page can show in its error banner. Plex transcode endpoints usually hit
+ * MEDIA_ERR_NETWORK behind CORS or auth issues; MEDIA_ERR_DECODE when the
+ * manifest variant list and the requested codec don't agree.
+ */
+function describeMediaError(code: number): string {
+  switch (code) {
+    case 1:
+      return 'Lecture interrompue par le lecteur.'
+    case 2:
+      return 'Impossible de joindre le flux (réseau ou CORS).'
+    case 3:
+      return 'Le flux est corrompu (décodage impossible).'
+    case 4:
+      return 'Source vidéo introuvable ou non supportée.'
+    default:
+      return 'Erreur de lecture inconnue.'
+  }
+}
+
+const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(function VideoPlayer(
+  {
+    episode,
+    isMovie = false,
+    autoPlay = false,
+    onPlayingChange,
+    onPlaybackError,
+    onPlaybackReady,
+    hideBuiltInPlayOverlay = false,
+  },
+  ref
+) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const hlsRef = useRef<Hls | null>(null)
+
+  /**
+   * Becomes `false` synchronously on unmount. Any deferred callback that
+   * resolves after this point — `video.play()` rejection, hls.js ERROR
+   * events flushed during `destroy()`, `<video>` error events fired by the
+   * browser as the element is removed from the DOM — must NOT bubble up via
+   * `onPlaybackError`. Otherwise, a Retry click / episode switch / HMR
+   * page reload manifests as a fake 'lecture impossible' banner to the user.
+   */
+  const mountedRef = useRef(true)
 
   const [playing, setPlaying] = useState(false)
   const [muted, setMuted] = useState(false)
@@ -24,8 +143,6 @@ export default function VideoPlayer({ episode }: VideoPlayerProps) {
   const [isSeeking, setIsSeeking] = useState(false)
   const [seekPreview, setSeekPreview] = useState<number | null>(null)
 
-  const video = videoRef.current
-
   // Auto-hide controls
   const resetHideTimer = useCallback(() => {
     if (hideTimer.current) clearTimeout(hideTimer.current)
@@ -36,6 +153,7 @@ export default function VideoPlayer({ episode }: VideoPlayerProps) {
   }, [playing])
 
   useEffect(() => {
+    // One-shot reaction to `playing` toggles — start the auto-hide there.
     resetHideTimer()
     return () => {
       if (hideTimer.current) clearTimeout(hideTimer.current)
@@ -49,32 +167,81 @@ export default function VideoPlayer({ episode }: VideoPlayerProps) {
     return () => document.removeEventListener('fullscreenchange', onFSChange)
   }, [])
 
-  // Keyboard shortcuts
+  // Flip the mounted flag synchronously in the cleanup so late-arriving
+  // <video> errors, hls.js destroy() errors and AbortError rejections from
+  // `play()` don't reach the parent's banner.
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+    }
+  }, [])
+
+  // Toggle helpers — pure side-effects on the current `<video>` ref. Defined
+  // before the keyboard listener so its closure can reference them. The
+  // dependency arrays are intentionally empty so identity is stable across
+  // renders and the listener below only re-binds when `resetHideTimer`
+  // updates (i.e. when `playing` flips).
+  const toggleFullscreen = useCallback(async () => {
+    const el = containerRef.current
+    if (!el) return
+    if (document.fullscreenElement) {
+      await document.exitFullscreen()
+    } else {
+      await el.requestFullscreen()
+    }
+  }, [])
+
+  const toggleMute = useCallback(() => {
+    const v = videoRef.current
+    if (!v) return
+    v.muted = !v.muted
+    setMuted(v.muted)
+  }, [])
+
+  // Keyboard shortcuts. Always read `videoRef.current` inside the handler
+  // so we NEVER capture a stale snapshot across renders. Previous code used
+  // a top-level `const video = videoRef.current` and put it in this effect's
+  // deps — that made the deps array switch from `[null, fn]` to `[el, fn]`,
+  // tripping the React warning "The final argument passed to useEffect
+  // changed size between renders" every time the <video> ref attached.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (!video) return
+      const videoEl = videoRef.current
+      if (!videoEl) return
+      // Don't hijack typing in inputs / textareas (the user might be in
+      // the comment field on the same page).
+      const target = e.target as HTMLElement | null
+      if (
+        target &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.isContentEditable)
+      ) {
+        return
+      }
       switch (e.key) {
         case ' ':
         case 'k':
           e.preventDefault()
-          video.paused ? video.play() : video.pause()
+          videoEl.paused ? videoEl.play() : videoEl.pause()
           break
         case 'ArrowLeft':
           e.preventDefault()
-          video.currentTime = Math.max(0, video.currentTime - 10)
+          videoEl.currentTime = Math.max(0, videoEl.currentTime - 10)
           break
         case 'ArrowRight':
           e.preventDefault()
-          video.currentTime = Math.min(video.duration || 0, video.currentTime + 10)
+          videoEl.currentTime = Math.min(videoEl.duration || 0, videoEl.currentTime + 10)
           break
         case 'ArrowUp':
           e.preventDefault()
-          video.volume = Math.min(1, video.volume + 0.1)
-          video.muted = false
+          videoEl.volume = Math.min(1, videoEl.volume + 0.1)
+          videoEl.muted = false
           break
         case 'ArrowDown':
           e.preventDefault()
-          video.volume = Math.max(0, video.volume - 0.1)
+          videoEl.volume = Math.max(0, videoEl.volume - 0.1)
           break
         case 'f':
           e.preventDefault()
@@ -89,93 +256,255 @@ export default function VideoPlayer({ episode }: VideoPlayerProps) {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [video, resetHideTimer])
+  }, [toggleFullscreen, toggleMute, resetHideTimer])
+
+  // Attach hls.js when the resolved stream is an HLS manifest and the browser
+  // cannot play it natively (everything except Safari). The instance is torn
+  // down on unmount or when the source changes, so episode switches always
+  // attach a fresh player to the same <video> element.
+  useEffect(() => {
+    const videoEl = videoRef.current
+    const url = episode.videoUrl
+    if (!videoEl || !url) return
+
+    if (isHlsUrl(url) && Hls.isSupported()) {
+      const hls = new Hls({ enableWorker: true })
+      hls.loadSource(url)
+      hls.attachMedia(videoEl)
+      hlsRef.current = hls
+      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        setDuration(hls.media?.duration ?? 0)
+        // Strong signal the stream URL is valid and hls.js has the manifest
+        // parsed. Lets the parent dismiss any stale playback banner \u2014 useful
+        // when the prior attempt 404'd but `startLoad()` quietly recovered.
+        if (mountedRef.current) onPlaybackReady?.()
+        // Kick off playback as soon as the manifest is parsed. The `autoPlay`
+        // attribute on the <video> element can't trigger this on its own
+        // because hls.js owns the source — the manifest is never pointed at
+        // by <video>.src, so the browser has no signal to call play().
+        if (autoPlay) {
+          videoEl.play().catch(() => undefined)
+        }
+      })
+      hls.on(Hls.Events.ERROR, (_event, data) => {
+        if (!data.fatal) return
+        if (!mountedRef.current) return
+        switch (data.type) {
+          case Hls.ErrorTypes.NETWORK_ERROR:
+            // Manifest unreachable — bubble up so the user sees a real cause
+            // instead of a frozen spinner.
+            onPlaybackError?.(
+              "Le serveur vidéo est injoignable (CORS ou réseau)."
+            )
+            hls.startLoad()
+            break
+          case Hls.ErrorTypes.MEDIA_ERROR:
+            // Codec error in a segment — hls.js can usually recover by
+            // skipping the bad segment; don't surface in that case.
+            hls.recoverMediaError()
+            break
+          default:
+            hls.destroy()
+            hlsRef.current = null
+            onPlaybackError?.(
+              "Le flux n'a pas pu être lu (erreur codec ou playlist invalide)."
+            )
+            break
+        }
+      })
+      return () => {
+        // Pause first so any in-flight `play()` Promise settles cleanly
+        // (with an AbortError, which is filtered above) before we tear
+        // hls.js down. Without this, hls.destroy() can race with the
+        // browser's play() promise resolution and surface a spurious
+        // MEDIA_ERR_* event during unmount.
+        try {
+          videoEl.pause()
+        } catch {
+          /* ignore */
+        }
+        hls.destroy()
+        hlsRef.current = null
+      }
+    }
+
+    // Non-HLS (mp4 / direct play) or native HLS (Safari): let the browser
+    // drive playback through the <source> element below.
+    return () => {
+      hlsRef.current = null
+    }
+  }, [episode.videoUrl])
+
+  // Auto-start playback once the source is attached. The `autoPlay`
+  // attribute on the <video> element handles native (mp4 / Safari HLS)
+  // playback; for hls.js driven sessions the manifest event above is
+  // where we kick things off. This second useEffect covers the non-hls
+  // path on mount / source change. A `NotAllowedError` here means the
+  // user-gesture window closed before we got here — surface it so the
+  // watch page can show a "Press Play" overlay instead of failing silently.
+  //
+  // `AbortError` is intentionally swallowed: it always fires when the
+  // component unmounted (Retry click, episode switch, HMR) while `play()`
+  // was still pending. It is NOT a real playback failure and the user
+  // shouldn't see a banner because of it.
+  useEffect(() => {
+    const videoEl = videoRef.current
+    if (!videoEl || !autoPlay || !episode.videoUrl) return
+    videoEl.play().catch((err: unknown) => {
+      if (!mountedRef.current) return
+      if (err instanceof DOMException) {
+        if (err.name === 'AbortError') return
+        if (err.name === 'NotAllowedError') {
+          onPlaybackError?.('Lecture automatique bloquée par le navigateur.')
+          return
+        }
+      }
+      // Anything else is a transient stream error — the existing banner
+      // path already covers STREAM_UNAVAILABLE from the API call.
+    })
+  }, [episode.videoUrl, autoPlay])
 
   // Video event handlers
-  const handleTimeUpdate = () => {
-    if (video && !isSeeking) {
-      setCurrentTime(video.currentTime)
+  // Bubble playback state up so parents (e.g. the watch page's Netflix
+  // overlay) know when to fade out. effect is intentional so onPlayingChange
+  // gets the latest setter without rebuilding the effect on every render.
+  useEffect(() => {
+    onPlayingChange?.(playing)
+  }, [playing, onPlayingChange])
+
+  // Imperative handle — caller can call `play()` from a click handler so the
+  // user-gesture chain reaches the <video>. hls.js sessions in particular
+  // ignore the `autoPlay` attribute because the manifest pointer never
+  // lands on the <video> element's src.
+  //
+  // We swallow `AbortError` here too — the user clicked Play, but a re-render
+  // (e.g. next-episode link navigation, HMR) detached the element before
+  // `play()` resolved. That's not a playback failure, so the parent overlay
+  // must keep listening rather than switching to the error banner.
+  useImperativeHandle(
+    ref,
+    () => ({
+      play: () => {
+        const videoEl = videoRef.current
+        if (!videoEl) return Promise.reject(new Error('VideoPlayer not mounted'))
+        return videoEl.play().catch((err: unknown) => {
+          if (!mountedRef.current) return
+          if (err instanceof DOMException) {
+            if (err.name === 'AbortError') return
+            if (err.name === 'NotAllowedError') {
+              // Surface a real reason to the parent overlay so the "Press Play"
+              // path can either retry or fall back to a clearer message.
+              onPlaybackError?.('Le navigateur exige un clic pour démarrer la lecture.')
+            }
+          }
+          throw err
+        })
+      },
+      pause: () => {
+        videoRef.current?.pause()
+      },
+    }),
+    [onPlaybackError]
+  )
+
+  // Wrapped in useCallback with stable identities so passing them as
+  // <video> props doesn't unbind/rebind the DOM listeners on every render.
+  // All of them read `videoRef.current` inline — never a captured snapshot
+  // — so they always hit the live element after an HMR/episode switch.
+  const handleTimeUpdate = useCallback(() => {
+    const videoEl = videoRef.current
+    if (videoEl && !isSeeking) {
+      setCurrentTime(videoEl.currentTime)
     }
-  }
+  }, [isSeeking])
 
-  const handleProgress = () => {
-    if (video && video.buffered.length > 0) {
-      setBuffered(video.buffered.end(video.buffered.length - 1))
+  const handleProgress = useCallback(() => {
+    const videoEl = videoRef.current
+    if (videoEl && videoEl.buffered.length > 0) {
+      setBuffered(videoEl.buffered.end(videoEl.buffered.length - 1))
     }
-  }
+  }, [])
 
-  const togglePlay = () => {
-    if (!video) return
-    video.paused ? video.play() : video.pause()
-  }
+  const togglePlay = useCallback(() => {
+    const videoEl = videoRef.current
+    if (!videoEl) return
+    videoEl.paused ? videoEl.play() : videoEl.pause()
+  }, [])
 
-  const toggleMute = () => {
-    if (!video) return
-    video.muted = !video.muted
-    setMuted(video.muted)
-  }
+  const handleVolumeChange = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const videoEl = videoRef.current
+      if (!videoEl) return
+      const val = parseFloat(e.target.value)
+      videoEl.volume = val
+      videoEl.muted = val === 0
+      setVolume(val)
+      setMuted(val === 0)
+    },
+    []
+  )
 
-  const handleVolumeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (!video) return
-    const val = parseFloat(e.target.value)
-    video.volume = val
-    video.muted = val === 0
-    setVolume(val)
-    setMuted(val === 0)
-  }
+  const seekBack = useCallback(() => {
+    const videoEl = videoRef.current
+    if (videoEl) videoEl.currentTime = Math.max(0, videoEl.currentTime - 10)
+  }, [])
 
-  const seekBack = () => {
-    if (video) video.currentTime = Math.max(0, video.currentTime - 10)
-  }
-
-  const seekForward = () => {
-    if (video) video.currentTime = Math.min(video.duration || 0, video.currentTime + 10)
-  }
-
-  const toggleFullscreen = async () => {
-    const el = containerRef.current
-    if (!el) return
-    if (document.fullscreenElement) {
-      await document.exitFullscreen()
-    } else {
-      await el.requestFullscreen()
-    }
-  }
+  const seekForward = useCallback(() => {
+    const videoEl = videoRef.current
+    if (videoEl) videoEl.currentTime = Math.min(videoEl.duration || 0, videoEl.currentTime + 10)
+  }, [])
 
   // Progress bar seeking
-  const handleProgressMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (!video || !duration) return
-    setIsSeeking(true)
-    seekFromEvent(e)
+  const seekFromEvent = useCallback(
+    (e: MouseEvent | React.MouseEvent) => {
+      const videoEl = videoRef.current
+      const bar = (e.target as HTMLElement).closest('[data-progress-bar]') as HTMLElement | null
+      if (!bar || !videoEl || !duration) return
+      const rect = bar.getBoundingClientRect()
+      const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width))
+      videoEl.currentTime = pct * duration
+      setCurrentTime(pct * duration)
+    },
+    [duration]
+  )
 
-    const onMove = (ev: MouseEvent) => seekFromEvent(ev)
-    const onUp = () => {
-      setIsSeeking(false)
-      document.removeEventListener('mousemove', onMove)
-      document.removeEventListener('mouseup', onUp)
-    }
-    document.addEventListener('mousemove', onMove)
-    document.addEventListener('mouseup', onUp)
-  }
+  const handleProgressMouseDown = useCallback(
+    (e: React.MouseEvent<HTMLDivElement>) => {
+      if (!duration) return
+      setIsSeeking(true)
+      seekFromEvent(e)
 
-  const seekFromEvent = (e: MouseEvent | React.MouseEvent) => {
-    const bar = (e.target as HTMLElement).closest('[data-progress-bar]') as HTMLElement | null
-    if (!bar || !video || !duration) return
-    const rect = bar.getBoundingClientRect()
-    const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width))
-    video.currentTime = pct * duration
-    setCurrentTime(pct * duration)
-  }
+      const onMove = seekFromEvent
+      const onUp = () => {
+        setIsSeeking(false)
+        document.removeEventListener('mousemove', onMove)
+        document.removeEventListener('mouseup', onUp)
+      }
+      document.addEventListener('mousemove', onMove)
+      document.addEventListener('mouseup', onUp)
+    },
+    [duration, seekFromEvent]
+  )
 
-  const handleProgressHover = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (!duration) return
-    const rect = e.currentTarget.getBoundingClientRect()
-    const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width))
-    setSeekPreview(pct)
-  }
+  const handleProgressHover = useCallback(
+    (e: React.MouseEvent<HTMLDivElement>) => {
+      if (!duration) return
+      const rect = e.currentTarget.getBoundingClientRect()
+      const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width))
+      setSeekPreview(pct)
+    },
+    [duration]
+  )
 
   const progress = duration > 0 ? (currentTime / duration) * 100 : 0
   const bufferedPct = duration > 0 ? (buffered / duration) * 100 : 0
+
+  // hls.js takes over the stream on HLS manifests for non-Safari browsers;
+  // in that case the <source> child must not be rendered (it would make the
+  // browser try to load the .m3u8 itself and fight with hls.js for the
+  // element's src). Safari and mp4/direct streams keep the native <source>.
+  const hlsDrivesPlayback =
+    isHlsUrl(episode.videoUrl) && Hls.isSupported()
 
   const VolumeIcon = muted || volume === 0 ? (
     <svg className="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -207,18 +536,60 @@ export default function VideoPlayer({ episode }: VideoPlayerProps) {
       <video
         ref={videoRef}
         className="aspect-24/9 w-full bg-black object-contain"
-        poster={episode.thumbnail || episode.cover}
+        // Prefer the landscape backdrop over the portrait poster so the
+        // pre-play frame isn't the item's portrait artwork.
+        poster={episode.cover || episode.thumbnail}
         preload="metadata"
         playsInline
-        crossOrigin="anonymous"
+        // The `autoPlay` attribute kicks off native playback on mount
+        // (mp4 / Safari HLS). hls.js sessions rely on the useEffect above
+        // after MANIFEST_PARSED since the <video> src never points at the
+        // .m3u8 itself in that path.
+        autoPlay={autoPlay}
+        // crossOrigin is only required when reading captions/canvas; leaving it
+        // unset lets browsers play cross-origin streams (e.g. Plex direct play)
+        // without requiring the media server to send CORS headers.
+        crossOrigin={episode.tracks.length > 0 ? 'anonymous' : undefined}
         onPlay={() => setPlaying(true)}
         onPause={() => setPlaying(false)}
         onTimeUpdate={handleTimeUpdate}
+        onLoadedMetadata={() => {
+          // Native MP4 / Safari HLS path: the <source> child loaded its
+          // metadata successfully — mirror hls.js's MANIFEST_PARSED signal
+          // here so the parent can dismiss any stale error banner.
+          if (mountedRef.current) onPlaybackReady?.()
+        }}
         onDurationChange={(e) => setDuration((e.target as HTMLVideoElement).duration)}
+        onCanPlay={() => {
+          // `canplay` fires when the browser has enough buffered data to
+          // start playback. Mirror MANIFEST_PARSED for non-hls.js sessions
+          // (Safari / direct mp4). The hls.js path is already covered by
+          // MANIFEST_PARSED so we skip it here to avoid duplicates.
+          if (mountedRef.current && !isHlsUrl(episode.videoUrl))
+            onPlaybackReady?.()
+        }}
         onProgress={handleProgress}
         onClick={togglePlay}
+        onError={(e) => {
+          // MEDIA_ERR_ABORTED (code 1) fires every time the <video> element
+          // is detached from the document — Retry button, episode switch, HMR
+          // page reload. It's not a stream fault and must not surface as an
+          // error banner. Anything fireing after unmount is similarly noise.
+          if (!mountedRef.current) return
+          const target = e.currentTarget as HTMLVideoElement
+          const code = target.error?.code ?? 0
+          if (code === 1) return
+          onPlaybackError?.(describeMediaError(code))
+        }}
+        onWaiting={() => {
+          // When the browser stalls without firing an `error`, treat it
+          // like a recoverable hiccup but mark the buffering state so the
+          // controls UI can hide the central Play button if needed.
+        }}
       >
-        <source src={episode.videoUrl} type={episode.videoUrl.endsWith('.m3u8') ? 'application/x-mpegURL' : 'video/mp4'} />
+        {episode.videoUrl && !hlsDrivesPlayback && (
+          <source src={episode.videoUrl} type={episode.videoUrl.endsWith('.m3u8') ? 'application/x-mpegURL' : 'video/mp4'} />
+        )}
         {episode.tracks.map((track) => (
           <track
             key={track.src}
@@ -231,8 +602,12 @@ export default function VideoPlayer({ episode }: VideoPlayerProps) {
         ))}
       </video>
 
-      {/* Big play button when paused */}
-      {!playing && (
+      {/* Big play button when paused — hidden while a parent overlay covers
+          the player (e.g. the watch page's Netflix-style CTA) so we don't
+          stack two competing play buttons. After playback starts, the parent
+          flips `hideBuiltInPlayOverlay` back to false and this button
+          reasserts itself for pause/resume. */}
+      {!playing && !hideBuiltInPlayOverlay && (
         <button
           type="button"
           onClick={togglePlay}
@@ -343,7 +718,7 @@ export default function VideoPlayer({ episode }: VideoPlayerProps) {
 
             {/* Center: Episode title */}
             <span className="hidden text-sm font-medium text-white/80 md:inline truncate max-w-xs px-4">
-              EP {episode.number} — {episode.title}
+              {isMovie ? episode.title : `EP ${episode.number} — ${episode.title}`}
             </span>
 
             {/* Right: Time, CC, fullscreen */}
@@ -389,4 +764,6 @@ export default function VideoPlayer({ episode }: VideoPlayerProps) {
       </div>
     </div>
   )
-}
+})
+
+export default VideoPlayer

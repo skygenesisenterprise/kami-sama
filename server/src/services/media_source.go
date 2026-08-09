@@ -222,7 +222,7 @@ func (s *MediaSourceService) syncJellyfinLibrary(ctx context.Context, libraryID 
 		if result.Error == gorm.ErrRecordNotFound {
 			anime := models.Anime{
 				Common:         models.Common{ID: sourceID, CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()},
-				Slug:           sourceID,
+				Slug:           uniqueSlug(ctx, s.db, generateSlug(item["name"].(string))),
 				Title:          item["name"].(string),
 				JapaneseTitle:  getString(item, "originalTitle"),
 				Synopsis:       getString(item, "overview"),

@@ -446,6 +446,10 @@
     },
     "search": {
       "placeholder": "Entrez le nom d'un film ou série que vous souhaiterez regarder",
+      "searching": "Recherche en cours…",
+      "errorTitle": "La recherche a échoué",
+      "retry": "Réessayer",
+      "resultsCount": "{count, plural, one {# résultat} other {# résultats}}",
       "recentTitle": "Résultats de recherche récente",
       "clearRecent": "Effacer les recherches récentes",
       "noResults": "Aucun résultat trouvé",
@@ -1199,6 +1203,21 @@
       "contentWarning": "Avertissement lié au contenu",
       "seeMore": "VOIR PLUS",
       "seeLess": "VOIR MOINS"
+    },
+    "stream": {
+      "loading": "Préparation du lecteur…",
+      "unavailableTitle": "Vidéo indisponible",
+      "unavailableDescription": "Ce titre n'a pas encore de source de lecture configurée (aucune source Plex reliée).",
+      "retry": "Réessayer",
+      "error": "Source de lecture indisponible.",
+      "playbackErrorTitle": "Lecture impossible",
+      "sourceUnreachableTitle": "Serveur Plex injoignable",
+      "sourceUnreachableDescription": "Le serveur Plex configuré ne répond pas (HLS indisponible). Vérifiez qu'il est en ligne et joignable depuis votre serveur Kami-Sama, ou utilisez son adresse réseau locale."
+    },
+    "preview": {
+      "kicker": "À regarder",
+      "playLabel": "Lecture",
+      "episodeBadge": "Saison {season} · Épisode {number}"
     },
     "actions": {
       "reply": "Répondre",

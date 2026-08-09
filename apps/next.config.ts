@@ -5,6 +5,29 @@ const withNextIntl = createNextIntlPlugin("./i18n/request.ts");
 const isProduction = process.env.NODE_ENV === "production";
 const isStaticWebBuild = process.env.BUILD_WEB_STATIC === "true";
 
+// Shared image allow-list used by both the static export and the standard
+// (server-rendered) builds so artwork hosts stay in sync. The explicit type
+// keeps the object literals contextually typed (e.g. `protocol` stays the
+// "https"/"http" literal union) exactly like the inline arrays did.
+const imageLocalPatterns: NonNullable<NextConfig["images"]>["localPatterns"] = [
+  // Allow local assets (public/) and the server-side Plex artwork
+  // proxy — its encoded path arrives as a query string. `search` is
+  // omitted so any query is accepted for these paths.
+  { pathname: "/**" },
+  { pathname: "/api/v1/integrations/plex/image" },
+];
+const imageRemotePatterns: NonNullable<NextConfig["images"]>["remotePatterns"] = [
+  { protocol: "https", hostname: "kami-sama.tv", pathname: "/**" },
+  { protocol: "https", hostname: "api.dicebear.com", pathname: "/**" },
+  { protocol: "https", hostname: "avatars.githubusercontent.com", pathname: "/**" },
+  { protocol: "https", hostname: "images.unsplash.com", pathname: "/**" },
+  // AniList artwork CDN (cover art, banners, backdrops) serves images from
+  // s1–s4.anilist.co and img.anilist.co.
+  { protocol: "https", hostname: "*.anilist.co", pathname: "/**" },
+  { protocol: "http", hostname: "127.0.0.1", pathname: "/**" },
+  { protocol: "http", hostname: "localhost", pathname: "/**" },
+];
+
 const nextConfig: NextConfig = {
   // Vidstack ships as ESM with non-standard `exports` conditions (e.g.
   // `development`, `deno`) and is verified to need transpilation under
@@ -27,21 +50,8 @@ const nextConfig: NextConfig = {
         trailingSlash: true,
         images: {
           unoptimized: true,
-          localPatterns: [
-            // Allow local assets (public/) and the server-side Plex artwork
-            // proxy — its encoded path arrives as a query string. `search` is
-            // omitted so any query is accepted for these paths.
-            { pathname: "/**" },
-            { pathname: "/api/v1/integrations/plex/image" },
-          ],
-          remotePatterns: [
-            { protocol: "https", hostname: "kami-sama.tv", pathname: "/**" },
-            { protocol: "https", hostname: "api.dicebear.com", pathname: "/**" },
-            { protocol: "https", hostname: "avatars.githubusercontent.com", pathname: "/**" },
-            { protocol: "https", hostname: "images.unsplash.com", pathname: "/**" },
-            { protocol: "http", hostname: "127.0.0.1", pathname: "/**" },
-            { protocol: "http", hostname: "localhost", pathname: "/**" },
-          ],
+          localPatterns: imageLocalPatterns,
+          remotePatterns: imageRemotePatterns,
         },
       }
     : {
@@ -55,21 +65,8 @@ const nextConfig: NextConfig = {
 
   ...(!isStaticWebBuild && {
     images: {
-      localPatterns: [
-        // Allow local assets (public/) and the server-side Plex artwork
-        // proxy — its encoded path arrives as a query string. `search` is
-        // omitted so any query is accepted for these paths.
-        { pathname: "/**" },
-        { pathname: "/api/v1/integrations/plex/image" },
-      ],
-      remotePatterns: [
-        { protocol: "https", hostname: "kami-sama.tv", pathname: "/**" },
-        { protocol: "https", hostname: "api.dicebear.com", pathname: "/**" },
-        { protocol: "https", hostname: "avatars.githubusercontent.com", pathname: "/**" },
-        { protocol: "https", hostname: "images.unsplash.com", pathname: "/**" },
-        { protocol: "http", hostname: "127.0.0.1", pathname: "/**" },
-        { protocol: "http", hostname: "localhost", pathname: "/**" },
-      ],
+      localPatterns: imageLocalPatterns,
+      remotePatterns: imageRemotePatterns,
     },
   }),
 

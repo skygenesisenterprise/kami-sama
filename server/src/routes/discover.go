@@ -1,8 +1,12 @@
 package routes
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -292,6 +296,618 @@ func (h *DiscoverHandler) GetPublishedCatalog(c *gin.Context) {
 	utils.Success(c, http.StatusOK, gin.H{"hero": hero, "sections": sections})
 }
 
+// Search returns published catalog items matching the query, shaped as the
+// same ApiContentItem used by the rest of the public discover API so public
+// pages (e.g. /search) can render results directly with the existing adapters.
+func (h *DiscoverHandler) Search(c *gin.Context) {
+	q := strings.TrimSpace(c.Query("q"))
+	if q == "" {
+		utils.Error(c, utils.ErrValidationFailed)
+		return
+	}
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	if page < 1 {
+		page = 1
+	}
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "24"))
+	if limit < 1 || limit > 50 {
+		limit = 24
+	}
+
+	items, total, err := h.deps.AnimeService.List(c.Request.Context(), interfaces.ListAnimeOpts{
+		Page:   page,
+		Limit:  limit,
+		Query:  q,
+		Status: "published",
+		Sort:   "rating",
+	})
+	if err != nil {
+		h.deps.Logger.Error("failed to search published catalog", "query", q, "error", err)
+		utils.Error(c, err)
+		return
+	}
+
+	content := make([]ApiContentItem, 0, len(items))
+	for i := range items {
+		content = append(content, animeModelToContentItem(&items[i]))
+	}
+	utils.Success(c, http.StatusOK, gin.H{"items": content, "total": total})
+}
+
+// ──────────────────────────────────────────────────────────────
+// Detail — single published item by slug (public series/movie pages)
+// ──────────────────────────────────────────────────────────────
+
+type ApiEpisode struct {
+	ID           string  `json:"id"`
+	Number       int     `json:"number"`
+	Title        string  `json:"title"`
+	Synopsis     string  `json:"synopsis,omitempty"`
+	ThumbnailUrl string  `json:"thumbnailUrl"`
+	Duration     float64 `json:"duration"`
+	IsSubbed     bool    `json:"isSubbed"`
+	IsDubbed     bool    `json:"isDubbed"`
+}
+
+type ApiSeasonDetail struct {
+	ID           string       `json:"id"`
+	Number       int          `json:"number"`
+	Title        string       `json:"title"`
+	EpisodeCount int          `json:"episodeCount"`
+	Episodes     []ApiEpisode `json:"episodes"`
+}
+
+type ApiContentDetailResponse struct {
+	Item    ApiContentItem    `json:"item"`
+	Seasons []ApiSeasonDetail `json:"seasons"`
+}
+
+// GetItemBySlug returns a single published catalog item — plus its seasons and
+// episodes — by slug. It is the real data feed behind the public series/movie
+// detail pages (previously served by mock data).
+func (h *DiscoverHandler) GetItemBySlug(c *gin.Context) {
+	slug := strings.TrimSpace(c.Param("slug"))
+	if slug == "" {
+		utils.Error(c, utils.ErrValidationFailed)
+		return
+	}
+	item, err := h.publishedItemBySlug(c.Request.Context(), slug)
+	if err != nil {
+		utils.Error(c, err)
+		return
+	}
+	utils.Success(c, http.StatusOK, animeModelToDetail(item))
+}
+
+// publishedItemBySlug resolves a published catalog item by its slug, falling
+// back to the row ID for legacy URLs that carried the provider source id
+// (e.g. /movies/848238) before slugs became human-readable.
+func (h *DiscoverHandler) publishedItemBySlug(ctx context.Context, slug string) (*models.Anime, error) {
+	item, err := h.deps.AnimeService.GetBySlug(ctx, slug)
+	if appErr := utils.AsAppError(err); appErr.Status == http.StatusNotFound {
+		if legacy, legacyErr := h.deps.AnimeService.GetByID(ctx, slug); legacyErr == nil {
+			item = legacy
+			err = nil
+		}
+	}
+	if err != nil {
+		return nil, err
+	}
+	// Public safety: only published content is exposed through the public API.
+	if item.Status != "published" {
+		return nil, utils.NewError(http.StatusNotFound, "ANIME_NOT_FOUND", "The requested anime was not found.", nil)
+	}
+	return item, nil
+}
+
+// plexClient resolves the configured Plex client, mirroring the admin
+// integration's resolution order: persisted source config, active media
+// source, then environment config.
+func (h *DiscoverHandler) plexClient(ctx context.Context) (*services.PlexClient, error) {
+	if h.deps.LibraryService != nil {
+		if cfg, err := h.deps.LibraryService.GetBySourceType(ctx, "plex"); err == nil && cfg != nil && cfg.Enabled {
+			if client, cerr := services.PlexClientFromSourceConfig(cfg); cerr == nil && client.Enabled() {
+				return client, nil
+			}
+		}
+	}
+	if h.deps.MediaSourceService != nil {
+		if plex := h.deps.MediaSourceService.Plex(); plex != nil {
+			if client := plex.GetClient(); client != nil && client.Enabled() {
+				return client, nil
+			}
+		}
+	}
+	cfg := h.deps.Config.MediaSource.Plex
+	if cfg.URL != "" && cfg.Token != "" {
+		return services.NewPlexClient(services.PlexConfig{
+			URL:              cfg.URL,
+			Token:            cfg.Token,
+			ClientIdentifier: cfg.ClientIdentifier,
+			Product:          cfg.Product,
+			Version:          cfg.Version,
+			Device:           cfg.Device,
+			Timeout:          cfg.Timeout,
+		}), nil
+	}
+	return nil, utils.NewError(http.StatusServiceUnavailable, "PLEX_DISABLED", "Plex integration is not enabled or not configured.", nil)
+}
+
+// plexSourceIDFromMetadata reads the Plex rating key persisted on a catalog
+// row (metadata.sourceId), which is the show key for series and the item key
+// for movies.
+func plexSourceIDFromMetadata(a *models.Anime) string {
+	if len(a.Metadata) == 0 {
+		return ""
+	}
+	var meta map[string]any
+	if err := json.Unmarshal(a.Metadata, &meta); err != nil {
+		return ""
+	}
+	if id, ok := meta["sourceId"].(string); ok {
+		return id
+	}
+	return ""
+}
+
+// GetStreamURL returns a playable stream URL for a published item — a movie
+// streams directly from the item's provider key, a series resolves the
+// requested episode against the provider. Titles without a provider source
+// (e.g. AniList-only catalog entries) get a STREAM_UNAVAILABLE error so the
+// player can show a friendly state.
+func (h *DiscoverHandler) GetStreamURL(c *gin.Context) {
+	ctx := c.Request.Context()
+	slug := strings.TrimSpace(c.Param("slug"))
+	episodeID := strings.TrimSpace(c.Query("episodeId"))
+	if slug == "" {
+		utils.Error(c, utils.ErrValidationFailed)
+		return
+	}
+	item, err := h.publishedItemBySlug(ctx, slug)
+	if err != nil {
+		utils.Error(c, err)
+		return
+	}
+	if item.Source != "plex" {
+		utils.Error(c, utils.NewError(http.StatusNotFound, "STREAM_UNAVAILABLE", "This title has no streamable source yet.", nil))
+		return
+	}
+	client, err := h.plexClient(ctx)
+	if err != nil {
+		utils.Error(c, err)
+		return
+	}
+
+	ratingKey := ""
+	isMovie := false
+	if episodeID == "" {
+		// Movie (or standalone item): the catalog row itself carries the key.
+		isMovie = true
+		ratingKey = plexSourceIDFromMetadata(item)
+		if ratingKey == "" {
+			utils.Error(c, utils.NewError(http.StatusNotFound, "STREAM_UNAVAILABLE", "This title has no streamable source yet.", nil))
+			return
+		}
+	} else {
+		// Series: locate the episode row (with its season number) and resolve
+		// the matching provider key on demand.
+		var episode *models.Episode
+		seasonNumber := 0
+		for i := range item.Seasons {
+			season := &item.Seasons[i]
+			for j := range season.Episodes {
+				if season.Episodes[j].ID == episodeID {
+					episode = &season.Episodes[j]
+					seasonNumber = season.Number
+					break
+				}
+			}
+			if episode != nil {
+				break
+			}
+		}
+		if episode == nil {
+			utils.Error(c, utils.ErrEpisodeNotFound)
+			return
+		}
+		showKey := plexSourceIDFromMetadata(item)
+		if showKey == "" {
+			utils.Error(c, utils.NewError(http.StatusNotFound, "STREAM_UNAVAILABLE", "This title has no streamable source yet.", nil))
+			return
+		}
+		ratingKey, err = services.ResolvePlexEpisodeKey(ctx, client, showKey, seasonNumber, episode.Number)
+		if err != nil {
+			utils.Error(c, err)
+			return
+		}
+	}
+
+	streamURL, err := services.BuildPlexStreamURL(ctx, client, ratingKey, "native")
+	if err != nil {
+		utils.Error(c, err)
+		return
+	}
+	utils.Success(c, http.StatusOK, gin.H{
+		"streamUrl": streamURL,
+		"title":     item.Title,
+		"isMovie":   isMovie,
+	})
+}
+
+// ProxyStream serves the playable HLS manifest (and every segment / variant
+// it references) as a *same-origin* asset. Plex's universal transcode
+// endpoint only sends CORS headers inconsistently, so handing its URL
+// directly to hls.js yields NETWORK_ERROR on every browser except the user's
+// Plex host. This proxy resolves the slug + optional episodeId server-side,
+// fetches the upstream URL with the X-Plex-Token attached as a HEADER
+// (Plex accepts both header and query token auth), and writes the response
+// back to the browser untouched.
+//
+// Two routes feed into this handler:
+//
+//   - GET /api/v1/discover/item/:slug/stream/proxy/manifest
+//                                       -> master playlist (rewritten)
+//   - GET /api/v1/discover/item/:slug/stream/proxy/segment/*origin
+//                                       -> segment / variant proxied from Plex
+//
+// We don't rely on relative URL resolution against the manifest URL because
+// Plex's variants carry ABSOLUTE URLs (browser would CORS-fail) and segments
+// resolve to a directory we don't control. Instead the manifest rewriter
+// turns every URL line in the playlist into an absolute URL pointing at our
+// own `/segment/<origin>` endpoint with the upstream path URL-encoded in
+// the trailing segment. hls.js then issues fully-absolute same-origin
+// requests that always land back in this same handler.
+func (h *DiscoverHandler) ProxyStream(c *gin.Context) {
+	ctx := c.Request.Context()
+	slug := strings.TrimSpace(c.Param("slug"))
+	episodeID := strings.TrimSpace(c.Query("episodeId"))
+	// gin returns the wildcard without a leading slash for paths like
+	// /proxy/segment/foo.ts and as "/" for the bare /proxy route. Normalise.
+	subpath := strings.TrimLeft(strings.TrimPrefix(c.Param("subpath"), "/"), "/")
+
+	if slug == "" {
+		utils.Error(c, utils.ErrValidationFailed)
+		return
+	}
+
+	item, err := h.publishedItemBySlug(ctx, slug)
+	if err != nil {
+		utils.Error(c, err)
+		return
+	}
+	if item.Source != "plex" {
+		utils.Error(c, utils.NewError(http.StatusNotFound, "STREAM_UNAVAILABLE", "This title has no streamable source yet.", nil))
+		return
+	}
+
+	client, err := h.plexClient(ctx)
+	if err != nil {
+		utils.Error(c, err)
+		return
+	}
+
+	ratingKey := ""
+	if episodeID == "" {
+		// Movie (or standalone item): the catalog row itself carries the key.
+		ratingKey = plexSourceIDFromMetadata(item)
+		if ratingKey == "" {
+			utils.Error(c, utils.NewError(http.StatusNotFound, "STREAM_UNAVAILABLE", "This title has no streamable source yet.", nil))
+			return
+		}
+	} else {
+		// Series: locate the episode row (with its season number) and resolve
+		// the matching provider key on demand.
+		var episode *models.Episode
+		seasonNumber := 0
+	findEpisode:
+		for i := range item.Seasons {
+			season := &item.Seasons[i]
+			for j := range season.Episodes {
+				if season.Episodes[j].ID == episodeID {
+					episode = &season.Episodes[j]
+					seasonNumber = season.Number
+					break findEpisode
+				}
+			}
+		}
+		if episode == nil {
+			utils.Error(c, utils.ErrEpisodeNotFound)
+			return
+		}
+		showKey := plexSourceIDFromMetadata(item)
+		if showKey == "" {
+			utils.Error(c, utils.NewError(http.StatusNotFound, "STREAM_UNAVAILABLE", "This title has no streamable source yet.", nil))
+			return
+		}
+		ratingKey, err = services.ResolvePlexEpisodeKey(ctx, client, showKey, seasonNumber, episode.Number)
+		if err != nil {
+			utils.Error(c, err)
+			return
+		}
+	}
+
+	manifestURL, err := services.BuildPlexStreamURL(ctx, client, ratingKey, "native")
+	if err != nil {
+		utils.Error(c, err)
+		return
+	}
+
+	// `subpath` is either:
+	//   - ""          -> root /stream/proxy route, serve the master playlist
+	//   - "manifest"  -> explicit /stream/proxy/manifest route, ditto
+	//   - "segment/<origin>" -> /stream/proxy/segment/* route: serve that sub-resource
+	//
+	// Anything else ("manifest/<something>", no prefix, etc.) we treat as a
+	// malformed request and 404.
+	serveManifest := subpath == "" || subpath == "manifest"
+	var segmentRelativeRef string
+	if !serveManifest {
+		if !strings.HasPrefix(subpath, "segment/") {
+			utils.Error(c, utils.NewError(http.StatusNotFound, "STREAM_PROXY_PATH", "Unknown proxy subpath: "+subpath, nil))
+			return
+		}
+		// Strip the wildcard path so we hold only the URL-encoded upstream
+		// reference (e.g. `%2Fvideo%2F%3A%2F%3A%2Ftranscode%2Funiversal%2F0.ts`).
+		raw := strings.TrimPrefix(subpath, "segment/")
+		// Decode percent-escapes — the manifest rewriter encodes everything
+		// (slashes, colons, query params) so the path can ride inside our
+		// proxy URL without breaking gin routing. Without this we'd ask Plex
+		// for `/start%2Fvideo%2F...` which never resolves.
+		if decoded, derr := url.PathUnescape(raw); derr == nil {
+			segmentRelativeRef = decoded
+		} else {
+			segmentRelativeRef = raw
+		}
+	}
+
+	scheme := "http"
+	if c.Request.TLS != nil || strings.EqualFold(c.GetHeader("X-Forwarded-Proto"), "https") {
+		scheme = "https"
+	}
+	proxyBaseURL := scheme + "://" + c.Request.Host
+
+	var targetURL string
+	if serveManifest {
+		targetURL = manifestURL
+	} else {
+		targetURL, err = buildPlexSegmentURL(manifestURL, segmentRelativeRef)
+		if err != nil {
+			utils.Error(c, utils.NewError(http.StatusBadGateway, "STREAM_PROXY_FAILED", "Could not build segment URL: "+err.Error(), nil))
+			return
+		}
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, targetURL, nil)
+	if err != nil {
+		utils.Error(c, utils.NewError(http.StatusBadGateway, "STREAM_PROXY_FAILED", "Could not build upstream request: "+err.Error(), nil))
+		return
+	}
+	req.Header.Set("Accept", "*/*")
+	// Send the Plex token via header (not query) so it never leaves the
+	// backend's request boundary. The identity headers (Client-Identifier,
+	// Product, Version, Device) are mandatory for the universal transcode
+	// endpoint — Plex refuses with HTTP 400 when they're missing.
+	req.Header.Set("X-Plex-Token", client.Token())
+	for k, v := range client.PlexIdentity() {
+		if v != "" {
+			req.Header.Set(k, v)
+		}
+	}
+	req.Header.Set("X-Plex-Platform", "Go")
+
+	httpClient := &http.Client{Timeout: 90 * time.Second}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		utils.Error(c, utils.NewError(http.StatusBadGateway, "STREAM_UNAVAILABLE", "Could not reach Plex stream endpoint: "+err.Error(), nil))
+		return
+	}
+	defer resp.Body.Close()
+
+	// Forward the cacheability / content headers as Plex sent them.
+	for _, k := range []string{"Content-Type", "Content-Length", "Cache-Control", "Last-Modified", "ETag"} {
+		if v := resp.Header.Get(k); v != "" {
+			c.Header(k, v)
+		}
+	}
+
+	// Write the upstream status BEFORE piping the body. Letting Gin default
+	// to 200 then asking it to override after `io.CopyN` (which flushes the
+	// response) emits the famous GIN warning "Headers were already written.
+	// Wanted to override status code 200 with N" and leaves the wire status
+	// mismatched from the body — the browser then treats a 400-upstream page
+	// like a successful HLS manifest.
+	c.Writer.WriteHeader(resp.StatusCode)
+
+	// Always log Plex upstream's status, even on 2xx. Catches conflict cases
+	// where Plex transit / relay servers (e.g. `*.plex.direct`) reject media
+	// endpoints with 400/500 while metadata/library stay reachable — without
+	// this trace, the operator can't tell "code bug" from "Plex unreachable".
+	h.deps.Logger.Info(
+		"plex stream proxy upstream response",
+		"slug", slug,
+		"serve_manifest", serveManifest,
+		"upstream_status", resp.StatusCode,
+		"upstream_content_type", resp.Header.Get("Content-Type"),
+	)
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		// Surface Plex's error verbatim so the user understands it's a source
+		// issue (server unreachable, relay blocked, transcode refused) and not
+		// something the proxy introduced. Logged above so the operator can
+		// correlate with the request ID from the http_request middleware.
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<10))
+		h.deps.Logger.Warn(
+			"plex stream proxy upstream non-2xx",
+			"slug", slug,
+			"status", resp.StatusCode,
+			"body", strings.TrimSpace(string(body)),
+		)
+		_, _ = c.Writer.Write(body)
+		return
+	}
+
+	if serveManifest && resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		// Read & rewrite the manifest so every URL line points at our proxy's
+		// segment endpoint instead of Plex's CORS-blocked URL.
+		body, err := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+		if err == nil {
+			rewritten := rewriteStreamManifest(string(body), proxyBaseURL, slug)
+			c.Header("Content-Type", "application/vnd.apple.mpegurl")
+			_, _ = c.Writer.WriteString(rewritten)
+			return
+		}
+		// Fall through to streaming if buffer fails. Status is already
+		// written above.
+	}
+
+	_, _ = io.Copy(c.Writer, resp.Body)
+}
+
+// buildPlexSegmentURL pivots the upstream master playlist URL into the URL
+// of a specific sub-resource (variant playlist or .ts segment). The master
+// playlist address Plex returns for a transcode session is:
+//
+//	{base}/video/:/transcode/universal/start?path=…&X-Plex-Token=…
+//
+// The relative references inside that playlist resolve to files served
+// next to `start`, e.g. `{base}/video/:/transcode/universal/0.m3u8` or
+// `{base}/video/:/transcode/universal/segment-0.ts`. Absolute references
+// in the master are usually the full upstream URL with the `start` segment
+// replaced by the variant filename. Both shapes are accepted via the
+// `origin` parameter: an absolute path (`/video/…`) is appended after the
+// upstream host, a relative name (`0.m3u8`) is appended under the transcode
+// prefix (replacing `/start`).
+func buildPlexSegmentURL(manifestURL, origin string) (string, error) {
+	u, err := url.Parse(manifestURL)
+	if err != nil {
+		return "", err
+	}
+	if strings.HasPrefix(origin, "/") {
+		// Origin is already an absolute path on the Plex host.
+		u.Path = origin
+	} else {
+		// Bare filename — append under the transcode universal prefix,
+		// replacing the `start` leaf that kick-started the session.
+		base := strings.TrimSuffix(u.Path, "/start")
+		u.Path = base + "/" + origin
+	}
+	// The token travels in the header, not the URL — strip any query
+	// string from the manifest URL when forwarding as a segment URL.
+	q := u.Query()
+	q.Del("X-Plex-Token")
+	u.RawQuery = q.Encode()
+	return u.String(), nil
+}
+
+// rewriteStreamManifest converts every URL line in an HLS manifest (whether
+// absolute, like `http://plex/...`, or relative, like `0.ts`) into an
+// absolute URL pointing at our same-origin proxy. This sidesteps three
+// issues with raw Plex URLs in the browser:
+//
+//  1. Plex rarely sends `Access-Control-Allow-Origin` headers.
+//  2. Variant playlists in master playlists are typically absolute, so
+//     relative URL resolution against the manifest URL doesn't reach them
+//     (hls.js would otherwise fetch them directly from Plex => CORS fail).
+//  3. The transcode session ID is opaque: the only safe way to traverse
+//     it is to proxy every related fetch and let the backend's same
+//     request reach Plex.
+//
+// Lines starting with `#` (HLS tags) are left untouched.
+func rewriteStreamManifest(manifest, proxyBaseURL, slug string) string {
+	var out strings.Builder
+	lines := strings.Split(manifest, "\n")
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			out.WriteString(line)
+			out.WriteString("\n")
+			continue
+		}
+		if !looksLikeStreamURL(trimmed) {
+			out.WriteString(line)
+			out.WriteString("\n")
+			continue
+		}
+		origin := trimmed
+		if u, err := url.Parse(trimmed); err == nil && u.Scheme != "" && u.Host != "" {
+			origin = strings.TrimPrefix(u.Path, "/")
+		}
+		// Encode the upstream path so every troublesome character (slashes,
+		// colons, dots) rides inside one URL segment. url.PathEscape leaves
+		// slashes unescaped which would break gin's catch-all routing — use
+		// url.QueryEscape instead, which escapes the full RFC 3986 reserved
+		// set, then have the proxy decode it before forwarding to Plex.
+		rewritten := fmt.Sprintf(
+			"%s%s/api/v1/discover/item/%s/stream/proxy/segment/%s",
+			proxyBaseURL, basePathFromRequest(proxyBaseURL), slug, url.QueryEscape(origin),
+		)
+		out.WriteString(rewritten)
+		out.WriteString("\n")
+	}
+	return out.String()
+}
+
+// basePathFromRequest strips the scheme+host from a base URL so the rewritten
+// segment URL can be rebuilt as `<host><basepath>/api/v1/...` regardless of
+// whether the operator serves everything at `/` or under a sub-path.
+func basePathFromRequest(baseURL string) string {
+	if i := strings.Index(baseURL, "://"); i >= 0 {
+		baseURL = baseURL[i+3:]
+		if j := strings.Index(baseURL, "/"); j >= 0 {
+			return baseURL[j:]
+		}
+	}
+	return ""
+}
+
+func looksLikeStreamURL(s string) bool {
+	// Some Plex manifests append a `?session=…` query to each URL line; strip
+	// it before checking the suffix so we still recognise the file extension.
+	check := s
+	if i := strings.Index(check, "?"); i >= 0 {
+		check = check[:i]
+	}
+	for _, suffix := range []string{".m3u8", ".ts", ".aac", ".mp4", ".webm", ".vtt", ".m4s", ".mpd"} {
+		if strings.HasSuffix(check, suffix) {
+			return true
+		}
+	}
+	return false
+}
+
+// animeModelToDetail builds the public detail payload (item header + seasons
+// with their episodes) from a catalog row, reusing animeModelToContentItem for
+// the header so every public surface stays consistent.
+func animeModelToDetail(a *models.Anime) ApiContentDetailResponse {
+	seasons := make([]ApiSeasonDetail, 0, len(a.Seasons))
+	for _, s := range a.Seasons {
+		episodes := make([]ApiEpisode, 0, len(s.Episodes))
+		for _, e := range s.Episodes {
+			episodes = append(episodes, ApiEpisode{
+				ID:           e.ID,
+				Number:       e.Number,
+				Title:        e.Title,
+				Synopsis:     e.Synopsis,
+				ThumbnailUrl: e.ThumbnailUrl,
+				Duration:     e.Duration,
+				IsSubbed:     e.IsSubbed,
+				IsDubbed:     e.IsDubbed,
+			})
+		}
+		seasons = append(seasons, ApiSeasonDetail{
+			ID:           s.ID,
+			Number:       s.Number,
+			Title:        s.Title,
+			EpisodeCount: s.EpisodeCount,
+			Episodes:     episodes,
+		})
+	}
+	return ApiContentDetailResponse{
+		Item:    animeModelToContentItem(a),
+		Seasons: seasons,
+	}
+}
+
 // GetDiscoverContinueWatching returns continue-watching items for the authenticated user.
 func (h *DiscoverHandler) GetDiscoverContinueWatching(c *gin.Context) {
 	// This requires a logged-in user. The watch progress is stored in the DB.
@@ -479,6 +1095,35 @@ func mapAnilistMediaToContentItems(media []services.AnilistMedia) []ApiContentIt
 	return items
 }
 
+// contentFormatFromMetadata resolves the public content type/format of a
+// catalog row from its stored provider metadata. AniList imports record the
+// media format (e.g. "MOVIE", "TV", "OVA") while Plex imports record the
+// canonical library type ("Movie", "Series") — both are already persisted on
+// the anime rows created from the admin catalog. Rows without any type hint
+// default to a series so nothing is mislabelled.
+func contentFormatFromMetadata(meta map[string]any) (contentType, format string) {
+	contentType, format = "anime", "tv"
+	if raw, ok := meta["format"].(string); ok {
+		switch strings.ToLower(raw) {
+		case "movie":
+			return "movie", "movie"
+		case "tv", "tv_short":
+			return "anime", strings.ToLower(raw)
+		case "ova", "ona", "special":
+			return strings.ToLower(raw), strings.ToLower(raw)
+		}
+	}
+	if raw, ok := meta["type"].(string); ok {
+		switch strings.ToLower(raw) {
+		case "movie":
+			return "movie", "movie"
+		case "series", "show":
+			return "anime", "tv"
+		}
+	}
+	return contentType, format
+}
+
 func animeModelToContentItem(a *models.Anime) ApiContentItem {
 	genres := make([]string, 0, len(a.Genres))
 	for _, genre := range a.Genres {
@@ -492,6 +1137,24 @@ func animeModelToContentItem(a *models.Anime) ApiContentItem {
 	if status == "" {
 		status = "upcoming"
 	}
+
+	// Preserve the real content type published from the admin catalog: a
+	// movie must stay a movie (e.g. /movies/ route, “Film” label) instead of
+	// being flattened into a series. Also surface the provider popularity as
+	// the rating count shown on the public detail pages.
+	var ratingCount *int
+	contentType, format := "anime", "tv"
+	if len(a.Metadata) > 0 {
+		var meta map[string]any
+		if err := json.Unmarshal(a.Metadata, &meta); err == nil {
+			contentType, format = contentFormatFromMetadata(meta)
+			if pop, ok := meta["popularity"].(float64); ok && pop > 0 {
+				n := int(pop)
+				ratingCount = &n
+			}
+		}
+	}
+
 	episodes := a.TotalEpisodes
 	seasons := len(a.Seasons)
 	if seasons == 0 {
@@ -500,12 +1163,18 @@ func animeModelToContentItem(a *models.Anime) ApiContentItem {
 			seasons = (episodes + 11) / 12
 		}
 	}
+	// Movies carry no seasons; omit the count so the frontend maps them to a
+	// movie (no season rail, /movies/ path).
+	var seasonCount *int
+	if contentType != "movie" {
+		seasonCount = &seasons
+	}
 	return ApiContentItem{
 		ID:     a.ID,
 		Slug:   a.Slug,
 		Title:  a.Title,
-		Type:   "anime",
-		Format: "TV",
+		Type:   contentType,
+		Format: format,
 		Status: status,
 		Year:   a.ReleaseYear,
 		Images: ApiImages{
@@ -520,6 +1189,7 @@ func animeModelToContentItem(a *models.Anime) ApiContentItem {
 			Genres:        genres,
 			Studio:        studioName,
 			Rating:        a.Rating,
+			RatingCount:   ratingCount,
 			AgeRating:     a.AgeRating,
 			Year:          a.ReleaseYear,
 			JapaneseTitle: a.JapaneseTitle,
@@ -528,7 +1198,7 @@ func animeModelToContentItem(a *models.Anime) ApiContentItem {
 		Availability: ApiContentAvailability{
 			Watchable: a.Status == "published",
 			Episodes:  episodes,
-			Seasons:   &seasons,
+			Seasons:   seasonCount,
 		},
 	}
 }

@@ -843,7 +843,7 @@ model Anime {
   createdAt       DateTime    @default(now()) @map("created_at")
   updatedAt       DateTime    @updatedAt @map("updated_at")
 
-  parentAnime     Anime?      @relation("AnimeChildren", fields: [parentAnimeId], references: [id])
+  parentAnime     Anime?      @relation("AnimeChildren", fields: [parentAnimeId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   children        Anime[]     @relation("AnimeChildren")
   genres           AnimeGenre[]
   studios          AnimeStudio[]
@@ -876,7 +876,7 @@ model AnimeSeason {
   airDate      String?   @map("air_date")
   createdAt    DateTime  @default(now()) @map("created_at")
   updatedAt    DateTime  @updatedAt @map("updated_at")
-  anime        Anime     @relation(fields: [animeId], references: [id], onDelete: Cascade)
+  anime        Anime     @relation(fields: [animeId], references: [id], onDelete: Cascade, onUpdate: Restrict)
   episodes     Episode[]
 
   @@unique([animeId, number])
@@ -899,8 +899,8 @@ model Episode {
   deletedAt    DateTime?    @map("deleted_at")
   createdAt    DateTime     @default(now()) @map("created_at")
   updatedAt    DateTime     @updatedAt @map("updated_at")
-  anime        Anime        @relation(fields: [animeId], references: [id], onDelete: Cascade)
-  season       AnimeSeason? @relation(fields: [seasonId], references: [id], onDelete: SetNull)
+  anime        Anime        @relation(fields: [animeId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+  season       AnimeSeason? @relation(fields: [seasonId], references: [id], onDelete: SetNull, onUpdate: Restrict)
 
   mediaAssets      MediaAsset[]
   watchProgress    WatchProgress[]
@@ -959,8 +959,8 @@ model Character {
 model AnimeGenre {
   animeId String @map("anime_id")
   genreId String @map("genre_id")
-  anime   Anime  @relation(fields: [animeId], references: [id], onDelete: Cascade)
-  genre   Genre  @relation(fields: [genreId], references: [id], onDelete: Cascade)
+  anime   Anime  @relation(fields: [animeId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+  genre   Genre  @relation(fields: [genreId], references: [id], onDelete: Cascade, onUpdate: Restrict)
 
   @@id([animeId, genreId])
   @@index([genreId])
@@ -970,8 +970,8 @@ model AnimeGenre {
 model AnimeStudio {
   animeId  String @map("anime_id")
   studioId String @map("studio_id")
-  anime    Anime  @relation(fields: [animeId], references: [id], onDelete: Cascade)
-  studio   Studio @relation(fields: [studioId], references: [id], onDelete: Cascade)
+  anime    Anime  @relation(fields: [animeId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+  studio   Studio @relation(fields: [studioId], references: [id], onDelete: Cascade, onUpdate: Restrict)
 
   @@id([animeId, studioId])
   @@index([studioId])
@@ -984,8 +984,8 @@ model AnimeCharacter {
   role        String?
   createdAt   DateTime  @default(now()) @map("created_at")
   updatedAt   DateTime  @updatedAt @map("updated_at")
-  anime       Anime     @relation(fields: [animeId], references: [id], onDelete: Cascade)
-  character   Character @relation(fields: [characterId], references: [id], onDelete: Cascade)
+  anime       Anime     @relation(fields: [animeId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+  character   Character @relation(fields: [characterId], references: [id], onDelete: Cascade, onUpdate: Restrict)
 
   @@id([animeId, characterId])
   @@index([characterId])
@@ -1063,8 +1063,8 @@ model CollectionEntry {
   createdAt    DateTime   @default(now()) @map("created_at")
   updatedAt    DateTime   @updatedAt @map("updated_at")
 
-  collection Collection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
-  anime      Anime      @relation(fields: [animeId], references: [id], onDelete: Cascade)
+  collection Collection @relation(fields: [collectionId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+  anime      Anime      @relation(fields: [animeId], references: [id], onDelete: Cascade, onUpdate: Restrict)
 
   @@unique([collectionId, animeId])
   @@index([animeId])
@@ -1113,8 +1113,8 @@ model MediaAsset {
   metadata    Json?
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
-  anime       Anime    @relation(fields: [animeId], references: [id], onDelete: Cascade)
-  episode     Episode? @relation(fields: [episodeId], references: [id], onDelete: SetNull)
+  anime       Anime    @relation(fields: [animeId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+  episode     Episode? @relation(fields: [episodeId], references: [id], onDelete: SetNull, onUpdate: Restrict)
 
   encodingJobs EncodingJob[]
 
@@ -1137,7 +1137,7 @@ model EncodingJob {
   metadata     Json?
   createdAt    DateTime   @default(now()) @map("created_at")
   updatedAt    DateTime   @updatedAt @map("updated_at")
-  mediaAsset   MediaAsset @relation(fields: [mediaAssetId], references: [id], onDelete: Cascade)
+  mediaAsset   MediaAsset @relation(fields: [mediaAssetId], references: [id], onDelete: Cascade, onUpdate: Restrict)
 
   @@index([mediaAssetId])
   @@index([status])
@@ -1224,8 +1224,8 @@ model Review {
   deletedAt DateTime? @map("deleted_at")
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
-  anime     Anime     @relation(fields: [animeId], references: [id], onDelete: Cascade)
-  author    User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  anime     Anime     @relation(fields: [animeId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+  author    User       @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Restrict)
   comments  Comment[]
 
   @@unique([userId, animeId])
@@ -1249,9 +1249,9 @@ model Comment {
   deletedAt      DateTime?  @map("deleted_at")
   createdAt      DateTime   @default(now()) @map("created_at")
   updatedAt      DateTime   @updatedAt @map("updated_at")
-  author         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
-  post           ForumPost? @relation(fields: [postId], references: [id], onDelete: Cascade)
-  review         Review?    @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  author         User       @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+  post           ForumPost? @relation(fields: [postId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+  review         Review?    @relation(fields: [reviewId], references: [id], onDelete: Cascade, onUpdate: Restrict)
   reactions      CommentReaction[]
 
   @@index([postId])
@@ -1262,7 +1262,7 @@ model Comment {
   @@map("comments")
 }
 
-model Report {
+model Report { {
   id          String    @id @default(uuid())
   userId      String    @map("user_id")
   targetType  String    @map("target_type")
@@ -1287,7 +1287,7 @@ model CommentReaction {
   userId    String       @map("user_id")
   type      ReactionType
   createdAt DateTime     @default(now()) @map("created_at")
-  comment   Comment      @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  comment   Comment      @relation(fields: [commentId], references: [id], onDelete: Cascade, onUpdate: Restrict)
 
   @@unique([commentId, userId, type])
   @@map("comment_reactions")
@@ -1354,8 +1354,8 @@ model Recommendation {
   createdAt   DateTime  @default(now()) @map("created_at")
   updatedAt   DateTime  @updatedAt @map("updated_at")
   author    User     @relation(fields: [authorId], references: [id], onDelete: Cascade)
-  fromAnime   Anime     @relation("FromAnime", fields: [fromAnimeId], references: [id], onDelete: Cascade)
-  toAnime     Anime     @relation("ToAnime", fields: [toAnimeId], references: [id], onDelete: Cascade)
+  fromAnime   Anime     @relation("FromAnime", fields: [fromAnimeId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+  toAnime     Anime     @relation("ToAnime", fields: [toAnimeId], references: [id], onDelete: Cascade, onUpdate: Restrict)
 
   @@index([fromAnimeId])
   @@index([toAnimeId])
@@ -1385,8 +1385,8 @@ model WatchlistItem {
   animeId     String    @map("anime_id")
   createdAt   DateTime  @default(now()) @map("created_at")
   updatedAt   DateTime  @updatedAt @map("updated_at")
-  watchlist   Watchlist @relation(fields: [watchlistId], references: [id], onDelete: Cascade)
-  anime       Anime     @relation(fields: [animeId], references: [id], onDelete: Cascade)
+  watchlist   Watchlist @relation(fields: [watchlistId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+  anime       Anime     @relation(fields: [animeId], references: [id], onDelete: Cascade, onUpdate: Restrict)
 
   @@unique([watchlistId, animeId])
   @@index([animeId])
@@ -1406,8 +1406,8 @@ model WatchProgress {
   watchCount  Int       @default(0) @map("watch_count")
   createdAt   DateTime  @default(now()) @map("created_at")
   updatedAt   DateTime  @updatedAt @map("updated_at")
-  episode     Episode   @relation(fields: [episodeId], references: [id], onDelete: Cascade)
-  anime       Anime     @relation(fields: [animeId], references: [id], onDelete: Cascade)
+  episode     Episode   @relation(fields: [episodeId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+  anime       Anime     @relation(fields: [animeId], references: [id], onDelete: Cascade, onUpdate: Restrict)
   watches     WatchSession[]
 
   @@unique([userId, episodeId])
@@ -1426,7 +1426,7 @@ model WatchSession {
   progressEnd Float          @default(0) @map("progress_end")
   completed   Boolean        @default(false)
   createdAt   DateTime       @default(now()) @map("created_at")
-  progress    WatchProgress  @relation(fields: [progressId], references: [id], onDelete: Cascade)
+  progress    WatchProgress  @relation(fields: [progressId], references: [id], onDelete: Cascade, onUpdate: Restrict)
 
   @@index([progressId])
   @@map("watch_sessions")
@@ -1455,8 +1455,8 @@ model ScheduleEntry {
   metadata   Json?
   createdAt  DateTime          @default(now()) @map("created_at")
   updatedAt  DateTime          @updatedAt @map("updated_at")
-  anime      Anime             @relation(fields: [animeId], references: [id], onDelete: Cascade)
-  episode    Episode?          @relation(fields: [episodeId], references: [id], onDelete: SetNull)
+  anime      Anime             @relation(fields: [animeId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+  episode    Episode?          @relation(fields: [episodeId], references: [id], onDelete: SetNull, onUpdate: Restrict)
 
   @@index([animeId])
   @@index([episodeId])

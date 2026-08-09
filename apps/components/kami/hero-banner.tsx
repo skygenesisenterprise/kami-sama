@@ -66,6 +66,9 @@ export function HeroBanner({ items }: HeroBannerProps) {
 
   const anime = items[activeIndex]
   const genres = anime.genres.slice(0, 2).map((genre) => genre.name).join(', ')
+  // Preserve the real content type: a movie must stay a movie ("Film" label,
+  // /movies/ detail page) instead of being flattened into a series.
+  const isMovie = anime.type === 'movies'
 
   return (
     <section
@@ -108,7 +111,7 @@ export function HeroBanner({ items }: HeroBannerProps) {
           </h1>
 
           <div className="mt-4 flex flex-wrap items-center gap-x-2 text-sm font-medium text-white/90">
-            <span>{anime.type === 'movies' ? 'Film' : 'Série'}</span>
+            <span>{isMovie ? 'Film' : 'Série'}</span>
             {genres && (
               <>
                 <span aria-hidden="true">•</span>

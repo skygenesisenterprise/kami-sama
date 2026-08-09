@@ -227,9 +227,9 @@ func (s *PlexMediaSource) SyncLibrary(ctx context.Context, libraryID string) (ma
 			tx := s.db.Where("source = ? AND metadata->>'sourceId' = ?", "plex", sourceID).First(&existing)
 			if tx.Error == gorm.ErrRecordNotFound {
 				row := models.Anime{
-					Common:        models.Common{ID: sourceID, CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()},
-					Slug:          sourceID,
-					Title:         getStringFromMap(mapped, "name"),
+				Common:        models.Common{ID: sourceID, CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()},
+				Slug:          uniqueSlug(ctx, s.db, generateSlug(getStringFromMap(mapped, "name"))),
+				Title:         getStringFromMap(mapped, "name"),
 					JapaneseTitle: getStringFromMap(mapped, "originalTitle"),
 					Synopsis:      getStringFromMap(mapped, "overview"),
 					Status:        "released",
@@ -312,6 +312,15 @@ func (s *PlexMediaSource) GetSyncStatus(ctx context.Context, libraryID string) (
 // BuildPlexStreamURL produces the standard /video/:/transcode/universal/start
 // URL for a ratingKey using any resolved PlexClient (env-configured or loaded
 // from a persisted source_configs row).
+//
+// The returned URL points straight at the Plex Media Server and is handed to
+// the browser's <video> element; the token travels as a query parameter
+// because the media stream is fetched by the browser, not by the API server.
+//
+// profile is reserved for future transcoding profiles (e.g. forcing a codec).
+// When empty or "native", no codec params are sent and Plex picks the most
+// compatible stream for the player (direct play when possible, transcode
+// otherwise) — which is the safe default for browser playback.
 func BuildPlexStreamURL(ctx context.Context, client *PlexClient, ratingKey string, profile string) (string, error) {
 	if client == nil || !client.Enabled() {
 		return "", plexDisabledError()
@@ -335,21 +344,61 @@ func BuildPlexStreamURL(ctx context.Context, client *PlexClient, ratingKey strin
 	if path == "" {
 		return "", fmt.Errorf("part has no key")
 	}
-	u, err := url.Parse(client.BaseURL())
+	return buildPlexUniversalStreamURL(client.BaseURL(), path, client.Token(), profile)
+}
+
+// buildPlexUniversalStreamURL assembles the /video/:/transcode/universal/start
+// URL for a media part path. The universal transcode endpoint is the only one
+// that honors the path/mediaIndex/partIndex/protocol query parameters — hitting
+// the server root with these params returns the Plex web app HTML instead of a
+// stream. protocol is derived from the base URL scheme so the stream link works
+// over both plain http (LAN) and https (plex.direct) servers.
+func buildPlexUniversalStreamURL(baseURL, partPath, token, profile string) (string, error) {
+	u, err := url.Parse(baseURL)
 	if err != nil {
 		return "", err
 	}
+	u.Path = strings.TrimRight(u.Path, "/") + "/video/:/transcode/universal/start"
 	q := u.Query()
-	q.Set("path", path)
+	q.Set("path", partPath)
 	q.Set("mediaIndex", "0")
 	q.Set("partIndex", "0")
-	q.Set("protocol", "http")
+	protocol := "http"
+	if u.Scheme == "https" {
+		protocol = "https"
+	}
+	q.Set("protocol", protocol)
 	if profile == "" {
 		profile = "native"
 	}
-	q.Set("X-Plex-Token", client.Token())
+	q.Set("X-Plex-Token", token)
 	u.RawQuery = q.Encode()
 	return u.String(), nil
+}
+
+// ResolvePlexEpisodeKey maps a catalog (season, episode) pair to the Plex
+// ratingKey of the matching episode under the show, by listing the show's
+// leaves and matching parentIndex/index. Catalog rows only store the show
+// key (metadata.sourceId), so episode keys are resolved on demand.
+func ResolvePlexEpisodeKey(ctx context.Context, client *PlexClient, showKey string, seasonNumber, episodeNumber int) (string, error) {
+	if client == nil || !client.Enabled() {
+		return "", plexDisabledError()
+	}
+	if showKey == "" {
+		return "", fmt.Errorf("show key required")
+	}
+	episodes, err := client.GetShowEpisodes(ctx, showKey)
+	if err != nil {
+		return "", err
+	}
+	for _, ep := range episodes {
+		if toInt(ep["parentIndex"]) == seasonNumber && toInt(ep["index"]) == episodeNumber {
+			if key := toString(ep["ratingKey"]); key != "" {
+				return key, nil
+			}
+		}
+	}
+	return "", fmt.Errorf("episode %d of season %d not found on provider", episodeNumber, seasonNumber)
 }
 
 // ImportPlexItem fetches a single Plex item by ratingKey and upserts it into
@@ -383,7 +432,7 @@ func ImportPlexItem(ctx context.Context, db *gorm.DB, client *PlexClient, rating
 	if tx.Error == gorm.ErrRecordNotFound {
 		row := models.Anime{
 			Common:         models.Common{ID: sourceID, CreatedAt: now, UpdatedAt: now},
-			Slug:           sourceID,
+			Slug:           uniqueSlug(ctx, db, generateSlug(getStringFromMap(mapped, "name"))),
 			Title:          getStringFromMap(mapped, "name"),
 			JapaneseTitle:  getStringFromMap(mapped, "originalTitle"),
 			Synopsis:       getStringFromMap(mapped, "overview"),

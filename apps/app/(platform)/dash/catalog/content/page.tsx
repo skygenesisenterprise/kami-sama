@@ -103,7 +103,11 @@ import {
   seriesItemToAnimeCreatePayload,
   type ApiAnime,
 } from '@/lib/api/anime'
-import { anilistApi } from '@/lib/api/anilist'
+import {
+  anilistApi,
+  type AniListSearchItem,
+  type AniListSearchResult,
+} from '@/lib/api/anilist'
 import { myanimelistApi } from '@/lib/api/myanimelist'
 import { plexApi, type PlexLibrary, type PlexLibraryItem } from '@/lib/api/plex'
 import { anilistItemToSourceItem, plexItemToSourceItem } from '@/lib/source-search'
@@ -379,6 +383,57 @@ function plexItemToContentRow(
   }
 }
 
+/* -------------------------------------------------------------------------- */
+/*  AniList source → catalog rows                                             */
+/* -------------------------------------------------------------------------- */
+
+/** Maps an AniList feed hit (trending / popular / seasonal) into an ephemeral
+ *  catalog row with status "Added", so connected sources feed the catalog
+ *  automatically instead of requiring a manual add. */
+function anilistItemToContentRow(item: AniListSearchItem): ContentRow | null {
+  const kind: ContentKind = item.format === 'MOVIE' ? 'movie' : 'series'
+  const poster = item.coverImage ?? ''
+  const banner = item.bannerImage ?? ''
+  return {
+    key: `anilist-${item.anilistId}`,
+    kind,
+    title: item.title,
+    subtitle: item.japaneseTitle ?? '',
+    status: 'Added',
+    tone:
+      kind === 'movie' ? MOVIE_STATUS_TONE.Added : SERIES_STATUS_TONE.Added,
+    sources: ['AniList'],
+    year: null,
+    rating: typeof item.averageScore === 'number' ? item.averageScore / 10 : 0,
+    genres: item.genres ?? [],
+    metadataStatus: 'synced',
+    totalEpisodes: typeof item.episodes === 'number' ? item.episodes : 0,
+    updatedAt: 'just now',
+    updatedBy: 'AniList',
+    synopsis: '',
+    seasons: [],
+    assets: {
+      poster,
+      banner,
+      backdrop: banner || poster,
+      thumbnail: '',
+      still: '',
+    },
+  }
+}
+
+/** Persists an ephemeral source row (Plex / AniList) into the catalog and
+ *  returns the persisted anime id, so follow-up actions (archive, delete,
+ *  bulk status) can target the backend record. */
+async function persistSourceRow(key: string): Promise<string> {
+  if (key.startsWith('plex-')) {
+    const res = await plexApi.importItem(key.replace(/^plex-/, ''))
+    return res.animeId
+  }
+  const res = await anilistApi.import(Number(key.replace(/^anilist-/, '')))
+  return res.id
+}
+
 export default function ContentCatalogPage() {
   const [tab, setTab] = React.useState<ContentKind | 'all'>('all')
   const [query, setQuery] = React.useState('')
@@ -438,11 +493,36 @@ export default function ContentCatalogPage() {
     }
   }, [])
 
-  /** IDs already persisted in the backend catalog (anime table), used to
-   *  avoid showing an imported Plex title both as an ephemeral Plex row and
-   *  as a persisted series row. */
+  /** IDs + external IDs already persisted in the backend catalog (anime
+   *  table), used to avoid showing a source title both as an ephemeral row
+   *  (Plex / AniList) and as a persisted series row. */
   const persistedIdsRef = React.useRef<Set<string>>(new Set())
   persistedIdsRef.current = new Set(seriesItems.map((s) => s.id))
+  const persistedExternalRef = React.useRef<{
+    plex: Set<string>
+    anilist: Set<string>
+  }>({ plex: new Set(), anilist: new Set() })
+  persistedExternalRef.current = {
+    plex: new Set(
+      seriesItems
+        .map((s) => s.externalIds.plex)
+        .filter((v): v is string => Boolean(v)),
+    ),
+    anilist: new Set(
+      seriesItems
+        .map((s) => s.externalIds.anilist)
+        .filter((v): v is string => Boolean(v)),
+    ),
+  }
+
+  /** Ephemeral source rows the user deleted: keep them dismissed for the
+   *  session so a source refresh doesn't bring them straight back. */
+  const dismissedKeysRef = React.useRef<Set<string>>(new Set())
+
+  const [sourceAvailability, setSourceAvailability] = React.useState<{
+    plex: boolean
+    anilist: boolean
+  }>({ plex: false, anilist: false })
 
   const fetchPlexCatalog = React.useCallback(async () => {
     let libraries: PlexLibrary[] = []
@@ -453,13 +533,27 @@ export default function ContentCatalogPage() {
       return
     }
     if (libraries.length === 0) return
+    setSourceAvailability((prev) => ({ ...prev, plex: true }))
+    // Paginate through each library (up to 1200 items) so as much of the
+    // library as possible lands in the catalog as "Added" rows.
     const batches = await Promise.all(
-      libraries.map((lib) =>
-        plexApi
-          .items(lib.id, { limit: 200 })
-          .then((r) => r.items)
-          .catch(() => [] as PlexLibraryItem[]),
-      ),
+      libraries.map(async (lib) => {
+        const items: PlexLibraryItem[] = []
+        const pageSize = 200
+        for (let offset = 0; offset < 1200; offset += pageSize) {
+          try {
+            const res = await plexApi.items(lib.id, {
+              limit: pageSize,
+              offset,
+            })
+            items.push(...res.items)
+            if (items.length >= res.total) break
+          } catch {
+            break
+          }
+        }
+        return items
+      }),
     )
     const plexRows = batches.flatMap((items, i) =>
       items
@@ -475,19 +569,79 @@ export default function ContentCatalogPage() {
         ...plexRows.filter(
           (r) =>
             !existing.has(r.key) &&
-            !persistedIdsRef.current.has(r.key.replace(/^plex-/, '')),
+            !dismissedKeysRef.current.has(r.key) &&
+            !persistedIdsRef.current.has(r.key.replace(/^plex-/, '')) &&
+            !persistedExternalRef.current.plex.has(
+              r.key.replace(/^plex-/, ''),
+            ),
         ),
         ...prev,
       ]
     })
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- persistedIdsRef
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the persisted
+    // refs are read lazily at call time; they always hold the latest ids.
+  }, [])
+
+  /** Pulls trending / popular / seasonal titles from AniList and exposes them
+   *  as ephemeral "Added" rows, so the catalog fills up automatically. */
+  const fetchAnilistCatalog = React.useCallback(async () => {
+    const feeds = await Promise.allSettled([
+      anilistApi.trending({ perPage: 50 }),
+      anilistApi.popular({ perPage: 50 }),
+      anilistApi.seasonal({ perPage: 50 }),
+    ])
+    if (!feeds.some((r) => r.status === 'fulfilled')) return
+    const items = feeds
+      .filter(
+        (r): r is PromiseFulfilledResult<AniListSearchResult> =>
+          r.status === 'fulfilled',
+      )
+      .flatMap((r) => r.value.items)
+    // Deduplicate across the three feeds by AniList id.
+    const seen = new Set<number>()
+    const anilistRows = items
+      .filter((item) => {
+        if (seen.has(item.anilistId)) return false
+        seen.add(item.anilistId)
+        return true
+      })
+      .map(anilistItemToContentRow)
+      .filter((row): row is ContentRow => row !== null)
+    if (anilistRows.length === 0) return
+    setSourceAvailability((prev) => ({ ...prev, anilist: true }))
+    setLocalRows((prev) => {
+      const existing = new Set(prev.map((r) => r.key))
+      return [
+        ...anilistRows.filter(
+          (r) =>
+            !existing.has(r.key) &&
+            !dismissedKeysRef.current.has(r.key) &&
+            !persistedExternalRef.current.anilist.has(
+              r.key.replace(/^anilist-/, ''),
+            ),
+        ),
+        ...prev,
+      ]
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- persistedExternalRef
     // is read lazily at call time; it always holds the latest series ids.
   }, [])
 
+  /** Refresh every connected source at once. */
+  const fetchSources = React.useCallback(async () => {
+    await Promise.all([fetchPlexCatalog(), fetchAnilistCatalog()])
+  }, [fetchPlexCatalog, fetchAnilistCatalog])
+
+  // Load the persisted catalog first so the persisted external-id refs are
+  // populated before source discovery runs — otherwise already-imported
+  // titles could appear both as ephemeral source rows and series rows.
   React.useEffect(() => {
-    void fetchCatalog()
-    void fetchPlexCatalog()
-  }, [fetchCatalog, fetchPlexCatalog])
+    async function load() {
+      await fetchCatalog()
+      await fetchSources()
+    }
+    void load()
+  }, [fetchCatalog, fetchSources])
 
   const rows = React.useMemo(() => {
     return [
@@ -497,6 +651,13 @@ export default function ContentCatalogPage() {
       ...tvShows.map(fromTvShow),
     ]
   }, [localRows, seriesItems, movies, tvShows])
+
+  /** Normalized titles already present (persisted + discovered), used by the
+   *  manual-add dialog to flag titles that are already in the catalog. */
+  const existingTitles = React.useMemo(
+    () => new Set(rows.map((r) => normalizeTitle(r.title))),
+    [rows],
+  )
 
   const counts = React.useMemo(() => {
     const out = new Map<ContentKind | 'all', number>([
@@ -646,33 +807,40 @@ export default function ContentCatalogPage() {
 
     const seriesKeys = [...keys].filter((k) => k.startsWith('series-'))
     const seriesIds = seriesKeys.map((k) => k.replace(/^series-/, ''))
-    const plexKeys = [...keys].filter((k) => k.startsWith('plex-'))
-    const plexRatingKeys = plexKeys.map((k) => k.replace(/^plex-/, ''))
+    // Ephemeral source rows (Plex / AniList): persisted on demand so the
+    // requested action is reflected server-side.
+    const sourceKeys = [...keys].filter(
+      (k) => k.startsWith('plex-') || k.startsWith('anilist-'),
+    )
     const nextStatus = action === 'Publish' ? 'published' : 'archived'
     let failed = 0
 
-    if (seriesIds.length > 0 || plexRatingKeys.length > 0) {
+    if (seriesIds.length > 0 || sourceKeys.length > 0) {
       const jobs: Promise<unknown>[] = [
         ...seriesIds.map((id) =>
           action === 'Delete' ? animeApi.remove(id) : animeApi.update(id, { status: nextStatus }),
         ),
-        ...plexRatingKeys.map(async (ratingKey) => {
-          // Plex rows are ephemeral (fetched from the Plex API): persist them
-          // into the catalog first, then apply the requested action server-side.
-          const res = await plexApi.importItem(ratingKey)
-          if (action === 'Delete') return animeApi.remove(res.animeId)
-          return animeApi.update(res.animeId, { status: nextStatus })
+        ...sourceKeys.map(async (key) => {
+          const animeId = await persistSourceRow(key)
+          if (action === 'Delete') return animeApi.remove(animeId)
+          return animeApi.update(animeId, { status: nextStatus })
         }),
       ]
       const results = await Promise.allSettled(jobs)
       failed = results.filter((r) => r.status === 'rejected').length
 
-      if (failed === 0 && plexKeys.length > 0) {
-        // Imported Plex rows are now persisted series — drop the ephemeral rows.
-        setLocalRows((prev) => prev.filter((r) => !plexKeys.includes(r.key)))
+      if (action === 'Delete') {
+        // Keep deleted source rows dismissed so a refresh doesn't bring them back.
+        for (const key of sourceKeys) dismissedKeysRef.current.add(key)
+      }
+
+      if (failed === 0 && sourceKeys.length > 0) {
+        // Imported source rows are now persisted series — drop the ephemeral
+        // rows so they don't show up twice.
+        setLocalRows((prev) => prev.filter((r) => !sourceKeys.includes(r.key)))
       }
       await fetchCatalog()
-      await fetchPlexCatalog()
+      await fetchSources()
     }
 
     if (failed === 0) {
@@ -685,7 +853,7 @@ export default function ContentCatalogPage() {
   }
 
   const removeRow = async (row: ContentRow) => {
-    if (row.kind === 'series') {
+    if (row.key.startsWith('series-')) {
       try {
         await animeApi.remove(row.key.replace(/^series-/, ''))
         setSeriesItems((prev) =>
@@ -695,12 +863,17 @@ export default function ContentCatalogPage() {
         toast.error(formatApiError(err))
         return
       }
-    } else if (row.key.startsWith('plex-')) {
-      // Persist the ephemeral Plex row first (upsert), then delete the
-      // catalog record so the removal is reflected server-side.
+    } else if (
+      row.key.startsWith('plex-') ||
+      row.key.startsWith('anilist-')
+    ) {
+      // Persist the ephemeral source row first (upsert), then delete the
+      // catalog record so the removal is reflected server-side, and keep it
+      // dismissed so the next source refresh doesn't bring it back.
       try {
-        const res = await plexApi.importItem(row.key.replace(/^plex-/, ''))
-        await animeApi.remove(res.animeId)
+        const animeId = await persistSourceRow(row.key)
+        await animeApi.remove(animeId)
+        dismissedKeysRef.current.add(row.key)
         setLocalRows((prev) => prev.filter((r) => r.key !== row.key))
       } catch (err) {
         toast.error(formatApiError(err))
@@ -719,7 +892,7 @@ export default function ContentCatalogPage() {
   }
 
   const archiveRow = async (row: ContentRow) => {
-    if (row.kind === 'series') {
+    if (row.key.startsWith('series-')) {
       try {
         await animeApi.update(row.key.replace(/^series-/, ''), {
           status: 'archived',
@@ -735,11 +908,11 @@ export default function ContentCatalogPage() {
       }
       return
     }
-    if (row.key.startsWith('plex-')) {
-      // Persist the ephemeral Plex row first, then archive it server-side.
+    if (row.key.startsWith('plex-') || row.key.startsWith('anilist-')) {
+      // Persist the ephemeral source row first, then archive it server-side.
       try {
-        const res = await plexApi.importItem(row.key.replace(/^plex-/, ''))
-        await animeApi.update(res.animeId, { status: 'archived' })
+        const animeId = await persistSourceRow(row.key)
+        await animeApi.update(animeId, { status: 'archived' })
         setLocalRows((prev) =>
           prev.map((r) =>
             r.key === row.key
@@ -786,11 +959,14 @@ export default function ContentCatalogPage() {
   const handleCreated = (row: ContentRow | null) => {
     setTab('all')
     if (row === null || row.kind === 'series') {
-      // Refresh both the backend catalog (the imported item is persisted there
-      // with its provider assets) and the live Plex rows so the newly added
-      // title shows up with its artwork right away.
-      void fetchCatalog()
-      void fetchPlexCatalog()
+      // Refresh the backend catalog first (the imported item is persisted there
+      // with its provider assets), then the live source rows so the newly added
+      // title shows up with its artwork right away and isn't re-discovered as
+      // an ephemeral duplicate.
+      void (async () => {
+        await fetchCatalog()
+        await fetchSources()
+      })()
       return
     }
     setLocalRows((prev) => [row, ...prev])
@@ -812,7 +988,7 @@ export default function ContentCatalogPage() {
   const syncRowInternal = React.useCallback(
     async (row: ContentRow): Promise<SyncOutcome> => {
       try {
-        if (row.kind === 'series') {
+        if (row.key.startsWith('series-')) {
           const animeId = row.key.replace('series-', '')
           // Call backend sync to enrich data from sources
           try {
@@ -860,7 +1036,9 @@ export default function ContentCatalogPage() {
           return { status: 'empty', assetsGained: 0 }
         }
 
-        // For non-series items, search sources and merge client-side
+        // For source rows (Plex / AniList) and non-series items, search
+        // sources and merge client-side (ephemeral rows have no backend
+        // record yet to sync against).
         const { hits } = await searchAllSources(row.title, 8)
         const hit = bestSourceHit(row.title, hits)
         if (!hit) {
@@ -996,11 +1174,29 @@ export default function ContentCatalogPage() {
             ? `Syncing ${syncProgress.done}/${syncProgress.total}…`
             : 'Sync All'}
         </Button>
-        <Button size="sm" onClick={() => setAdding(true)}>
+        <Button
+          size="sm"
+          onClick={() => setAdding(true)}
+          title="Only needed when the title isn't already available from your connected sources"
+        >
           <Plus data-icon="inline-start" />
-          Add
+          Add manually
         </Button>
       </PageHeader>
+
+      {(sourceAvailability.anilist || sourceAvailability.plex) && (
+        <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          <Sparkles className="size-3.5 shrink-0 text-primary/70" />
+          Auto-discovered from{' '}
+          {[
+            sourceAvailability.plex ? 'Plex' : null,
+            sourceAvailability.anilist ? 'AniList' : null,
+          ]
+            .filter(Boolean)
+            .join(' and ')}{' '}
+          with status “Added”. Add manually only if a title is missing.
+        </p>
+      )}
 
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
         <StatCard
@@ -1206,8 +1402,9 @@ export default function ContentCatalogPage() {
                   <>
                     <EmptyTitle>No content yet</EmptyTitle>
                     <EmptyDescription>
-                      Add a series, movie or TV show to your catalog to get
-                      started.
+                      Content is discovered automatically from your connected
+                      sources (Plex, AniList) with status “Added”. Use Add
+                      manually for anything that's still missing.
                     </EmptyDescription>
                   </>
                 ) : (
@@ -1518,6 +1715,7 @@ export default function ContentCatalogPage() {
         open={adding}
         onOpenChange={setAdding}
         onCreated={handleCreated}
+        existingTitles={existingTitles}
       />
     </main>
   )
@@ -2172,11 +2370,16 @@ function AddContentDialog({
   open,
   onOpenChange,
   onCreated,
+  existingTitles,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   onCreated: (row: ContentRow | null) => void
+  /** Normalized titles already present in the catalog (persisted + discovered). */
+  existingTitles: Set<string>
 }) {
+  const isInCatalog = (result: GroupedResult) =>
+    result.hits.some((h) => existingTitles.has(normalizeTitle(h.item.title)))
   const [query, setQuery] = React.useState('')
   const [results, setResults] = React.useState<GroupedResult[]>([])
 
@@ -2259,8 +2462,9 @@ function AddContentDialog({
         <DialogHeader>
           <DialogTitle>Add content</DialogTitle>
           <DialogDescription>
-            Search for a title across Plex, AniList and MyAnimeList. When an
-            item exists in several sources, choose the one you want.
+            Titles already synced from your sources appear automatically in
+            the catalog. Use this only when a title isn't available yet —
+            search across Plex, AniList and MyAnimeList, then import it.
           </DialogDescription>
         </DialogHeader>
 
@@ -2352,8 +2556,16 @@ function AddContentDialog({
                       </div>
                     </div>
 
-                    {/* Source buttons */}
+                    {/* Source buttons — with a hint when the title is already
+                        in the catalog (non-blocking, so sequels and
+                        re-imports stay possible) */}
                     <div className="flex shrink-0 items-center gap-1">
+                      {isInCatalog(result) && (
+                        <StatusBadge tone="success">
+                          <Check className="size-3.5" />
+                          In catalog
+                        </StatusBadge>
+                      )}
                       {dedupeBySource(result.hits).map((hit) => {
                         const actionKey = `${result.key}::${hit.source}`
                         const isActing = acting === actionKey
