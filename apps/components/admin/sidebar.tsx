@@ -78,21 +78,21 @@ function NavGroupDropdown({
   onCloseMobileAction: () => void;
 }) {
   const GroupIcon = group.icon;
-  const isGroupActive = group.items.some((item) => pathname.startsWith(item.href));
 
+  // L'état actif ne s'applique qu'aux enfants (items) : le parent (groupe)
+  // n'est jamais surligné, seul son ouverture automatique est pilotée par
+  // la route courante.
   return (
     <div className="mb-1">
       <button
         onClick={onToggle}
         className={cn(
           "group flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-all duration-200",
-          isGroupActive
-            ? "bg-primary/15 text-primary"
-            : "text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+          "text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
         )}
         aria-expanded={isOpen}
       >
-        <GroupIcon className={cn("size-4.5 shrink-0", isGroupActive && "text-primary")} />
+        <GroupIcon className="size-4.5 shrink-0" />
         <span className="flex-1 text-left">{group.title}</span>
         <motion.span
           animate={{ rotate: isOpen ? 90 : 0 }}
@@ -140,7 +140,7 @@ export function Sidebar({ mobileOpen, onCloseMobileAction }: SidebarProps) {
   const getInitialOpenState = () => {
     const state: Record<string, boolean> = {};
     navGroups.forEach((group) => {
-      state[group.title] = group.items.some((item) => pathname.startsWith(item.href));
+      state[group.title] = group.items.some((item) => pathname === item.href);
     });
     return state;
   };

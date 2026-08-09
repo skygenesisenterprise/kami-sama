@@ -14,7 +14,27 @@ interface HeroBannerProps {
   items: Anime[]
 }
 
-const SLIDE_DURATION = 8000
+const SLIDE_DURATION = 15000
+
+/**
+ * Converts common age ratings to a numeric age for display (e.g. "R" → "16",
+ * "PG-13" → "13"). Falls back to the raw label when nothing is parseable.
+ */
+function formatAge(ageRating: string): string {
+  if (!ageRating) return ''
+  const numeric = ageRating.match(/\d{1,2}/)
+  if (numeric) return numeric[0]
+  switch (ageRating.toUpperCase()) {
+    case 'G':
+      return '0'
+    case 'PG':
+      return '10'
+    case 'R':
+      return '16'
+    default:
+      return ageRating
+  }
+}
 
 export function HeroBanner({ items }: HeroBannerProps) {
   const pathname = usePathname()
@@ -88,7 +108,7 @@ export function HeroBanner({ items }: HeroBannerProps) {
           </h1>
 
           <div className="mt-4 flex flex-wrap items-center gap-x-2 text-sm font-medium text-white/90">
-            <span>{anime.totalEpisodes > 1 ? 'Série' : 'Film'}</span>
+            <span>{anime.type === 'movies' ? 'Film' : 'Série'}</span>
             {genres && (
               <>
                 <span aria-hidden="true">•</span>
@@ -97,12 +117,16 @@ export function HeroBanner({ items }: HeroBannerProps) {
             )}
             <span aria-hidden="true">•</span>
             <span>{anime.year}</span>
-            <span aria-hidden="true">•</span>
-            <span className="flex items-center gap-1.5">
-              <span className="flex size-6 items-center justify-center rounded border border-white/60 text-xs font-bold text-white">
-                {anime.ageRating}
-              </span>
-            </span>
+            {anime.ageRating && (
+              <>
+                <span aria-hidden="true">•</span>
+                <span className="flex items-center gap-1.5">
+                  <span className="flex size-6 items-center justify-center rounded border border-white/60 text-xs font-bold text-white">
+                    {formatAge(anime.ageRating)}
+                  </span>
+                </span>
+              </>
+            )}
           </div>
 
           <div className="mt-6 flex items-center gap-3">

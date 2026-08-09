@@ -1,6 +1,7 @@
 import type { StatusTone } from '@/components/dash/status-badge'
 
 export type PublicationState =
+  | 'Added'
   | 'Draft'
   | 'Review'
   | 'Approved'
@@ -93,6 +94,7 @@ export interface TvShowItem {
 }
 
 export const TV_SHOW_STATUS_TONE: Record<PublicationState, StatusTone> = {
+  Added: 'neutral',
   Draft: 'neutral',
   Review: 'warning',
   Approved: 'info',

@@ -46,6 +46,36 @@ type AnilistSearchItem struct {
 	SiteURL       string   `json:"siteUrl"`
 }
 
+// ToAnilistSearchItems flattens raw AniList media results into the shared
+// search-item shape consumed by the catalog source pickers.
+func ToAnilistSearchItems(media []AnilistMedia) []AnilistSearchItem {
+	items := make([]AnilistSearchItem, 0, len(media))
+	for _, m := range media {
+		title := m.Title.Romaji
+		if m.Title.English != "" {
+			title = m.Title.English
+		}
+		cover := m.CoverImage.Large
+		if cover == "" {
+			cover = m.CoverImage.Medium
+		}
+		items = append(items, AnilistSearchItem{
+			AnilistID:     m.ID,
+			Title:         title,
+			JapaneseTitle: m.Title.Native,
+			Format:        m.Format,
+			Status:        m.Status,
+			CoverImage:    cover,
+			BannerImage:   m.BannerImage,
+			Episodes:      m.Episodes,
+			AverageScore:  m.AverageScore,
+			Genres:        m.Genres,
+			SiteURL:       m.SiteURL,
+		})
+	}
+	return items
+}
+
 func (s *AnilistService) Search(ctx context.Context, query string, mediaType string, page, perPage int) (*AnilistSearchResult, error) {
 	if !s.cfg.Enabled {
 		return nil, utils.NewError(http.StatusServiceUnavailable, "ANILIST_DISABLED", "Anilist integration is not enabled.", nil)
@@ -121,7 +151,7 @@ func (s *AnilistService) ImportMedia(ctx context.Context, anilistID int, userID 
 		if err != nil {
 			return nil, err
 		}
-		s.importRelatedMedia(ctx, media.Relations, userID)
+		s.importRelatedMedia(ctx, media.Relations, result.ID, userID)
 		return result, nil
 	}
 
@@ -130,11 +160,46 @@ func (s *AnilistService) ImportMedia(ctx context.Context, anilistID int, userID 
 	if err != nil {
 		return nil, err
 	}
-	s.importRelatedMedia(ctx, media.Relations, userID)
+	s.importRelatedMedia(ctx, media.Relations, result.ID, userID)
 	return result, nil
 }
 
-// importRelatedMedia imports all related entries (sequels, spin-offs) from AniList relations.
+// RefreshFromAnilist re-fetches the freshest metadata from AniList for an anime
+// that already carries an anilist_id and applies it in place (rating, sources,
+// genres, …). It also ensures the parent's first season exists and imports any
+// sequel relations as additional seasons so the series is not limited to a
+// single season. It is a no-op when AniList is disabled or no anilist_id exists.
+func (s *AnilistService) RefreshFromAnilist(ctx context.Context, anime *models.Anime, userID string) error {
+	if !s.cfg.Enabled || anime.Metadata == nil {
+		return nil
+	}
+	var meta map[string]any
+	if err := json.Unmarshal(anime.Metadata, &meta); err != nil {
+		return nil
+	}
+	idVal, _ := meta["anilist_id"].(float64)
+	if idVal <= 0 {
+		return nil
+	}
+	media, err := s.client.GetMediaByID(ctx, int(idVal))
+	if err != nil {
+		return err
+	}
+	if _, err := s.updateFromAnilist(ctx, anime, media); err != nil {
+		return err
+	}
+	// Create the parent's own first season before attaching sequels, otherwise a
+	// sequel could claim season 1 for itself.
+	s.EnsureSeasonsAndEpisodes(ctx, anime, nil)
+	s.importRelatedMedia(ctx, media.Relations, anime.ID, userID)
+	return nil
+}
+
+// importRelatedMedia imports all related entries (sequels, spin-offs) from
+// AniList relations. Sequels are attached as additional seasons under
+// parentAnimeID so a multi-cour series is not limited to a single season. The
+// import recurses through the related entries so long chains (S1 → S2 → S3)
+// are fully materialized under the same parent.
 func (s *AnilistService) importRelatedMedia(ctx context.Context, relations struct {
 	Edges []struct {
 		RelationType string `json:"relationType"`
@@ -146,37 +211,118 @@ func (s *AnilistService) importRelatedMedia(ctx context.Context, relations struc
 			Type string `json:"type"`
 		} `json:"node"`
 	} `json:"edges"`
-}, userID string) {
+}, parentAnimeID, userID string) {
 	for _, edge := range relations.Edges {
-		// Import sequels, side stories, and spin-offs as children
-		if edge.RelationType == "SEQUEL" || edge.RelationType == "SIDE_STORY" || edge.RelationType == "SPIN_OFF" {
-			// Skip if already imported
-			if _, err := s.findByAnilistID(ctx, edge.Node.ID); err == nil {
-				continue
+		// Import sequels, side stories, and spin-offs as children/seasons
+		if edge.RelationType != "SEQUEL" && edge.RelationType != "SIDE_STORY" && edge.RelationType != "SPIN_OFF" {
+			continue
+		}
+		existing, existingErr := s.findByAnilistID(ctx, edge.Node.ID)
+		if existingErr == nil {
+			// Already imported. If it is a sequel that is not yet attached to the
+			// current series, re-parent it so it becomes an additional season.
+			if edge.RelationType == "SEQUEL" && parentAnimeID != "" {
+				s.attachAsSeason(ctx, existing, parentAnimeID)
 			}
-			// Fetch and import the related entry
+			// Recurse into the existing entry so deeper sequels (S1 → S2 → S3)
+			// are still discovered and attached to the same parent.
 			relatedMedia, err := s.client.GetMediaByID(ctx, edge.Node.ID)
-			if err != nil {
-				s.logger.Warn("failed to fetch related media from anilist", "id", edge.Node.ID, "error", err)
-				continue
+			if err == nil {
+				s.importRelatedMedia(ctx, relatedMedia.Relations, parentAnimeID, userID)
 			}
-			// Find the parent (the current entry or its parent)
-			// For SEQUEL, the parent is the prequel (current entry)
-			// For SIDE_STORY/SPIN_OFF, find the main entry
-			var parentID *string
-			if edge.RelationType == "SEQUEL" {
-				// The current entry is the parent of the sequel
-				currentAnime, err := s.findByAnilistID(ctx, relations.Edges[0].Node.ID)
-				if err == nil {
-					parentID = &currentAnime.ID
-				}
-			} else {
-				// For side stories/spin-offs, find the parent from their relations
-				parentID = s.findParentAnimeFromRelations(ctx, relatedMedia.Relations)
-			}
-			s.createAnimeFromAnilist(ctx, relatedMedia, userID, parentID)
+			continue
+		}
+		// Fetch and import the related entry
+		relatedMedia, err := s.client.GetMediaByID(ctx, edge.Node.ID)
+		if err != nil {
+			s.logger.Warn("failed to fetch related media from anilist", "id", edge.Node.ID, "error", err)
+			continue
+		}
+		// Sequels belong under the entry being imported/synced. Side stories and
+		// spin-offs attach to their own main entry when it exists locally.
+		var parentID *string
+		if edge.RelationType == "SEQUEL" && parentAnimeID != "" {
+			parentID = &parentAnimeID
+		} else {
+			parentID = s.findParentAnimeFromRelations(ctx, relatedMedia.Relations)
+		}
+		created, err := s.createAnimeFromAnilist(ctx, relatedMedia, userID, parentID)
+		if err != nil {
+			s.logger.Warn("failed to import related media from anilist", "id", edge.Node.ID, "error", err)
+			continue
+		}
+		// Recurse so the sequels of the related entry also land on the same parent.
+		if created != nil {
+			s.importRelatedMedia(ctx, relatedMedia.Relations, parentAnimeID, userID)
 		}
 	}
+}
+
+// attachAsSeason links an already-imported sequel to its parent series and
+// merges its episodes as an additional season under the parent. This heals rows
+// that were previously created as standalone entries.
+func (s *AnilistService) attachAsSeason(ctx context.Context, child *models.Anime, parentAnimeID string) {
+	if child == nil || (child.ParentAnimeID != nil && *child.ParentAnimeID == parentAnimeID) {
+		return
+	}
+	now := time.Now().UTC()
+	var maxSeason int
+	s.repos.db.WithContext(ctx).Model(&models.AnimeSeason{}).
+		Where("anime_id = ?", parentAnimeID).
+		Select("COALESCE(MAX(number), 0)").Scan(&maxSeason)
+	var maxEpisode int
+	s.repos.db.WithContext(ctx).Model(&models.Episode{}).
+		Where("anime_id = ?", parentAnimeID).
+		Select("COALESCE(MAX(number), 0)").Scan(&maxEpisode)
+
+	seasonNumber := maxSeason + 1
+	episodeOffset := maxEpisode
+
+	if child.TotalEpisodes > 0 {
+		season := &models.AnimeSeason{
+			Common:       models.Common{ID: utils.NewID(), CreatedAt: now, UpdatedAt: now},
+			AnimeID:      parentAnimeID,
+			Number:       seasonNumber,
+			Title:        fmt.Sprintf("Season %d", seasonNumber),
+			EpisodeCount: child.TotalEpisodes,
+		}
+		if err := s.repos.db.WithContext(ctx).Create(season).Error; err != nil {
+			return
+		}
+		var episodes []models.Episode
+		s.repos.db.WithContext(ctx).Where("anime_id = ?", child.ID).Order("number asc").Find(&episodes)
+		if len(episodes) == 0 {
+			for n := 1; n <= child.TotalEpisodes; n++ {
+				episodes = append(episodes, models.Episode{
+					Common:   models.Common{ID: utils.NewID(), CreatedAt: now, UpdatedAt: now},
+					AnimeID:  parentAnimeID,
+					SeasonID: &season.ID,
+					Number:   episodeOffset + n,
+					Title:    fmt.Sprintf("Episode %d", episodeOffset+n),
+					IsSubbed: true,
+				})
+			}
+			if len(episodes) > 0 {
+				s.repos.db.WithContext(ctx).CreateInBatches(episodes, 100)
+			}
+		} else {
+			for i := range episodes {
+				episodes[i].AnimeID = parentAnimeID
+				episodes[i].SeasonID = &season.ID
+				episodes[i].Number = episodeOffset + episodes[i].Number
+			}
+			s.repos.db.WithContext(ctx).Save(&episodes)
+		}
+		// Drop the child's now-orphaned season rows.
+		s.repos.db.WithContext(ctx).Where("anime_id = ?", child.ID).Delete(&models.AnimeSeason{})
+	}
+
+	child.ParentAnimeID = &parentAnimeID
+	s.repos.db.WithContext(ctx).Model(child).Updates(map[string]any{
+		"parent_anime_id": parentAnimeID,
+		"updated_at":      now,
+	})
+	s.logger.Warn("attached existing anime as season", "child", child.Title, "parent", parentAnimeID, "season", seasonNumber)
 }
 
 func (s *AnilistService) findByAnilistID(ctx context.Context, anilistID int) (*models.Anime, error) {
@@ -234,12 +380,13 @@ func (s *AnilistService) createAnimeFromAnilist(ctx context.Context, media *Anil
 		BannerImageUrl: media.BannerImage,
 		TrailerUrl:     buildTrailerURL(media.Trailer),
 		Status:         mapAnilistStatus(media.Status),
+		Rating:         anilistRating(media),
 		TotalEpisodes:  derefInt(media.Episodes),
 		ReleaseYear:    derefInt(media.SeasonYear),
 		Season:         strings.ToLower(media.Season),
 		Source:         strings.ToLower(media.Source),
 		ParentAnimeID:  parentID,
-		Metadata:       buildAnilistMetadata(media),
+		Metadata:       anilistMetadata(nil, media),
 	}
 
 	if err := s.repos.Anime().Create(ctx, anime); err != nil {
@@ -262,11 +409,12 @@ func (s *AnilistService) updateFromAnilist(ctx context.Context, anime *models.An
 	anime.BannerImageUrl = media.BannerImage
 	anime.TrailerUrl = buildTrailerURL(media.Trailer)
 	anime.Status = mapAnilistStatus(media.Status)
+	anime.Rating = anilistRating(media)
 	anime.TotalEpisodes = derefInt(media.Episodes)
 	anime.ReleaseYear = derefInt(media.SeasonYear)
 	anime.Season = strings.ToLower(media.Season)
 	anime.Source = strings.ToLower(media.Source)
-	anime.Metadata = buildAnilistMetadata(media)
+	anime.Metadata = anilistMetadata(anime.Metadata, media)
 	anime.UpdatedAt = time.Now().UTC()
 
 	if err := s.repos.Anime().Update(ctx, anime); err != nil {
@@ -411,22 +559,74 @@ func (s *AnilistService) findOrCreateCharacter(ctx context.Context, node struct 
 	return &char
 }
 
-func buildAnilistMetadata(media *AnilistMedia) datatypes.JSON {
-	m := map[string]any{
-		"anilist_id":  media.ID,
-		"site_url":    media.SiteURL,
-		"format":      media.Format,
-		"source":      media.Source,
-		"popularity":  media.Popularity,
-		"mean_score":  media.MeanScore,
+// anilistRating converts an AniList score (0–100) to the catalog's 0–10 scale.
+func anilistRating(media *AnilistMedia) float64 {
+	if media.AverageScore != nil {
+		return float64(*media.AverageScore) / 10
+	}
+	if media.MeanScore != nil {
+		return float64(*media.MeanScore) / 10
+	}
+	return 0
+}
+
+// anilistMetadata builds the metadata JSONB for an AniList media item. It keeps
+// any existing keys (e.g. a previously linked Plex source) and always records
+// the AniList external ID plus a source link so the catalog can resolve the
+// provider and rating.
+func anilistMetadata(existing datatypes.JSON, media *AnilistMedia) datatypes.JSON {
+	meta := map[string]any{}
+	if len(existing) > 0 {
+		_ = json.Unmarshal(existing, &meta)
+	}
+	meta["anilist_id"] = media.ID
+	meta["site_url"] = media.SiteURL
+	meta["format"] = media.Format
+	meta["source"] = media.Source
+	if media.Popularity != nil {
+		meta["popularity"] = media.Popularity
+	}
+	if media.MeanScore != nil {
+		meta["mean_score"] = media.MeanScore
+	}
+	if media.AverageScore != nil {
+		meta["average_score"] = media.AverageScore
 	}
 	if media.IDMal != nil {
-		m["mal_id"] = *media.IDMal
+		meta["mal_id"] = *media.IDMal
 	}
 	if media.Duration != nil {
-		m["duration"] = *media.Duration
+		meta["duration"] = *media.Duration
 	}
-	raw, _ := json.Marshal(m)
+
+	externalIDs := map[string]string{"anilist": strconv.Itoa(media.ID)}
+	if media.IDMal != nil {
+		externalIDs["mal"] = strconv.Itoa(*media.IDMal)
+	}
+	meta["external_ids"] = externalIDs
+
+	sources, _ := meta["sources"].([]any)
+	hasAnilist := false
+	for _, s := range sources {
+		if obj, ok := s.(map[string]any); ok && obj["provider"] == "AniList" {
+			hasAnilist = true
+			break
+		}
+	}
+	if !hasAnilist {
+		sources = append(sources, map[string]any{
+			"provider":     "AniList",
+			"externalId":   strconv.Itoa(media.ID),
+			"status":       "active",
+			"lastSyncedAt": time.Now().UTC().Format(time.RFC3339),
+		})
+		meta["sources"] = sources
+	}
+
+	raw, err := json.Marshal(meta)
+	if err != nil {
+		return existing
+	}
 	return datatypes.JSON(raw)
 }
 

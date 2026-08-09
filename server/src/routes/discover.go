@@ -3,11 +3,13 @@ package routes
 import (
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/skygenesisenterprise/kami-sama/server/src/interfaces"
 	"github.com/skygenesisenterprise/kami-sama/server/src/models"
 	"github.com/skygenesisenterprise/kami-sama/server/src/services"
 	"github.com/skygenesisenterprise/kami-sama/server/src/utils"
@@ -208,6 +210,88 @@ func (h *DiscoverHandler) GetDiscoverSections(c *gin.Context) {
 	utils.Success(c, http.StatusOK, gin.H{"sections": sections})
 }
 
+// GetPublishedCatalog is the discover algorithm: it builds the public page
+// automatically from whatever is published in the admin catalog (status =
+// 'published'), so no manual collection curation is required.
+//
+// It returns:
+//   - hero:    up to 5 slides selected automatically (rating + featured +
+//     having a backdrop, most recent as tie-breaker)
+//   - sections: auto-generated rails — À la une (featured), popular, latest,
+//     genre rails — all excluding the hero titles to avoid redundancy.
+func (h *DiscoverHandler) GetPublishedCatalog(c *gin.Context) {
+	ctx := c.Request.Context()
+
+	// Raw material: the whole published catalog (top-rated pool) + latest.
+	pool, _, err := h.deps.AnimeService.List(ctx, interfaces.ListAnimeOpts{Page: 1, Limit: 100, Status: "published", Sort: "rating"})
+	if err != nil {
+		h.deps.Logger.Error("failed to load published catalog (pool)", "error", err)
+		utils.Error(c, err)
+		return
+	}
+	latest, _, err := h.deps.AnimeService.List(ctx, interfaces.ListAnimeOpts{Page: 1, Limit: 20, Status: "published", Sort: "created_at"})
+	if err != nil {
+		h.deps.Logger.Error("failed to load published catalog (latest)", "error", err)
+		utils.Error(c, err)
+		return
+	}
+	featuredFlag := true
+	featured, _, _ := h.deps.AnimeService.List(ctx, interfaces.ListAnimeOpts{Page: 1, Limit: 20, Status: "published", Featured: &featuredFlag})
+
+	// Hero: up to 5 automatically selected slides, no manual curation.
+	hero := selectHeroItems(pool, 5)
+	exclude := make(map[string]bool, len(hero))
+	for _, item := range hero {
+		exclude[item.ID] = true
+	}
+
+	sections := make([]ApiSection, 0, 8)
+
+	if featItems := contentItemsExcluding(featured, exclude); len(featItems) > 0 {
+		sections = append(sections, ApiSection{
+			ID:       "catalog-featured",
+			Title:    "À la une",
+			Type:     "carousel",
+			Subtitle: "Les incontournables de la plateforme",
+			CtaLabel: "Voir tout",
+			CtaHref:  "/catalog?sort=featured",
+			Items:    featItems,
+		})
+	}
+
+	topItems := contentItemsExcluding(pool, exclude)
+	if len(topItems) > 24 {
+		topItems = topItems[:24]
+	}
+	sections = append(sections, ApiSection{
+		ID:       "catalog-top",
+		Title:    "Les plus populaires",
+		Type:     "carousel",
+		Subtitle: "Les titres les mieux notés de la plateforme",
+		CtaLabel: "Voir tout",
+		CtaHref:  "/catalog?sort=popular",
+		Items:    topItems,
+	})
+
+	latestItems := contentItemsExcluding(latest, exclude)
+	if len(latestItems) > 24 {
+		latestItems = latestItems[:24]
+	}
+	sections = append(sections, ApiSection{
+		ID:       "catalog-latest",
+		Title:    "Nouveautés du catalogue",
+		Type:     "carousel",
+		Subtitle: "Les dernières sorties publiées sur la plateforme",
+		CtaLabel: "Voir tout",
+		CtaHref:  "/catalog?sort=latest",
+		Items:    latestItems,
+	})
+
+	sections = append(sections, buildAnimeGenreSections(pool, exclude)...)
+
+	utils.Success(c, http.StatusOK, gin.H{"hero": hero, "sections": sections})
+}
+
 // GetDiscoverContinueWatching returns continue-watching items for the authenticated user.
 func (h *DiscoverHandler) GetDiscoverContinueWatching(c *gin.Context) {
 	// This requires a logged-in user. The watch progress is stored in the DB.
@@ -343,6 +427,50 @@ func anilistMediaToContentItem(media *services.AnilistMedia) ApiContentItem {
 	}
 }
 
+// selectHeroItems scores published items (rating, featured flag, backdrop,
+// recency as tie-breaker) and returns the top N as hero slides — so the hero
+// is always populated automatically, no manual curation needed.
+func selectHeroItems(items []models.Anime, max int) []ApiContentItem {
+	type scored struct {
+		item  ApiContentItem
+		score float64
+	}
+	all := make([]scored, 0, len(items))
+	for i := range items {
+		a := &items[i]
+		score := a.Rating
+		if a.IsFeatured {
+			score += 30
+		}
+		if a.BannerImageUrl != "" {
+			score += 10
+		}
+		score += float64(a.ReleaseYear) / 1000.0
+		all = append(all, scored{item: animeModelToContentItem(a), score: score})
+	}
+	sort.SliceStable(all, func(i, j int) bool { return all[i].score > all[j].score })
+	out := make([]ApiContentItem, 0, max)
+	for _, s := range all {
+		if len(out) >= max {
+			break
+		}
+		out = append(out, s.item)
+	}
+	return out
+}
+
+// contentItemsExcluding maps models to API items, skipping any id in exclude
+// so rails don't repeat the hero titles.
+func contentItemsExcluding(items []models.Anime, exclude map[string]bool) []ApiContentItem {
+	out := make([]ApiContentItem, 0, len(items))
+	for i := range items {
+		if !exclude[items[i].ID] {
+			out = append(out, animeModelToContentItem(&items[i]))
+		}
+	}
+	return out
+}
+
 func mapAnilistMediaToContentItems(media []services.AnilistMedia) []ApiContentItem {
 	items := make([]ApiContentItem, 0, len(media))
 	for i := range media {
@@ -365,9 +493,12 @@ func animeModelToContentItem(a *models.Anime) ApiContentItem {
 		status = "upcoming"
 	}
 	episodes := a.TotalEpisodes
-	seasons := 1
-	if episodes > 12 {
-		seasons = (episodes + 11) / 12
+	seasons := len(a.Seasons)
+	if seasons == 0 {
+		seasons = 1
+		if episodes > 12 {
+			seasons = (episodes + 11) / 12
+		}
 	}
 	return ApiContentItem{
 		ID:     a.ID,
@@ -395,7 +526,7 @@ func animeModelToContentItem(a *models.Anime) ApiContentItem {
 			Synopsis:      a.Synopsis,
 		},
 		Availability: ApiContentAvailability{
-			Watchable: false,
+			Watchable: a.Status == "published",
 			Episodes:  episodes,
 			Seasons:   &seasons,
 		},
@@ -435,6 +566,47 @@ func seasonDisplayName(season string) string {
 	}
 }
 
+// Shared genre display labels & catalog query slugs for the discover rails.
+var discoverGenreLabels = map[string]string{
+	"Action":        "Action & Aventure",
+	"Adventure":     "Aventure",
+	"Comedy":        "Comédie",
+	"Drama":         "Drames poignants",
+	"Fantasy":       "Fantastique",
+	"Horror":        "Horreur & Suspense",
+	"Romance":       "Romance",
+	"Sci-Fi":        "Science-Fiction",
+	"Slice of Life": "Tranche de vie",
+	"Suspense":      "Suspense",
+	"Thriller":      "Thrillers",
+	"Supernatural":  "Surnaturel",
+	"Mystery":       "Mystère",
+	"Sports":        "Sports",
+	"Music":         "Musique",
+	"Mecha":         "Mecha",
+	"Seinen":        "Seinen",
+	"Shounen":       "Shounen",
+	"Shoujo":        "Shoujo",
+	"Josei":         "Josei",
+	"Kids":          "Enfants",
+	"Ecchi":         "Ecchi",
+	"Hentai":        "Hentai",
+	"Yuri":          "Yuri",
+	"Yaoi":          "Yaoi",
+	"Isekai":        "Isekai",
+}
+
+var discoverGenreQuery = map[string]string{
+	"Action":       "action",
+	"Fantasy":      "fantasy",
+	"Romance":      "romance",
+	"Sci-Fi":       "scifi",
+	"Supernatural": "supernatural",
+	"Mystery":      "mystery",
+	"Thriller":     "thriller",
+	"Sports":       "sports",
+}
+
 func buildGenreSections(trending, popular []services.AnilistMedia) []ApiSection {
 	// Deduplicate and collect genres from the first N items
 	genreMap := make(map[string][]ApiContentItem)
@@ -471,51 +643,13 @@ func buildGenreSections(trending, popular []services.AnilistMedia) []ApiSection 
 	}
 
 	sections := make([]ApiSection, 0, len(entries))
-	genreLabels := map[string]string{
-		"Action":        "Action & Aventure",
-		"Adventure":     "Aventure",
-		"Comedy":        "Comédie",
-		"Drama":         "Drames poignants",
-		"Fantasy":       "Fantastique",
-		"Horror":        "Horreur & Suspense",
-		"Romance":       "Romance",
-		"Sci-Fi":        "Science-Fiction",
-		"Slice of Life": "Tranche de vie",
-		"Suspense":      "Suspense",
-		"Thriller":      "Thrillers",
-		"Supernatural":  "Surnaturel",
-		"Mystery":       "Mystère",
-		"Sports":        "Sports",
-		"Music":         "Musique",
-		"Mecha":         "Mecha",
-		"Seinen":        "Seinen",
-		"Shounen":       "Shounen",
-		"Shoujo":        "Shoujo",
-		"Josei":         "Josei",
-		"Kids":          "Enfants",
-		"Ecchi":         "Ecchi",
-		"Hentai":        "Hentai",
-		"Yuri":          "Yuri",
-		"Yaoi":          "Yaoi",
-		"Isekai":        "Isekai",
-	}
-	genreQuery := map[string]string{
-		"Action":       "action",
-		"Fantasy":      "fantasy",
-		"Romance":      "romance",
-		"Sci-Fi":       "scifi",
-		"Supernatural": "supernatural",
-		"Mystery":      "mystery",
-		"Thriller":     "thriller",
-		"Sports":       "sports",
-	}
 
 	for _, entry := range entries {
-		label, ok := genreLabels[entry.name]
+		label, ok := discoverGenreLabels[entry.name]
 		if !ok {
 			label = entry.name
 		}
-		query, _ := genreQuery[entry.name]
+		query, _ := discoverGenreQuery[entry.name]
 		ctaHref := "/catalog"
 		if query != "" {
 			ctaHref = fmt.Sprintf("/catalog?genre=%s", query)
@@ -532,6 +666,61 @@ func buildGenreSections(trending, popular []services.AnilistMedia) []ApiSection 
 		})
 	}
 
+	return sections
+}
+
+// buildAnimeGenreSections groups published catalog items by genre into a few
+// rails (max 5, genres with at least 3 items), mirroring the AniList rails.
+// Items whose id is in exclude (e.g. hero slides) are skipped.
+func buildAnimeGenreSections(items []models.Anime, exclude map[string]bool) []ApiSection {
+	genreMap := make(map[string][]ApiContentItem)
+	seen := make(map[string]bool)
+	for i := range items {
+		if exclude[items[i].ID] || seen[items[i].ID] {
+			continue
+		}
+		seen[items[i].ID] = true
+		item := animeModelToContentItem(&items[i])
+		for _, genre := range items[i].Genres {
+			genreMap[genre.Name] = append(genreMap[genre.Name], item)
+		}
+	}
+
+	type genreEntry struct {
+		name  string
+		items []ApiContentItem
+	}
+	var entries []genreEntry
+	for name, items := range genreMap {
+		if len(items) >= 3 {
+			entries = append(entries, genreEntry{name: name, items: items})
+		}
+	}
+	if len(entries) > 5 {
+		entries = entries[:5]
+	}
+
+	sections := make([]ApiSection, 0, len(entries))
+	for _, entry := range entries {
+		label, ok := discoverGenreLabels[entry.name]
+		if !ok {
+			label = entry.name
+		}
+		query, _ := discoverGenreQuery[entry.name]
+		ctaHref := "/catalog"
+		if query != "" {
+			ctaHref = fmt.Sprintf("/catalog?genre=%s", query)
+		}
+		sections = append(sections, ApiSection{
+			ID:       fmt.Sprintf("genre-%s", strings.ToLower(entry.name)),
+			Title:    label,
+			Type:     "carousel",
+			Subtitle: fmt.Sprintf("Les meilleurs %s", strings.ToLower(label)),
+			CtaLabel: "Voir tout",
+			CtaHref:  ctaHref,
+			Items:    entry.items,
+		})
+	}
 	return sections
 }
 

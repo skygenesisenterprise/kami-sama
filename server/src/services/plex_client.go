@@ -13,6 +13,7 @@ import (
 
 	"github.com/skygenesisenterprise/kami-sama/server/src/models"
 	"github.com/skygenesisenterprise/kami-sama/server/src/utils"
+	"gorm.io/datatypes"
 )
 
 // PlexClient implements a low-level HTTP client for the Plex Media Server
@@ -22,14 +23,16 @@ import (
 // header which Plex respects on most endpoints. The MediaContainer wrapper is the
 // standard envelope around all responses.
 type PlexClient struct {
-	baseURL          string
-	token            string
-	clientIdentifier string
-	product          string
-	version          string
-	device           string
-	httpClient       *http.Client
-	timeout          time.Duration
+	baseURL           string
+	token             string
+	accountToken      string
+	clientIdentifier  string
+	machineIdentifier string
+	product           string
+	version           string
+	device            string
+	httpClient        *http.Client
+	timeout           time.Duration
 }
 
 // PlexConfig is the wiring struct for PlexClient. It mirrors config.PlexConfig
@@ -37,11 +40,21 @@ type PlexClient struct {
 type PlexConfig struct {
 	URL              string
 	Token            string
+	// AccountToken is the plex.tv account token from the sign-in flow. It is
+	// distinct from Token (the server-scoped access token): Plex Media Servers
+	// reject account tokens on authenticated endpoints, while plex.tv rejects
+	// server tokens. Keeping both lets the client talk to both APIs.
+	AccountToken string
+	// ClientIdentifier is the X-Plex-Client-Identifier sent on server calls.
 	ClientIdentifier string
-	Product          string
-	Version          string
-	Device           string
-	Timeout          time.Duration
+	// MachineIdentifier is the Plex Media Server's machineIdentifier (e.g.
+	// "8r_yEEMP5TZznXFjRuXS"). It identifies the server on app.plex.tv so the
+	// integration can resolve the server's local/remote/relay connection URLs.
+	MachineIdentifier string
+	Product           string
+	Version           string
+	Device            string
+	Timeout           time.Duration
 }
 
 // NewPlexClient creates a PlexClient with validated headers.
@@ -67,27 +80,31 @@ func NewPlexClient(cfg PlexConfig) *PlexClient {
 		clientID = "kamisama-server"
 	}
 	return &PlexClient{
-		baseURL:          strings.TrimRight(cfg.URL, "/"),
-		token:            cfg.Token,
-		clientIdentifier: clientID,
-		product:          product,
-		version:          version,
-		device:           device,
-		httpClient:       &http.Client{Timeout: timeout},
-		timeout:          timeout,
+		baseURL:           strings.TrimRight(cfg.URL, "/"),
+		token:             cfg.Token,
+		accountToken:      cfg.AccountToken,
+		clientIdentifier:  clientID,
+		machineIdentifier: cfg.MachineIdentifier,
+		product:           product,
+		version:           version,
+		device:            device,
+		httpClient:        &http.Client{Timeout: timeout},
+		timeout:           timeout,
 	}
 }
 
 // plexConfigFromSourceConfig is the JSON shape stored on a source_configs
 // row for the plex source type.
 type plexConfigFromSourceConfig struct {
-	URL              string  `json:"url"`
-	Token            string  `json:"token"`
-	ClientIdentifier string  `json:"clientIdentifier"`
-	Product          string  `json:"product"`
-	Version          string  `json:"version"`
-	Device           string  `json:"device"`
-	TimeoutSeconds   float64 `json:"timeoutSeconds"`
+	URL               string  `json:"url"`
+	Token             string  `json:"token"`
+	AccountToken      string  `json:"accountToken"`
+	ClientIdentifier  string  `json:"clientIdentifier"`
+	MachineIdentifier string  `json:"machineIdentifier"`
+	Product           string  `json:"product"`
+	Version           string  `json:"version"`
+	Device            string  `json:"device"`
+	TimeoutSeconds    float64 `json:"timeoutSeconds"`
 }
 
 // PlexClientFromSourceConfig builds a PlexClient from a persisted
@@ -106,14 +123,38 @@ func PlexClientFromSourceConfig(cfg *models.SourceConfig) (*PlexClient, error) {
 		return nil, fmt.Errorf("plex config missing url or token")
 	}
 	return NewPlexClient(PlexConfig{
-		URL:              raw.URL,
-		Token:            raw.Token,
-		ClientIdentifier: raw.ClientIdentifier,
-		Product:          raw.Product,
-		Version:          raw.Version,
-		Device:           raw.Device,
-		Timeout:          time.Duration(raw.TimeoutSeconds) * time.Second,
+		URL:               raw.URL,
+		Token:             raw.Token,
+		AccountToken:      raw.AccountToken,
+		ClientIdentifier:  raw.ClientIdentifier,
+		MachineIdentifier: raw.MachineIdentifier,
+		Product:           raw.Product,
+		Version:           raw.Version,
+		Device:            raw.Device,
+		Timeout:           time.Duration(raw.TimeoutSeconds) * time.Second,
 	}), nil
+}
+
+// MergePlexMachineIdentifier returns the plex source config JSON with the
+// server's machineIdentifier set. Unknown keys are preserved, and the input is
+// returned unchanged when the identifier already matches or cannot be decoded.
+func MergePlexMachineIdentifier(config datatypes.JSON, machineID string) datatypes.JSON {
+	if machineID == "" {
+		return config
+	}
+	var meta map[string]interface{}
+	if err := json.Unmarshal(config, &meta); err != nil {
+		return config
+	}
+	if meta["machineIdentifier"] == machineID {
+		return config
+	}
+	meta["machineIdentifier"] = machineID
+	merged, err := json.Marshal(meta)
+	if err != nil {
+		return config
+	}
+	return datatypes.JSON(merged)
 }
 
 // Enabled reports whether the client is fully wired (URL + token).
@@ -148,10 +189,11 @@ type plexMediaContainer struct {
 	Thumb     string                   `json:"thumb"`
 	Title1    string                   `json:"title1"`
 	Title2    string                   `json:"title2"`
-	Directory []map[string]interface{} `json:"Directory"`
-	Metadata  []map[string]interface{} `json:"Metadata"`
-	Hub       []map[string]interface{} `json:"Hub"`
-	Meta      []map[string]interface{} `json:"Meta"`
+	Directory    []map[string]interface{} `json:"Directory"`
+	Metadata     []map[string]interface{} `json:"Metadata"`
+	SearchResult []map[string]interface{} `json:"SearchResult"`
+	Hub          []map[string]interface{} `json:"Hub"`
+	Meta         []map[string]interface{} `json:"Meta"`
 	Raw       map[string]interface{}
 }
 
@@ -208,6 +250,15 @@ func (c *PlexClient) doRequest(ctx context.Context, method, path string, query u
 		})
 	}
 
+	contentType := resp.Header.Get("Content-Type")
+	if strings.HasPrefix(strings.TrimSpace(string(body)), "<") && !strings.HasPrefix(contentType, "application/json") {
+		return nil, utils.NewError(http.StatusBadGateway, "PLEX_HTML_RESPONSE", "Plex returned an HTML/XML response instead of JSON. Check that the server URL points to a Plex Media Server (e.g. http://192.168.1.50:32400) and that the token is valid.", map[string]any{
+			"endpoint":    path,
+			"contentType": contentType,
+			"snippet":     truncateForError(strings.TrimSpace(string(body)), 256),
+		})
+	}
+
 	var pr plexResponse
 	if err := json.Unmarshal(body, &pr); err != nil {
 		return nil, utils.NewError(http.StatusInternalServerError, "PLEX_DECODE_FAILED", "Failed to decode Plex response: "+err.Error(), map[string]any{
@@ -217,8 +268,15 @@ func (c *PlexClient) doRequest(ctx context.Context, method, path string, query u
 	if pr.MediaContainer == nil {
 		return nil, utils.NewError(http.StatusInternalServerError, "PLEX_INVALID_PAYLOAD", "Plex response was missing the MediaContainer envelope.", nil)
 	}
-	// Preserve full raw envelope so callers can access fields we don't model.
-	_ = json.Unmarshal(body, &pr.MediaContainer.Raw)
+	// Preserve the MediaContainer's own attributes so callers (e.g. identity)
+	// can access fields we don't model. Plex wraps everything in a
+	// MediaContainer envelope, so we strip that level and keep the inner
+	// object — Raw["size"], Raw["machineIdentifier"], etc. are then top-level.
+	var rawEnvelope struct {
+		MediaContainer map[string]interface{} `json:"MediaContainer"`
+	}
+	_ = json.Unmarshal(body, &rawEnvelope)
+	pr.MediaContainer.Raw = rawEnvelope.MediaContainer
 	return pr.MediaContainer, nil
 }
 
@@ -359,13 +417,310 @@ func (c *PlexClient) ListHubs(ctx context.Context, libraryID string) ([]PlexHub,
 	return hubs, nil
 }
 
-// GetIdentity returns the server's identity from GET /.
+// GetIdentity returns the server's identity from GET /identity.
+//
+// The root path ("/") serves the Plex web app as HTML, so we hit the
+// dedicated identity endpoint which honors the JSON Accept header.
 func (c *PlexClient) GetIdentity(ctx context.Context) (map[string]interface{}, error) {
-	mc, err := c.doRequest(ctx, http.MethodGet, "/", nil)
+	mc, err := c.doRequest(ctx, http.MethodGet, "/identity", nil)
 	if err != nil {
 		return nil, err
 	}
 	return mc.Raw, nil
+}
+
+// PlexConnection models one connection entry of a Plex server resource as
+// returned by app.plex.tv/api/resources.
+type PlexConnection struct {
+	Protocol string `json:"protocol"`
+	Address  string `json:"address"`
+	Port     int    `json:"port"`
+	URI      string `json:"uri"`
+	Local    bool   `json:"local"`
+	Relay    bool   `json:"relay"`
+}
+
+// PlexServerResource models a Plex Media Server entry in the app.plex.tv
+// account resource list. The access token is intentionally not modeled so it
+// can never be serialized back to the front-end.
+type PlexServerResource struct {
+	Name             string           `json:"name"`
+	Product          string           `json:"product"`
+	Version          string           `json:"version"`
+	ClientIdentifier string           `json:"clientIdentifier"`
+	Host             string           `json:"host"`
+	Port             int              `json:"port"`
+	Local            bool             `json:"local"`
+	Connections      []PlexConnection `json:"connections"`
+}
+
+// ServerConnections resolves the configured server's connection URLs through
+// the Plex cloud API (app.plex.tv/api/resources). The stored machineIdentifier
+// identifies the server inside the account resource list and is also sent as
+// the X-Plex-Client-Identifier, which plex.tv uses to correlate the account
+// with the server. The plex.tv request uses the account token (the stored
+// token is the server-scoped one, which plex.tv rejects). Returns the matching
+// resource, or the sole server resource when no identifier match is possible.
+func (c *PlexClient) ServerConnections(ctx context.Context) (*PlexServerResource, error) {
+	if !c.Enabled() {
+		return nil, plexDisabledError()
+	}
+	clientID := c.machineIdentifier
+	if clientID == "" {
+		clientID = c.clientIdentifier
+	}
+	cloudToken := c.accountToken
+	if cloudToken == "" {
+		cloudToken = c.token
+	}
+	servers, err := fetchPlexResources(ctx, cloudToken, clientID, c.timeout)
+	if err != nil {
+		return nil, err
+	}
+	for _, server := range servers {
+		if server.ClientIdentifier == c.machineIdentifier {
+			return &server, nil
+		}
+	}
+	if len(servers) == 1 {
+		return &servers[0], nil
+	}
+	return nil, utils.NewError(http.StatusNotFound, "PLEX_SERVER_NOT_FOUND", "No Plex server resource matched the stored machine identifier.", map[string]any{
+		"machineIdentifier": c.machineIdentifier,
+	})
+}
+
+// DiscoverServers lists every Plex Media Server registered to the account
+// behind the given plex.tv token. It lets the UI bootstrap a connection
+// without knowing a server URL by exposing each server's connections so the
+// front-end can auto-fill the base URL. The token is never returned.
+//
+// The resources request must use the same client identifier the pin flow was
+// registered under — plex.tv binds tokens to a client identifier and rejects
+// mismatches with a 401.
+func DiscoverServers(ctx context.Context, token string) ([]PlexServerResource, error) {
+	servers, err := fetchPlexResources(ctx, strings.TrimSpace(token), PlexClientIdentifier, 30*time.Second)
+	if err != nil {
+		return nil, err
+	}
+	if servers == nil {
+		servers = []PlexServerResource{}
+	}
+	return servers, nil
+}
+
+// plexDeviceResource is the JSON shape of one device in the
+// plex.tv/api/v2/resources payload. Unlike the v1 endpoint, v2 always answers
+// with JSON, so the token mismatch and throttling cases stay machine-readable.
+type plexDeviceResource struct {
+	Name             string `json:"name"`
+	Product          string `json:"product"`
+	ProductVersion   string `json:"productVersion"`
+	Platform         string `json:"platform"`
+	Device           string `json:"device"`
+	ClientIdentifier string `json:"clientIdentifier"`
+	Provides         string `json:"provides"`
+	Host             string `json:"host"`
+	Port             int    `json:"port"`
+	Local            bool   `json:"local"`
+	AccessToken      string `json:"accessToken"`
+	Connections      []struct {
+		Protocol string `json:"protocol"`
+		Address  string `json:"address"`
+		Port     int    `json:"port"`
+		URI      string `json:"uri"`
+		Local    bool   `json:"local"`
+		Relay    bool   `json:"relay"`
+	} `json:"connections"`
+}
+
+// PlexServerDevice is a Plex Media Server entry from the raw plex.tv resources
+// payload. Unlike PlexServerResource it also carries the server-scoped access
+// token required by authenticated server endpoints. The token is tagged
+// json:"-" so it can never be accidentally serialized to the front-end.
+type PlexServerDevice struct {
+	Name             string           `json:"name"`
+	Product          string           `json:"product"`
+	Version          string           `json:"version"`
+	ClientIdentifier string           `json:"clientIdentifier"`
+	Host             string           `json:"host"`
+	Port             int              `json:"port"`
+	Local            bool             `json:"local"`
+	Connections      []PlexConnection `json:"connections"`
+	AccessToken      string           `json:"-"`
+}
+
+// ResolvePlexServerDevice resolves the account's server matching
+// clientIdentifier from the raw plex.tv resources (which carry the server
+// access token), falling back to the sole server when no identifier matches.
+// The returned token is intended to be persisted on the source config so
+// authenticated server calls stop being rejected with a 401.
+func ResolvePlexServerDevice(ctx context.Context, token, clientIdentifier string) (*PlexServerDevice, error) {
+	devices, err := fetchRawPlexResources(ctx, strings.TrimSpace(token), PlexClientIdentifier, 30*time.Second)
+	if err != nil {
+		return nil, err
+	}
+	if clientIdentifier != "" {
+		for i := range devices {
+			if devices[i].ClientIdentifier == clientIdentifier {
+				return plexDeviceResourceToServer(devices[i]), nil
+			}
+		}
+	}
+	if len(devices) == 1 {
+		return plexDeviceResourceToServer(devices[0]), nil
+	}
+	return nil, utils.NewError(http.StatusNotFound, "PLEX_SERVER_NOT_FOUND", "No Plex Media Server matched the selected identifier.", map[string]any{
+		"clientIdentifier": clientIdentifier,
+	})
+}
+
+// plexDeviceResourceToServer converts a raw plex.tv resource into a
+// PlexServerDevice, keeping the server-scoped access token.
+func plexDeviceResourceToServer(d plexDeviceResource) *PlexServerDevice {
+	server := &PlexServerDevice{
+		Name:             d.Name,
+		Product:          d.Product,
+		Version:          d.ProductVersion,
+		ClientIdentifier: d.ClientIdentifier,
+		Host:             d.Host,
+		Port:             d.Port,
+		Local:            d.Local,
+		AccessToken:      d.AccessToken,
+	}
+	for _, c := range d.Connections {
+		server.Connections = append(server.Connections, PlexConnection{
+			Protocol: c.Protocol,
+			Address:  c.Address,
+			Port:     c.Port,
+			URI:      c.URI,
+			Local:    c.Local,
+			Relay:    c.Relay,
+		})
+	}
+	return server
+}
+
+// mapPlexDevices converts plex.tv resources into the server list exposed to
+// the front-end, keeping only Plex Media Server entries and never carrying the
+// access token over.
+func mapPlexDevices(devices []plexDeviceResource) []PlexServerResource {
+	out := make([]PlexServerResource, 0, len(devices))
+	for _, d := range devices {
+		if !strings.Contains(d.Provides, "server") {
+			continue
+		}
+		server := PlexServerResource{
+			Name:             d.Name,
+			Product:          d.Product,
+			Version:          d.ProductVersion,
+			ClientIdentifier: d.ClientIdentifier,
+			Host:             d.Host,
+			Port:             d.Port,
+			Local:            d.Local,
+		}
+		for _, c := range d.Connections {
+			server.Connections = append(server.Connections, PlexConnection{
+				Protocol: c.Protocol,
+				Address:  c.Address,
+				Port:     c.Port,
+				URI:      c.URI,
+				Local:    c.Local,
+				Relay:    c.Relay,
+			})
+		}
+		out = append(out, server)
+	}
+	return out
+}
+
+// fetchRawPlexResources lists the account's raw devices from
+// plex.tv/api/v2/resources, including each server's access token. The v2
+// endpoint always answers JSON — the v1 endpoint answers XML (even for
+// rejected tokens), which is why the discovery flow kept tripping the
+// HTML/XML guard. The token is only used for the upstream request and never
+// leaks into the returned payload. The client identifier, product, version
+// and platform must match the metadata used to obtain the token.
+func fetchRawPlexResources(ctx context.Context, token, clientID string, timeout time.Duration) ([]plexDeviceResource, error) {
+	if token == "" {
+		return nil, utils.NewError(http.StatusUnauthorized, "PLEX_INVALID_TOKEN", "Missing Plex token.", nil)
+	}
+	if timeout <= 0 {
+		timeout = 30 * time.Second
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://plex.tv/api/v2/resources?includeHttps=1&includeRelay=1", nil)
+	if err != nil {
+		return nil, utils.NewError(http.StatusInternalServerError, "PLEX_REQUEST_FAILED", "Failed to build plex.tv request: "+err.Error(), nil)
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("X-Plex-Token", token)
+	req.Header.Set("X-Plex-Client-Identifier", clientID)
+	req.Header.Set("X-Plex-Product", plexProduct)
+	req.Header.Set("X-Plex-Version", plexVersion)
+	req.Header.Set("X-Plex-Device", plexDevice)
+	req.Header.Set("X-Plex-Platform", plexPlatform)
+
+	client := &http.Client{Timeout: timeout}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, utils.NewError(http.StatusBadGateway, "PLEX_REQUEST_FAILED", "Failed to reach plex.tv: "+err.Error(), nil)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
+	if err != nil {
+		return nil, utils.NewError(http.StatusBadGateway, "PLEX_READ_FAILED", "Failed to read plex.tv response: "+err.Error(), nil)
+	}
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		return nil, utils.NewError(http.StatusUnauthorized, "PLEX_INVALID_TOKEN", "plex.tv rejected the provided token.", map[string]any{
+			"status":   resp.StatusCode,
+			"endpoint": "plex.tv/api/v2/resources",
+		})
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, utils.NewError(resp.StatusCode, "PLEX_API_ERROR", fmt.Sprintf("plex.tv returned an unexpected status (%d)", resp.StatusCode), map[string]any{
+			"body": truncateForError(string(body), 512),
+		})
+	}
+
+	trimmed := strings.TrimSpace(string(body))
+	meta := map[string]any{
+		"contentType": resp.Header.Get("Content-Type"),
+	}
+	if strings.HasPrefix(trimmed, "<") {
+		// plex.tv should never answer HTML/XML here (the v2 API is JSON-only),
+		// but when it does the token may be invalid or the request throttled.
+		meta["snippet"] = truncateForError(trimmed, 512)
+		return nil, utils.NewError(http.StatusBadGateway, "PLEX_HTML_RESPONSE",
+			"plex.tv returned an HTML/XML page instead of JSON. This usually means the token is invalid (start a new sign-in), or plex.tv is throttling requests.", meta)
+	}
+
+	// The v2 endpoint answers with a JSON array of devices. The v1 endpoint
+	// wrapped them in a MediaContainer, so both shapes are tolerated here.
+	var devices []plexDeviceResource
+	if json.Unmarshal(body, &devices) == nil && devices != nil {
+		return devices, nil
+	}
+	var legacy struct {
+		MediaContainer struct {
+			Server []plexDeviceResource `json:"Server"`
+		} `json:"MediaContainer"`
+	}
+	if json.Unmarshal(body, &legacy) == nil && legacy.MediaContainer.Server != nil {
+		return legacy.MediaContainer.Server, nil
+	}
+	return nil, utils.NewError(http.StatusInternalServerError, "PLEX_DECODE_FAILED", "Failed to decode plex.tv resources response.", meta)
+}
+
+// fetchPlexResources lists the account's Plex servers from plex.tv, stripping
+// each server's access token from the result. Used by the discovery and
+// remote-connection flows where only the sanitized resource is needed.
+func fetchPlexResources(ctx context.Context, token, clientID string, timeout time.Duration) ([]PlexServerResource, error) {
+	devices, err := fetchRawPlexResources(ctx, token, clientID, timeout)
+	if err != nil {
+		return nil, err
+	}
+	return mapPlexDevices(devices), nil
 }
 
 // RefreshLibrary triggers a metadata refresh for the given library.
@@ -413,6 +768,38 @@ func combineSearchResults(mc *plexMediaContainer) []map[string]interface{} {
 	out := mc.Metadata
 	out = append(out, mc.Meta...)
 	out = append(out, mc.Directory...)
+	// Plex nests every /library/search hit under "SearchResult": each entry
+	// holds the media item inside "Metadata" (a single object rather than the
+	// top-level Metadata array, which stays empty for search requests).
+	seen := make(map[string]struct{}, len(out))
+	addUnique := func(item map[string]interface{}) {
+		rk, _ := item["ratingKey"].(string)
+		if rk == "" {
+			out = append(out, item)
+			return
+		}
+		if _, ok := seen[rk]; ok {
+			return
+		}
+		seen[rk] = struct{}{}
+		out = append(out, item)
+	}
+	for _, r := range mc.SearchResult {
+		m, ok := r["Metadata"]
+		if !ok {
+			continue
+		}
+		switch v := m.(type) {
+		case map[string]interface{}:
+			addUnique(v)
+		case []interface{}:
+			for _, e := range v {
+				if em, ok := e.(map[string]interface{}); ok {
+					addUnique(em)
+				}
+			}
+		}
+	}
 	return out
 }
 

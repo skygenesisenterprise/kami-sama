@@ -7,6 +7,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/skygenesisenterprise/kami-sama/server/src/middleware"
+	"github.com/skygenesisenterprise/kami-sama/server/src/services"
 	"github.com/skygenesisenterprise/kami-sama/server/src/utils"
 )
 
@@ -48,7 +49,7 @@ func (h *AnilistHandler) Search(c *gin.Context) {
 		return
 	}
 	utils.Success(c, http.StatusOK, gin.H{
-		"items":  result.Media,
+		"items":  services.ToAnilistSearchItems(result.Media),
 		"total":  result.PageInfo.Total,
 		"page":   result.PageInfo.CurrentPage,
 		"hasNext": result.PageInfo.HasNextPage,
@@ -82,7 +83,7 @@ func (h *AnilistHandler) Trending(c *gin.Context) {
 		return
 	}
 	utils.Success(c, http.StatusOK, gin.H{
-		"items":    result.Media,
+		"items":    services.ToAnilistSearchItems(result.Media),
 		"total":    result.PageInfo.Total,
 		"page":     result.PageInfo.CurrentPage,
 		"hasNext":  result.PageInfo.HasNextPage,
@@ -100,7 +101,7 @@ func (h *AnilistHandler) Popular(c *gin.Context) {
 		return
 	}
 	utils.Success(c, http.StatusOK, gin.H{
-		"items":    result.Media,
+		"items":    services.ToAnilistSearchItems(result.Media),
 		"total":    result.PageInfo.Total,
 		"page":     result.PageInfo.CurrentPage,
 		"hasNext":  result.PageInfo.HasNextPage,
@@ -123,7 +124,7 @@ func (h *AnilistHandler) Seasonal(c *gin.Context) {
 		return
 	}
 	utils.Success(c, http.StatusOK, gin.H{
-		"items":    result.Media,
+		"items":    services.ToAnilistSearchItems(result.Media),
 		"total":    result.PageInfo.Total,
 		"page":     result.PageInfo.CurrentPage,
 		"hasNext":  result.PageInfo.HasNextPage,

@@ -62,7 +62,7 @@ func (s *DatabaseService) AutoMigrate() error {
 		return err
 	}
 
-	return s.db.AutoMigrate(
+	if err := s.db.AutoMigrate(
 		&models.User{},
 		&models.UserSettings{},
 		&models.NotificationPreference{},
@@ -118,7 +118,37 @@ func (s *DatabaseService) AutoMigrate() error {
 		&models.Profile{},
 		&models.MfaRecoveryCode{},
 		&models.MfaSecret{},
-	)
+	); err != nil {
+		return err
+	}
+	return s.migrateDuplicateGuardrails()
+}
+
+// migrateDuplicateGuardrails adds unique indexes on the provider external IDs
+// stored in the anime metadata JSONB so the same series/movie cannot be
+// imported twice from the same source. Each index matches either the legacy
+// top-level key (anilist_id/mal_id) or the newer external_ids object, and
+// ignores soft-deleted rows so an entry can be re-imported after a delete.
+func (s *DatabaseService) migrateDuplicateGuardrails() error {
+	if s.isLite {
+		return nil
+	}
+	statements := []string{
+		`CREATE UNIQUE INDEX IF NOT EXISTS uq_anime_anilist_external_id
+		 ON anime ((COALESCE(metadata->>'anilist_id', metadata->'external_ids'->>'anilist')))
+		 WHERE deleted_at IS NULL
+		   AND COALESCE(metadata->>'anilist_id', metadata->'external_ids'->>'anilist') IS NOT NULL`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS uq_anime_mal_external_id
+		 ON anime ((COALESCE(metadata->>'mal_id', metadata->'external_ids'->>'mal')))
+		 WHERE deleted_at IS NULL
+		   AND COALESCE(metadata->>'mal_id', metadata->'external_ids'->>'mal') IS NOT NULL`,
+	}
+	for _, stmt := range statements {
+		if err := s.db.Exec(stmt).Error; err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *DatabaseService) normalizeLegacyAuthSessionSchema() error {

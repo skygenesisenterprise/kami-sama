@@ -96,6 +96,7 @@ import { PageHeader } from '@/components/dash/page-header'
 import { StatusBadge, type StatusTone } from '@/components/dash/status-badge'
 import type { SourceResultItem } from '@/components/dash/source-result-card'
 import { ApiError } from '@/lib/api/errors'
+import { joinApiPath } from '@/lib/api/config'
 import {
   animeApi,
   apiAnimeToSeriesItem,
@@ -104,7 +105,7 @@ import {
 } from '@/lib/api/anime'
 import { anilistApi } from '@/lib/api/anilist'
 import { myanimelistApi } from '@/lib/api/myanimelist'
-import { plexApi } from '@/lib/api/plex'
+import { plexApi, type PlexLibrary, type PlexLibraryItem } from '@/lib/api/plex'
 import { anilistItemToSourceItem, plexItemToSourceItem } from '@/lib/source-search'
 import {
   SERIES_STATUS_TONE,
@@ -182,7 +183,6 @@ const TABS: { value: ContentKind | 'all'; label: string }[] = [
 const ALL_STATUSES: string[] = [
   'all',
   'Added',
-  'Draft',
   'Review',
   'Approved',
   'Scheduled',
@@ -318,6 +318,67 @@ function fromTvShow(item: TvShowItem): ContentRow {
   }
 }
 
+/* -------------------------------------------------------------------------- */
+/*  Plex source → catalog rows                                                 */
+/* -------------------------------------------------------------------------- */
+
+function plexGenresFromItem(item: PlexLibraryItem): string[] {
+  const raw = item.Genre
+  if (Array.isArray(raw)) {
+    const out: string[] = []
+    for (const entry of raw) {
+      const tag =
+        typeof entry === 'string'
+          ? entry
+          : entry && typeof entry === 'object'
+            ? (entry as Record<string, unknown>).tag
+            : undefined
+      if (typeof tag === 'string' && tag) out.push(tag)
+    }
+    return out
+  }
+  return item.genres ?? []
+}
+
+/** Routes a raw Plex image path through the server-side proxy (keeps the token server-side). */
+function plexImageUrl(path: unknown): string {
+  const raw = typeof path === 'string' ? path : ''
+  if (!raw) return ''
+  return joinApiPath(`/integrations/plex/image?path=${encodeURIComponent(raw)}`)
+}
+
+function plexItemToContentRow(
+  item: PlexLibraryItem,
+  library: PlexLibrary,
+): ContentRow | null {
+  if (item.type !== 'movie' && item.type !== 'show') return null
+  const id = String(item.ratingKey ?? item.sourceId ?? item.id ?? '')
+  if (!id) return null
+  const title = String(item.title ?? item.name ?? 'Unknown')
+  const kind: ContentKind = item.type === 'movie' ? 'movie' : 'tv-show'
+  const backdrop = plexImageUrl(item.art)
+  const poster = plexImageUrl(item.thumb)
+  return {
+    key: `plex-${id}`,
+    kind,
+    title,
+    subtitle: String(item.originalTitle ?? ''),
+    status: 'Added',
+    tone: kind === 'movie' ? MOVIE_STATUS_TONE.Added : TV_SHOW_STATUS_TONE.Added,
+    sources: ['Plex'],
+    year: typeof item.year === 'number' ? item.year : null,
+    rating: typeof item.rating === 'number' ? item.rating : 0,
+    genres: plexGenresFromItem(item),
+    metadataStatus: 'synced',
+    totalEpisodes: typeof item.leafCount === 'number' ? item.leafCount : 0,
+    updatedAt: 'just now',
+    updatedBy: 'Plex',
+    synopsis: String(item.summary ?? item.overview ?? ''),
+    seasons: [],
+    assets: { poster, banner: backdrop, backdrop, thumbnail: '', still: '' },
+  }
+}
+
 export default function ContentCatalogPage() {
   const [tab, setTab] = React.useState<ContentKind | 'all'>('all')
   const [query, setQuery] = React.useState('')
@@ -348,6 +409,9 @@ export default function ContentCatalogPage() {
   const [inspecting, setInspecting] = React.useState<ContentRow | null>(null)
   const [adding, setAdding] = React.useState(false)
   const [syncing, setSyncing] = React.useState<string | null>(null)
+  const [syncingAll, setSyncingAll] = React.useState(false)
+  const [syncProgress, setSyncProgress] = React.useState({ done: 0, total: 0 })
+  const [page, setPage] = React.useState(1)
 
   const fetchCatalog = React.useCallback(async () => {
     try {
@@ -374,9 +438,56 @@ export default function ContentCatalogPage() {
     }
   }, [])
 
+  /** IDs already persisted in the backend catalog (anime table), used to
+   *  avoid showing an imported Plex title both as an ephemeral Plex row and
+   *  as a persisted series row. */
+  const persistedIdsRef = React.useRef<Set<string>>(new Set())
+  persistedIdsRef.current = new Set(seriesItems.map((s) => s.id))
+
+  const fetchPlexCatalog = React.useCallback(async () => {
+    let libraries: PlexLibrary[] = []
+    try {
+      const res = await plexApi.libraries()
+      libraries = res.items
+    } catch {
+      return
+    }
+    if (libraries.length === 0) return
+    const batches = await Promise.all(
+      libraries.map((lib) =>
+        plexApi
+          .items(lib.id, { limit: 200 })
+          .then((r) => r.items)
+          .catch(() => [] as PlexLibraryItem[]),
+      ),
+    )
+    const plexRows = batches.flatMap((items, i) =>
+      items
+        .map((item) => plexItemToContentRow(item, libraries[i]))
+        .filter((row): row is ContentRow => row !== null),
+    )
+    if (plexRows.length === 0) return
+    setLocalRows((prev) => {
+      const existing = new Set(prev.map((r) => r.key))
+      // A Plex row whose rating key matches a persisted series is already in
+      // the catalog — skip it to avoid duplicates.
+      return [
+        ...plexRows.filter(
+          (r) =>
+            !existing.has(r.key) &&
+            !persistedIdsRef.current.has(r.key.replace(/^plex-/, '')),
+        ),
+        ...prev,
+      ]
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- persistedIdsRef
+    // is read lazily at call time; it always holds the latest series ids.
+  }, [])
+
   React.useEffect(() => {
     void fetchCatalog()
-  }, [fetchCatalog])
+    void fetchPlexCatalog()
+  }, [fetchCatalog, fetchPlexCatalog])
 
   const rows = React.useMemo(() => {
     return [
@@ -402,9 +513,7 @@ export default function ContentCatalogPage() {
 
   const stats = React.useMemo(() => {
     const published = rows.filter((r) => r.status === 'Published').length
-    const drafts = rows.filter(
-      (r) => r.status === 'Draft' || r.status === 'Added',
-    ).length
+    const drafts = rows.filter((r) => r.status === 'Added').length
     const metadataErrors = rows.filter(
       (r) => r.metadataStatus === 'error' || r.metadataStatus === 'missing',
     ).length
@@ -456,10 +565,34 @@ export default function ContentCatalogPage() {
     return next
   }, [rows, tab, query, status, source, sortKey, sortDir])
 
-  const allSelected = filtered.length > 0 && selected.size === filtered.length
+  const PAGE_SIZE = 50
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
+  const safePage = Math.min(page, totalPages)
+  const pagedRows = filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE)
+  const canGoPrevious = safePage > 1
+  const canGoNext = safePage < totalPages
+
+  React.useEffect(() => {
+    setPage(1)
+  }, [tab, query, status, source])
+
+  const allSelected =
+    pagedRows.length > 0 && pagedRows.every((r) => selected.has(r.key))
 
   const toggleAll = () => {
-    setSelected(allSelected ? new Set() : new Set(filtered.map((r) => r.key)))
+    if (allSelected) {
+      setSelected((prev) => {
+        const next = new Set(prev)
+        for (const row of pagedRows) next.delete(row.key)
+        return next
+      })
+    } else {
+      setSelected((prev) => {
+        const next = new Set(prev)
+        for (const row of pagedRows) next.add(row.key)
+        return next
+      })
+    }
   }
 
   const toggleOne = (key: string) => {
@@ -513,26 +646,40 @@ export default function ContentCatalogPage() {
 
     const seriesKeys = [...keys].filter((k) => k.startsWith('series-'))
     const seriesIds = seriesKeys.map((k) => k.replace(/^series-/, ''))
+    const plexKeys = [...keys].filter((k) => k.startsWith('plex-'))
+    const plexRatingKeys = plexKeys.map((k) => k.replace(/^plex-/, ''))
+    const nextStatus = action === 'Publish' ? 'published' : 'archived'
     let failed = 0
-    if (seriesIds.length > 0) {
-      const results = await Promise.allSettled(
-        seriesIds.map((id) =>
-          action === 'Delete'
-            ? animeApi.remove(id)
-            : animeApi.update(id, {
-                status: action === 'Publish' ? 'published' : 'archived',
-              }),
+
+    if (seriesIds.length > 0 || plexRatingKeys.length > 0) {
+      const jobs: Promise<unknown>[] = [
+        ...seriesIds.map((id) =>
+          action === 'Delete' ? animeApi.remove(id) : animeApi.update(id, { status: nextStatus }),
         ),
-      )
+        ...plexRatingKeys.map(async (ratingKey) => {
+          // Plex rows are ephemeral (fetched from the Plex API): persist them
+          // into the catalog first, then apply the requested action server-side.
+          const res = await plexApi.importItem(ratingKey)
+          if (action === 'Delete') return animeApi.remove(res.animeId)
+          return animeApi.update(res.animeId, { status: nextStatus })
+        }),
+      ]
+      const results = await Promise.allSettled(jobs)
       failed = results.filter((r) => r.status === 'rejected').length
+
+      if (failed === 0 && plexKeys.length > 0) {
+        // Imported Plex rows are now persisted series — drop the ephemeral rows.
+        setLocalRows((prev) => prev.filter((r) => !plexKeys.includes(r.key)))
+      }
       await fetchCatalog()
+      await fetchPlexCatalog()
     }
 
     if (failed === 0) {
       toast.success(`${action} applied to ${keys.size} items`)
     } else {
-      toast.error(`${action} failed for ${failed} series`, {
-        description: 'Some series could not be updated.',
+      toast.error(`${action} failed for ${failed} items`, {
+        description: 'Some items could not be updated.',
       })
     }
   }
@@ -544,6 +691,17 @@ export default function ContentCatalogPage() {
         setSeriesItems((prev) =>
           prev.filter((s) => `series-${s.id}` !== row.key)
         )
+      } catch (err) {
+        toast.error(formatApiError(err))
+        return
+      }
+    } else if (row.key.startsWith('plex-')) {
+      // Persist the ephemeral Plex row first (upsert), then delete the
+      // catalog record so the removal is reflected server-side.
+      try {
+        const res = await plexApi.importItem(row.key.replace(/^plex-/, ''))
+        await animeApi.remove(res.animeId)
+        setLocalRows((prev) => prev.filter((r) => r.key !== row.key))
       } catch (err) {
         toast.error(formatApiError(err))
         return
@@ -569,6 +727,24 @@ export default function ContentCatalogPage() {
         setSeriesItems((prev) =>
           prev.map((s) =>
             `series-${s.id}` === row.key ? { ...s, status: 'Archived' } : s,
+          ),
+        )
+        toast.success(`"${row.title}" archived`)
+      } catch (err) {
+        toast.error(formatApiError(err))
+      }
+      return
+    }
+    if (row.key.startsWith('plex-')) {
+      // Persist the ephemeral Plex row first, then archive it server-side.
+      try {
+        const res = await plexApi.importItem(row.key.replace(/^plex-/, ''))
+        await animeApi.update(res.animeId, { status: 'archived' })
+        setLocalRows((prev) =>
+          prev.map((r) =>
+            r.key === row.key
+              ? { ...r, status: 'Archived', tone: toneFor(r.kind, 'Archived') }
+              : r,
           ),
         )
         toast.success(`"${row.title}" archived`)
@@ -610,63 +786,191 @@ export default function ContentCatalogPage() {
   const handleCreated = (row: ContentRow | null) => {
     setTab('all')
     if (row === null || row.kind === 'series') {
+      // Refresh both the backend catalog (the imported item is persisted there
+      // with its provider assets) and the live Plex rows so the newly added
+      // title shows up with its artwork right away.
       void fetchCatalog()
+      void fetchPlexCatalog()
       return
     }
     setLocalRows((prev) => [row, ...prev])
   }
 
-  const syncRow = async (row: ContentRow) => {
-    setSyncing(row.key)
-    try {
-      if (row.kind === 'series') {
-        const animeId = row.key.replace('series-', '')
-        // Call backend sync to enrich data from sources
-        try {
-          await animeApi.sync(animeId)
-        } catch {
-          // Sync may fail if sources not configured, continue with search
-        }
-        // Then fetch fresh data
-        let updatedSeries: SeriesItem | null = null
-        try {
-          const freshAnime = await animeApi.get(animeId)
-          updatedSeries = apiAnimeToSeriesItem(freshAnime)
-        } catch {
-          // Backend fetch failed
+  /** Per-row sync result shared by the single-row and bulk sync flows. */
+  type SyncOutcome = {
+    status: 'ok' | 'empty' | 'error'
+    row?: ContentRow
+    assetsGained: number
+    error?: string
+  }
+
+  /**
+   * Shared sync logic: refreshes provider data for a row and merges missing
+   * fields (assets, synopsis, genres, sources…) back into catalog state.
+   * Returns the merged row and how many missing assets were fetched.
+   */
+  const syncRowInternal = React.useCallback(
+    async (row: ContentRow): Promise<SyncOutcome> => {
+      try {
+        if (row.kind === 'series') {
+          const animeId = row.key.replace('series-', '')
+          // Call backend sync to enrich data from sources
+          try {
+            await animeApi.sync(animeId)
+          } catch {
+            // Sync may fail if sources not configured, continue with search
+          }
+          // Then fetch fresh data
+          let updatedSeries: SeriesItem | null = null
+          try {
+            const freshAnime = await animeApi.get(animeId)
+            updatedSeries = apiAnimeToSeriesItem(freshAnime)
+          } catch {
+            // Backend fetch failed
+          }
+
+          if (updatedSeries) {
+            setSeriesItems((prev) =>
+              prev.map((s) =>
+                `series-${s.id}` === row.key ? updatedSeries! : s,
+              ),
+            )
+            const assetsBefore = assetCount(row.assets)
+            const syncedRow: ContentRow = {
+              ...row,
+              seasons: updatedSeries.seasons,
+              assets: {
+                poster: updatedSeries.assets.poster,
+                banner: updatedSeries.assets.banner,
+                backdrop: updatedSeries.assets.backdrop,
+                thumbnail: row.assets.thumbnail,
+                still: row.assets.still,
+              },
+            }
+            setInspecting((cur) => (cur?.key === row.key ? syncedRow : cur))
+            return {
+              status: 'ok',
+              row: syncedRow,
+              assetsGained: Math.max(
+                0,
+                assetCount(syncedRow.assets) - assetsBefore,
+              ),
+            }
+          }
+          return { status: 'empty', assetsGained: 0 }
         }
 
-        if (updatedSeries) {
-          setSeriesItems((prev) =>
-            prev.map((s) =>
-              `series-${s.id}` === row.key ? updatedSeries! : s,
-            ),
-          )
-          const syncedRow: ContentRow = {
-            ...row,
-            seasons: updatedSeries.seasons,
-          }
-          setInspecting((cur) => (cur?.key === row.key ? syncedRow : cur))
-        }
-      } else {
         // For non-series items, search sources and merge client-side
         const { hits } = await searchAllSources(row.title, 8)
         const hit = bestSourceHit(row.title, hits)
         if (!hit) {
-          toast.info(`No metadata found for "${row.title}"`)
-          return
+          return { status: 'empty', assetsGained: 0 }
         }
+        const assetsBefore = assetCount(row.assets)
         const merged = mergeSourceIntoRow(row, hit)
         setLocalRows((prev) =>
           prev.map((r) => (r.key === row.key ? merged : r)),
         )
         setInspecting((cur) => (cur?.key === row.key ? merged : cur))
+        return {
+          status: 'ok',
+          row: merged,
+          assetsGained: Math.max(0, assetCount(merged.assets) - assetsBefore),
+        }
+      } catch (err) {
+        return {
+          status: 'error',
+          assetsGained: 0,
+          error: err instanceof Error ? err.message : 'Unknown error',
+        }
       }
-      toast.success(`"${row.title}" synced`)
+    },
+    [],
+  )
+
+  const syncRow = async (row: ContentRow) => {
+    setSyncing(row.key)
+    try {
+      const outcome = await syncRowInternal(row)
+      if (outcome.status === 'ok') {
+        toast.success(`"${row.title}" synced`)
+      } else if (outcome.status === 'empty') {
+        toast.info(`No metadata found for "${row.title}"`)
+      } else {
+        toast.error(
+          outcome.error
+            ? `Sync failed: ${outcome.error}`
+            : `Sync failed for "${row.title}"`,
+        )
+      }
     } catch (err) {
       toast.error(`Sync failed: ${formatApiError(err)}`)
     } finally {
       setSyncing(null)
+    }
+  }
+
+  /**
+   * Bulk sync: refreshes every row in the catalog (series, movies, TV shows)
+   * so missing provider data — assets, metadata, sources — is fetched. Runs in
+   * small parallel batches to stay gentle on the API, with live progress.
+   */
+  const syncAllRows = async () => {
+    if (syncingAll || rows.length === 0) return
+    const targets = [...rows]
+    setSyncingAll(true)
+    setSyncProgress({ done: 0, total: targets.length })
+    let synced = 0
+    let skipped = 0
+    let assetsGained = 0
+    let failed = 0
+    const BATCH_SIZE = 5
+    try {
+      for (let i = 0; i < targets.length; i += BATCH_SIZE) {
+        const batch = targets.slice(i, i + BATCH_SIZE)
+        const outcomes = await Promise.allSettled(
+          batch.map((row) => syncRowInternal(row)),
+        )
+        for (const out of outcomes) {
+          if (out.status === 'fulfilled') {
+            if (out.value.status === 'ok') {
+              synced += 1
+              assetsGained += out.value.assetsGained
+            } else if (out.value.status === 'error') {
+              failed += 1
+            } else {
+              skipped += 1
+            }
+          } else {
+            failed += 1
+          }
+        }
+        setSyncProgress({
+          done: Math.min(i + batch.length, targets.length),
+          total: targets.length,
+        })
+      }
+    } finally {
+      setSyncingAll(false)
+    }
+
+    if (synced === 0 && failed === 0) {
+      toast.info('Nothing to sync')
+      return
+    }
+    const parts = [
+      `${synced} synced`,
+      skipped > 0 ? `${skipped} no match` : null,
+      failed > 0 ? `${failed} failed` : null,
+    ].filter(Boolean)
+    const assetsDesc =
+      assetsGained > 0
+        ? `${assetsGained} missing asset${assetsGained === 1 ? '' : 's'} fetched`
+        : 'No missing assets found'
+    if (failed === 0) {
+      toast.success(parts.join(' · '), { description: assetsDesc })
+    } else {
+      toast.error(parts.join(' · '), { description: assetsDesc })
     }
   }
 
@@ -676,6 +980,22 @@ export default function ContentCatalogPage() {
         title="Content"
         description="Manage all media content in Kami-Sama. Edit metadata, sync sources, and control publication state."
       >
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => void syncAllRows()}
+          disabled={syncingAll || rows.length === 0}
+          title="Sync all catalog items and fetch missing provider assets & metadata"
+        >
+          {syncingAll ? (
+            <Loader2 className="size-4 animate-spin" />
+          ) : (
+            <RefreshCw className="size-4" />
+          )}
+          {syncingAll && syncProgress.total > 0
+            ? `Syncing ${syncProgress.done}/${syncProgress.total}…`
+            : 'Sync All'}
+        </Button>
         <Button size="sm" onClick={() => setAdding(true)}>
           <Plus data-icon="inline-start" />
           Add
@@ -695,7 +1015,7 @@ export default function ContentCatalogPage() {
           tone="success"
         />
         <StatCard
-          label="Drafts"
+          label="Added"
           value={stats.drafts}
           icon={<Pencil className="size-4 text-muted-foreground" />}
         />
@@ -950,7 +1270,7 @@ export default function ContentCatalogPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filtered.map((row) => (
+                  {pagedRows.map((row) => (
                     <TableRow
                       key={row.key}
                       data-state={selected.has(row.key) ? 'selected' : undefined}
@@ -1112,7 +1432,7 @@ export default function ContentCatalogPage() {
             </div>
           ) : (
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-              {filtered.map((row) => (
+              {pagedRows.map((row) => (
                 <button
                   key={row.key}
                   type="button"
@@ -1157,13 +1477,28 @@ export default function ContentCatalogPage() {
 
           <div className="mt-4 flex items-center justify-between text-sm text-muted-foreground">
             <span>
-              Showing {filtered.length} of {rows.length} items
+              {filtered.length === 0
+                ? 'Showing 0 items'
+                : `Showing ${(safePage - 1) * PAGE_SIZE + 1}–${(safePage - 1) * PAGE_SIZE + pagedRows.length} of ${filtered.length} items`}
             </span>
             <div className="flex items-center gap-2">
-              <Button variant="outline" size="sm" disabled>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={!canGoPrevious}
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+              >
                 Previous
               </Button>
-              <Button variant="outline" size="sm">
+              <span>
+                Page {safePage} of {totalPages}
+              </span>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={!canGoNext}
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              >
                 Next
               </Button>
             </div>
@@ -1844,6 +2179,7 @@ function AddContentDialog({
 }) {
   const [query, setQuery] = React.useState('')
   const [results, setResults] = React.useState<GroupedResult[]>([])
+
   const [searching, setSearching] = React.useState(false)
   const [acting, setActing] = React.useState<string | null>(null)
   const [done, setDone] = React.useState<Set<string>>(new Set())
@@ -1960,18 +2296,23 @@ function AddContentDialog({
           ) : (
             <ScrollArea className="h-96">
               <div className="flex flex-col gap-2 pr-3">
-                {results.map((result) => (
+                {results.map((result) => {
+                  const coverUrl =
+                    result.hits[0]?.item.imageUrl ||
+                    result.hits[0]?.item.artUrl ||
+                    ''
+                  return (
                   <div
                     key={result.key}
                     className="flex items-center gap-3 rounded-lg border bg-card p-2 transition-colors hover:bg-muted/50"
                   >
-                    {/* Cover thumbnail */}
-                    <div className="size-12 shrink-0 overflow-hidden rounded-md bg-muted">
-                      {result.hits[0]?.item.imageUrl ? (
+                    {/* Provider artwork (poster, falls back to backdrop) */}
+                    <div className="size-14 shrink-0 overflow-hidden rounded-md border bg-muted shadow-sm">
+                      {coverUrl ? (
                         // eslint-disable-next-line @next/next/no-img-element
                         <img
-                          src={result.hits[0].item.imageUrl}
-                          alt=""
+                          src={coverUrl}
+                          alt={result.title}
                           className="size-full object-cover"
                           loading="lazy"
                         />
@@ -1984,10 +2325,15 @@ function AddContentDialog({
 
                     {/* Title + meta */}
                     <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-medium">
+                      <p className="truncate text-sm font-semibold">
                         {result.title}
                       </p>
-                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                      {result.subtitle ? (
+                        <p className="truncate font-mono text-xs text-muted-foreground">
+                          {result.subtitle}
+                        </p>
+                      ) : null}
+                      <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
                         {result.hits[0]?.item.year ? (
                           <span>{result.hits[0].item.year}</span>
                         ) : null}
@@ -1997,6 +2343,12 @@ function AddContentDialog({
                             <span>{result.hits[0].item.type}</span>
                           </>
                         ) : null}
+                        <span>·</span>
+                        <span className="flex items-center gap-1">
+                          {dedupeBySource(result.hits)
+                            .map((h) => h.source)
+                            .join(' + ')}
+                        </span>
                       </div>
                     </div>
 
@@ -2027,7 +2379,8 @@ function AddContentDialog({
                       })}
                     </div>
                   </div>
-                ))}
+                  )
+                })}
               </div>
             </ScrollArea>
           )}
@@ -2063,7 +2416,7 @@ function buildSeriesFromSource(item: SourceResultItem, source: AddSource): Serie
     titleOriginal: item.subtitle || item.title,
     synopsis: item.overview ?? '',
     type: 'anime',
-    status: 'Draft',
+    status: 'Added',
     airingStatus: 'upcoming',
     genres: item.genres ?? [],
     studios: [],

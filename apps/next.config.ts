@@ -27,6 +27,13 @@ const nextConfig: NextConfig = {
         trailingSlash: true,
         images: {
           unoptimized: true,
+          localPatterns: [
+            // Allow local assets (public/) and the server-side Plex artwork
+            // proxy — its encoded path arrives as a query string. `search` is
+            // omitted so any query is accepted for these paths.
+            { pathname: "/**" },
+            { pathname: "/api/v1/integrations/plex/image" },
+          ],
           remotePatterns: [
             { protocol: "https", hostname: "kami-sama.tv", pathname: "/**" },
             { protocol: "https", hostname: "api.dicebear.com", pathname: "/**" },
@@ -48,6 +55,13 @@ const nextConfig: NextConfig = {
 
   ...(!isStaticWebBuild && {
     images: {
+      localPatterns: [
+        // Allow local assets (public/) and the server-side Plex artwork
+        // proxy — its encoded path arrives as a query string. `search` is
+        // omitted so any query is accepted for these paths.
+        { pathname: "/**" },
+        { pathname: "/api/v1/integrations/plex/image" },
+      ],
       remotePatterns: [
         { protocol: "https", hostname: "kami-sama.tv", pathname: "/**" },
         { protocol: "https", hostname: "api.dicebear.com", pathname: "/**" },
@@ -74,10 +88,16 @@ const nextConfig: NextConfig = {
     },
 
     async rewrites() {
+      // Inside Docker the Go API runs in the `worker` container; in plain dev
+      // it runs on localhost. This proxy is used for server-side fetches
+      // (SSR + next/image optimization), not for browser requests (nginx).
+      const apiBase = process.env.API_INTERNAL_URL
+        ? process.env.API_INTERNAL_URL.replace(/\/api\/v1$/, "")
+        : "http://localhost:8080";
       return [
         {
           source: "/api/:path*",
-          destination: "http://localhost:8080/api/:path*",
+          destination: `${apiBase}/api/:path*`,
         },
       ];
     },

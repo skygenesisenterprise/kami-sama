@@ -6,6 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/skygenesisenterprise/kami-sama/server/src/middleware"
+	"github.com/skygenesisenterprise/kami-sama/server/src/models"
 	"github.com/skygenesisenterprise/kami-sama/server/src/utils"
 	"gorm.io/datatypes"
 )
@@ -24,7 +25,11 @@ func (h *LibraryHandler) List(c *gin.Context) {
 		utils.Error(c, err)
 		return
 	}
-	utils.Success(c, http.StatusOK, gin.H{"items": items})
+	out := make([]gin.H, 0, len(items))
+	for _, item := range items {
+		out = append(out, sanitizeSourceConfigForBrowser(&item))
+	}
+	utils.Success(c, http.StatusOK, gin.H{"items": out})
 }
 
 func (h *LibraryHandler) GetByID(c *gin.Context) {
@@ -38,7 +43,7 @@ func (h *LibraryHandler) GetByID(c *gin.Context) {
 		utils.Error(c, err)
 		return
 	}
-	utils.Success(c, http.StatusOK, item)
+	utils.Success(c, http.StatusOK, sanitizeSourceConfigForBrowser(item))
 }
 
 func (h *LibraryHandler) Create(c *gin.Context) {
@@ -70,7 +75,7 @@ func (h *LibraryHandler) Create(c *gin.Context) {
 		utils.Error(c, err)
 		return
 	}
-	utils.Success(c, http.StatusCreated, item)
+	utils.Success(c, http.StatusCreated, sanitizeSourceConfigForBrowser(item))
 }
 
 func (h *LibraryHandler) Update(c *gin.Context) {
@@ -117,7 +122,7 @@ func (h *LibraryHandler) Update(c *gin.Context) {
 		utils.Error(c, err)
 		return
 	}
-	utils.Success(c, http.StatusOK, item)
+	utils.Success(c, http.StatusOK, sanitizeSourceConfigForBrowser(item))
 }
 
 func (h *LibraryHandler) Delete(c *gin.Context) {
@@ -131,4 +136,38 @@ func (h *LibraryHandler) Delete(c *gin.Context) {
 		return
 	}
 	utils.Success(c, http.StatusOK, gin.H{"deleted": true})
+}
+
+// sanitizeSourceConfigForBrowser strips credentials out of a SourceConfig
+// before it is returned to the front-end. For the plex source the token must
+// never leave the server; other sources keep their config unchanged.
+func sanitizeSourceConfigForBrowser(item *models.SourceConfig) gin.H {
+	if item == nil {
+		return nil
+	}
+	out := gin.H{
+		"id":         item.ID,
+		"sourceType": item.SourceType,
+		"enabled":    item.Enabled,
+		"config":     sanitizeConfig(item),
+		"createdAt":  item.CreatedAt,
+		"updatedAt":  item.UpdatedAt,
+	}
+	if item.LastSyncAt != nil {
+		out["lastSyncAt"] = item.LastSyncAt
+	}
+	return out
+}
+
+func sanitizeConfig(item *models.SourceConfig) map[string]interface{} {
+	var m map[string]interface{}
+	if err := json.Unmarshal(item.Config, &m); err != nil {
+		return map[string]interface{}{}
+	}
+	if item.SourceType == "plex" {
+		delete(m, "token")
+		delete(m, "authToken")
+		delete(m, "accountToken")
+	}
+	return m
 }

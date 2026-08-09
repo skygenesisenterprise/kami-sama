@@ -227,6 +227,8 @@ func (h *AnimeHandler) Sync(c *gin.Context) {
 	}
 	// Always try to enrich with seasons/episodes from AniList
 	if h.deps.AnilistService != nil {
+		principal, _ := middleware.GetPrincipal(c)
+		h.deps.AnilistService.RefreshFromAnilist(c.Request.Context(), item, principal.UserID)
 		h.deps.AnilistService.EnsureSeasonsAndEpisodes(c.Request.Context(), item, nil)
 	}
 	// Reload from DB to get updated data

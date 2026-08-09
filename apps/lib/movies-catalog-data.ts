@@ -1,6 +1,7 @@
 import type { StatusTone } from '@/components/dash/status-badge'
 
 export type PublicationState =
+  | 'Added'
   | 'Draft'
   | 'Review'
   | 'Approved'
@@ -83,6 +84,7 @@ export interface MovieItem {
 }
 
 export const MOVIE_STATUS_TONE: Record<PublicationState, StatusTone> = {
+  Added: 'neutral',
   Draft: 'neutral',
   Review: 'warning',
   Approved: 'info',

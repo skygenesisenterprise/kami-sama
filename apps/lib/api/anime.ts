@@ -165,7 +165,7 @@ const PUBLICATION_FROM_API: Record<string, PublicationState> = {
 export function apiAnimeToSeriesItem(a: ApiAnime): SeriesItem {
   const meta = a.metadata ?? {};
   const airing = str(meta.airing_status) || a.status;
-  const genres = extractGenres(meta);
+  const genres = extractGenres(a, meta);
   const external = extractExternalIds(a, meta);
   const sources = extractSources(a, meta, external);
   const poster =
@@ -289,7 +289,9 @@ export function seriesItemToAnimeUpdatePayload(item: SeriesItem): UpdateAnimePay
 // ──────────────────────────────────────────────────────────────
 
 function str(v: unknown): string {
-  return typeof v === "string" ? v : "";
+  if (typeof v === "string") return v;
+  if (typeof v === "number" || typeof v === "boolean") return String(v);
+  return "";
 }
 
 function publicationToApi(status: PublicationState): string {
@@ -330,7 +332,9 @@ function mapAiringStatus(status: string): SeriesItem["airingStatus"] {
   }
 }
 
-function extractGenres(meta: Record<string, unknown>): string[] {
+function extractGenres(a: ApiAnime, meta: Record<string, unknown>): string[] {
+  const fromRelations = (a.genres ?? []).map((g) => g.name).filter(Boolean);
+  if (fromRelations.length > 0) return fromRelations;
   const g = meta.genres;
   if (!Array.isArray(g)) return [];
   return g

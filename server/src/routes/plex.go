@@ -2,6 +2,7 @@ package routes
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -12,8 +13,11 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/skygenesisenterprise/kami-sama/server/src/middleware"
+	"github.com/skygenesisenterprise/kami-sama/server/src/models"
 	"github.com/skygenesisenterprise/kami-sama/server/src/services"
 	"github.com/skygenesisenterprise/kami-sama/server/src/utils"
+	"gorm.io/datatypes"
 )
 
 // PlexHandler exposes dedicated Plex Media Server endpoints that complement
@@ -123,7 +127,183 @@ func (h *PlexHandler) GetIdentity(c *gin.Context) {
 		utils.Error(c, err)
 		return
 	}
+	// Persist the server's machineIdentifier so requests to app.plex.tv can
+	// resolve the server's connection URLs (see RemoteConnections).
+	if machineID, _ := identity["machineIdentifier"].(string); machineID != "" {
+		h.persistMachineIdentifier(c, machineID)
+	}
 	utils.Success(c, http.StatusOK, identity)
+}
+
+// RemoteConnections resolves the configured server's connection URLs through
+// app.plex.tv/api/resources using the stored machineIdentifier. The access
+// token is never returned to the client.
+func (h *PlexHandler) RemoteConnections(c *gin.Context) {
+	client, err := h.resolveClient(c.Request.Context())
+	if err != nil {
+		utils.Error(c, err)
+		return
+	}
+	resource, err := client.ServerConnections(c.Request.Context())
+	if err != nil {
+		utils.Error(c, err)
+		return
+	}
+	utils.Success(c, http.StatusOK, resource)
+}
+
+// AuthStart begins the plex.tv OAuth (PIN) flow. The response carries the
+// code the user must authorize and the app.plex.tv URL to open in their
+// browser. The UI then polls AuthStatus.
+func (h *PlexHandler) AuthStart(c *gin.Context) {
+	pin, err := services.CreatePlexAuthPin(c.Request.Context())
+	if err != nil {
+		utils.Error(c, err)
+		return
+	}
+	utils.Success(c, http.StatusOK, pin)
+}
+
+// AuthStatus polls an in-progress sign-in. Once the user authorizes the code,
+// it lists the account's Plex Media Servers so the UI can pick which one to
+// configure. The account token never leaves the server — it stays on the
+// server-side session and is consumed by AuthConnect.
+func (h *PlexHandler) AuthStatus(c *gin.Context) {
+	pinID := strings.TrimSpace(c.Query("pinId"))
+	status, err := services.GetPlexAuthStatus(c.Request.Context(), pinID)
+	if err != nil {
+		utils.Error(c, err)
+		return
+	}
+	if !status.Authenticated {
+		utils.Success(c, http.StatusOK, gin.H{"authenticated": false, "expiresAt": status.ExpiresAt})
+		return
+	}
+	sess, err := services.GetPlexAuthSession(pinID)
+	if err != nil {
+		utils.Error(c, err)
+		return
+	}
+	servers, err := services.DiscoverServers(c.Request.Context(), sess.AuthToken)
+	if err != nil {
+		utils.Error(c, err)
+		return
+	}
+	utils.Success(c, http.StatusOK, gin.H{
+		"authenticated": true,
+		"expiresAt":     status.ExpiresAt,
+		"servers":       servers,
+	})
+}
+
+// AuthConnect finalizes the sign-in flow once the user picks a server. The
+// server-side session is consumed, the account token is persisted onto the
+// plex source_configs row, and a sanitized configuration is returned — the
+// token is never serialized back to the browser.
+func (h *PlexHandler) AuthConnect(c *gin.Context) {
+	principal, ok := middleware.GetPrincipal(c)
+	if !ok {
+		utils.Error(c, utils.ErrUnauthorized)
+		return
+	}
+	var body struct {
+		PinID                  string `json:"pinId" binding:"required"`
+		ServerClientIdentifier string `json:"serverClientIdentifier" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		utils.Error(c, utils.ErrValidationFailed)
+		return
+	}
+	sess, err := services.ClaimPlexAuthSession(strings.TrimSpace(body.PinID))
+	if err != nil {
+		utils.Error(c, err)
+		return
+	}
+	// The raw plex.tv resource carries the server-scoped access token. Plex
+	// Media Servers reject the account token on authenticated endpoints (401),
+	// so this token is what gets persisted for direct server calls; the account
+	// token stays for plex.tv resolution (RemoteConnections).
+	device, err := services.ResolvePlexServerDevice(c.Request.Context(), sess.AuthToken, strings.TrimSpace(body.ServerClientIdentifier))
+	if err != nil {
+		utils.Error(c, err)
+		return
+	}
+	// Probe each plex.direct connection and persist the first one the backend
+	// can actually reach. The backend usually runs in a container that cannot
+	// route to the server's LAN addresses, so public/plex.direct URLs are tried
+	// before local ones.
+	probeServer := &services.PlexServerResource{ClientIdentifier: device.ClientIdentifier, Connections: device.Connections}
+	baseURL := services.ReachablePlexConnectionURL(c.Request.Context(), probeServer, device.AccessToken)
+	if baseURL == "" {
+		utils.Error(c, utils.NewError(http.StatusBadRequest, "PLEX_NO_CONNECTION", "The selected Plex server has no resolvable connection.", nil))
+		return
+	}
+	serverToken := device.AccessToken
+	if serverToken == "" {
+		serverToken = sess.AuthToken
+	}
+	config, err := json.Marshal(map[string]interface{}{
+		"url":               baseURL,
+		"token":             serverToken,
+		"accountToken":      sess.AuthToken,
+		"machineIdentifier": device.ClientIdentifier,
+		"product":           device.Product,
+		"version":           device.Version,
+		"timeoutSeconds":    30,
+	})
+	if err != nil {
+		utils.Error(c, utils.ErrValidationFailed)
+		return
+	}
+	cfg := datatypes.JSON(config)
+
+	var saved *models.SourceConfig
+	existing, err := h.deps.LibraryService.GetBySourceType(c.Request.Context(), "plex")
+	if err == nil && existing != nil {
+		enabled := true
+		ur := struct {
+			SourceType *string        `json:"sourceType"`
+			Enabled    *bool          `json:"enabled"`
+			Config     datatypes.JSON `json:"config"`
+		}{Enabled: &enabled, Config: cfg}
+		saved, err = h.deps.LibraryService.Update(c.Request.Context(), principal.UserID, existing.ID, ur)
+	} else {
+		saved, err = h.deps.LibraryService.Create(c.Request.Context(), principal.UserID, "plex", true, cfg)
+	}
+	if err != nil {
+		utils.Error(c, err)
+		return
+	}
+	utils.Success(c, http.StatusOK, gin.H{
+		"connected":  true,
+		"serverName": device.Name,
+		"url":        baseURL,
+		"config":     sanitizeSourceConfigForBrowser(saved),
+	})
+}
+
+// persistMachineIdentifier stores the Plex server's machineIdentifier on the
+// persisted plex source_configs row. It is a no-op when no plex row exists
+// (env-only configuration) or the identifier didn't change.
+func (h *PlexHandler) persistMachineIdentifier(c *gin.Context, machineID string) {
+	if machineID == "" || h.deps.LibraryService == nil {
+		return
+	}
+	cfg, err := h.deps.LibraryService.GetBySourceType(c.Request.Context(), "plex")
+	if err != nil || cfg == nil {
+		return
+	}
+	merged := services.MergePlexMachineIdentifier(cfg.Config, machineID)
+	if string(merged) == string(cfg.Config) {
+		return
+	}
+	principal, _ := middleware.GetPrincipal(c)
+	ur := struct {
+		SourceType *string        `json:"sourceType"`
+		Enabled    *bool          `json:"enabled"`
+		Config     datatypes.JSON `json:"config"`
+	}{Config: merged}
+	_, _ = h.deps.LibraryService.Update(c.Request.Context(), principal.UserID, cfg.ID, ur)
 }
 
 // ListLibraries returns the configured libraries on the Plex server.
@@ -359,11 +539,40 @@ func (h *PlexHandler) UpdateTimeline(c *gin.Context) {
 	})
 }
 
+// isSafePlexImagePath restricts the public image proxy to paths owned by the
+// configured Plex server. Relative paths (the common case for `thumb`/`art`)
+// are always allowed; absolute URLs are only proxied when they point back at
+// the configured server, so the endpoint cannot be abused as an open proxy.
+func isSafePlexImagePath(client *services.PlexClient, raw string) bool {
+	// Block protocol-relative URLs (//host/path): url.ResolveReference would
+	// resolve them against the attacker-controlled host (SSRF).
+	if strings.HasPrefix(raw, "//") {
+		return false
+	}
+	if strings.HasPrefix(raw, "/") {
+		return true
+	}
+	if !strings.HasPrefix(raw, "http://") && !strings.HasPrefix(raw, "https://") {
+		return false
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+	base, err := url.Parse(client.BaseURL())
+	if err != nil {
+		return false
+	}
+	return strings.EqualFold(u.Host, base.Host)
+}
+
 // ImageProxy proxies Plex /photo/:/transcode without leaking the token.
 //
 // Plex image paths (`thumb`, `art`) are relative to the configured server,
 // optionally already resolving to absolute URLs when the library lives on a
 // remote Plex server. The proxy always re-applies the X-Plex-Token header.
+// The route is public (browser <img> tags cannot send the Bearer token), so
+// the path is validated against the configured server before being proxied.
 func (h *PlexHandler) ImageProxy(c *gin.Context) {
 	client, err := h.resolveClient(c.Request.Context())
 	if err != nil {
@@ -375,6 +584,10 @@ func (h *PlexHandler) ImageProxy(c *gin.Context) {
 	height, _ := strconv.Atoi(c.DefaultQuery("height", "0"))
 	if raw == "" {
 		utils.Error(c, utils.ErrValidationFailed)
+		return
+	}
+	if !isSafePlexImagePath(client, raw) {
+		utils.Error(c, utils.NewError(http.StatusForbidden, "PLEX_IMAGE_FORBIDDEN", "Refusing to proxy a non-Plex image path.", nil))
 		return
 	}
 	// Build an upstream URL. We only proxy through Plex's transcode endpoint

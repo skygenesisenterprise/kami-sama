@@ -4,22 +4,27 @@ import * as React from 'react'
 import { use } from 'react'
 import { createPortal } from 'react-dom'
 import { usePathname } from 'next/navigation'
-import { Bookmark, ChevronLeft, ChevronRight, Play, Plus, ThumbsDown, ThumbsUp, Check } from 'lucide-react'
+import { Bookmark, Check, ChevronLeft, ChevronRight, Play, Plus, ThumbsDown, ThumbsUp } from 'lucide-react'
 import { useTranslations } from 'next-intl'
 import { Button } from '@/components/ui/button'
 import { HeroBanner } from '@/components/kami/hero-banner'
 import {
-  getAnime,
   getAllAnime,
-  getContinueWatching,
   getContentPath,
+  getEditorialPicks,
 } from '@/lib/mock-data'
-import { collectionsApi } from '@/lib/api/collections'
+import {
+  discoverApi,
+  type ApiWatchProgress,
+  type DiscoverCatalogResponse,
+} from '@/lib/api/discover'
 import { mapApiItemToAnime } from '@/lib/api/discover-adapter'
+import { DISCOVER_SECTION_DEFS, fillSectionItems } from '@/lib/discover-sections'
 import { getDomainUrl } from '@/lib/domains'
 import { useAuth } from '@/context/AuthContext'
-import type { Anime } from '@/types/anime'
-import type { ApiSection } from '@/types/api/discover'
+import { SERIES_MOCK } from '@/lib/series-catalog-data'
+import { MOVIES_MOCK } from '@/lib/movies-catalog-data'
+import type { Anime, ContentType, ContinueWatchingItem, Genre } from '@/types/anime'
 
 interface DiscoverSectionConfig {
   id: string
@@ -408,6 +413,154 @@ function DiscoverAnimeTile({ anime, currentLocale, badge, progressPercent, remai
   )
 }
 
+/** Known local content — mock catalog + admin catalogs (series & movies) —
+ *  used to fill metadata (genres, age rating, year, images) that the public
+ *  discover endpoint may not have populated for a given item. */
+interface KnownContent {
+  slug: string
+  title: string
+  type: ContentType
+  genres: Genre[]
+  ageRating: string
+  year: number
+  cover: string
+  banner: string
+}
+
+function toGenre(name: string): Genre {
+  return { id: name.toLowerCase().replace(/\s+/g, '-'), name }
+}
+
+const KNOWN_CATALOG: KnownContent[] = (() => {
+  const out: KnownContent[] = []
+  const seen = new Set<string>()
+  const push = (entry: KnownContent) => {
+    if (seen.has(entry.slug)) return
+    seen.add(entry.slug)
+    out.push(entry)
+  }
+  for (const a of getAllAnime()) {
+    push({
+      slug: a.slug,
+      title: a.title,
+      type: a.type,
+      genres: a.genres,
+      ageRating: a.ageRating,
+      year: a.year,
+      cover: a.cover,
+      banner: a.banner,
+    })
+  }
+  for (const s of SERIES_MOCK) {
+    push({
+      slug: s.slug,
+      title: s.title,
+      type: 'series',
+      genres: s.genres.map(toGenre),
+      ageRating: s.ageRating,
+      year: s.year,
+      cover: s.assets.poster,
+      banner: s.assets.banner,
+    })
+  }
+  for (const m of MOVIES_MOCK) {
+    push({
+      slug: m.slug,
+      title: m.title,
+      type: 'movies',
+      genres: m.genres.map(toGenre),
+      ageRating: m.ageRating,
+      year: m.year,
+      cover: m.assets.poster,
+      banner: m.assets.banner,
+    })
+  }
+  return out
+})()
+
+/**
+ * Fills missing metadata (genres, age rating, year, banner) on API items from
+ * the known local catalog, matched by slug or title. The discover endpoint can
+ * return items without genres/age populated (e.g. AniList imports), which
+ * would leave the hero metadata showing only type and year.
+ */
+function enrichMissingMetadata(item: Anime): Anime {
+  const normalize = (s: string) => s.toLowerCase().trim()
+  const known = KNOWN_CATALOG.find(
+    (k) => k.slug === item.slug || normalize(k.title) === normalize(item.title),
+  )
+  if (!known) return item
+  return {
+    ...item,
+    genres: item.genres.length > 0 ? item.genres : known.genres,
+    ageRating: item.ageRating || known.ageRating,
+    year: item.year || known.year,
+    banner: item.banner || known.banner,
+    cover: item.cover || known.cover,
+  }
+}
+
+/**
+ * Reads the user's bookmarked anime ids from localStorage (same key as the
+ * /watchlist page) so the discover watchlist rail reflects real bookmarks.
+ */
+function useWatchlistBookmarks() {
+  const [bookmarkedIds, setBookmarkedIds] = React.useState<Set<string>>(new Set())
+
+  React.useEffect(() => {
+    const read = () => {
+      try {
+        const stored = localStorage.getItem('kami-watchlist')
+        setBookmarkedIds(new Set(stored ? (JSON.parse(stored) as string[]) : []))
+      } catch {
+        setBookmarkedIds(new Set())
+      }
+    }
+    read()
+    window.addEventListener('storage', read)
+    return () => window.removeEventListener('storage', read)
+  }, [])
+
+  return { bookmarkedIds }
+}
+
+/**
+ * Maps a real watch-progress record to the frontend ContinueWatchingItem,
+ * resolving the anime against the catalog pool. Returns null when the anime
+ * is unknown (item is skipped rather than shown with placeholder data).
+ */
+function mapWatchProgressToContinueWatching(
+  progress: ApiWatchProgress,
+  pool: Anime[],
+): ContinueWatchingItem | null {
+  const anime = pool.find((a) => a.id === progress.animeId)
+  if (!anime || progress.percentage <= 0) return null
+  const remaining = Math.round(
+    (progress.duration * (100 - progress.percentage)) / 100 / 60,
+  )
+  return {
+    anime,
+    // The watch endpoint does not return season/episode numbers, so the
+    // episode is built from the progress record for display purposes only.
+    episode: {
+      id: progress.episodeId,
+      animeId: progress.animeId,
+      season: 1,
+      number: 1,
+      title: `Épisode ${progress.episodeId.slice(-2)}`,
+      thumbnail: anime.cover,
+      cover: anime.banner,
+      videoUrl: '',
+      tracks: [],
+      duration: progress.duration,
+      releaseDate: progress.lastWatched,
+      progress: progress.progress,
+    },
+    progressPercent: Math.round(progress.percentage),
+    remainingLabel: `${remaining}m restantes`,
+  }
+}
+
 export default function DiscoverPage({
   params,
 }: {
@@ -418,92 +571,223 @@ export default function DiscoverPage({
   const currentLocale = locale || pathname?.split('/')[1] || 'fr'
   const { isAuthenticated, user } = useAuth()
   const t = useTranslations('Public.discover')
-  const featured = ['neon-samurai', 'crimson-vow', 'moonlit-path', 'ember-crown', 'starfall-academy', 'spirit-veil'].map((id) => getAnime(id)!)
-  const continueWatching = getContinueWatching().slice(0, 5)
-  const continueWatchingAnimes = continueWatching.map((item) => item.anime)
   const username = user?.displayName || ''
-  const allAnime = getAllAnime()
 
-  const [apiSections, setApiSections] = React.useState<ApiSection[] | null>(null)
-
+  /* ── Real data : hero + auto rails from the discover algorithm, when
+     available; manual fallbacks otherwise. The page never blocks on the
+     network and never renders an empty state. */
+  const [catalogData, setCatalogData] = React.useState<DiscoverCatalogResponse | null>(null)
+  const [apiHero, setApiHero] = React.useState<Anime[]>([])
   React.useEffect(() => {
     let cancelled = false
-    async function loadSections() {
-      try {
-        const sections = await collectionsApi.listDiscoverSections()
-        if (!cancelled) setApiSections(sections)
-      } catch (error) {
+    discoverApi
+      .catalog()
+      .then((catalog) => {
         if (cancelled) return
-        console.error('Failed to load discover sections from API', error)
-        setApiSections([])
-      }
-    }
-    loadSections()
+        setCatalogData(catalog)
+        setApiHero(catalog.hero.map(mapApiItemToAnime).map(enrichMissingMetadata))
+      })
+      .catch(() => {
+        // API unavailable — manual hero + collections are used instead.
+      })
     return () => {
       cancelled = true
     }
   }, [])
 
-  const discoverSections: DiscoverSectionConfig[] =
-    apiSections === null
-      ? []
-      : apiSections.map((section, index) => {
-          const animes =
-            section.items.length > 0
-              ? section.items.map(mapApiItemToAnime)
-              : Array.from({ length: 6 }, (_, i) => allAnime[(index * 6 + i) % allAnime.length])
-          return {
-            id: section.id,
-            title: section.title,
-            href: section.ctaHref || '/catalog',
-            subtitle: section.subtitle,
-            ctaLabel: section.ctaLabel,
-            animes,
-          }
-        })
+  const heroItems = apiHero.length > 0 ? apiHero.slice(0, 5) : getEditorialPicks().slice(0, 5)
 
-  const apiSectionsGroupA = discoverSections.slice(0, 2)
-  const apiSectionsGroupB = discoverSections.slice(2, 5)
-  const apiSectionsGroupC = discoverSections.slice(5, 7)
-  const apiSectionsRest = discoverSections.slice(7)
+  /* ── Real auto-rails from the discover algorithm (published catalog). */
+  const realSections: DiscoverSectionConfig[] = React.useMemo(() => {
+    return (catalogData?.sections ?? [])
+      .map((section) => ({
+        id: section.id,
+        title: section.title,
+        href: section.ctaHref || '/catalog',
+        subtitle: section.subtitle,
+        ctaLabel: section.ctaLabel,
+        animes: section.items.map(mapApiItemToAnime).map(enrichMissingMetadata),
+      }))
+      .filter((section) => section.animes.length > 0)
+  }, [catalogData])
+
+  /* ── Real catalog pool : every item served by the public discover API
+     (hero + all auto rails), deduplicated. All manual section logic selects
+     from this pool so every rail shows real artwork; mock data is used only
+     as a fallback when the API is unavailable. */
+  const catalogPool: Anime[] = React.useMemo(() => {
+    const seen = new Map<string, Anime>()
+    for (const anime of [...apiHero, ...realSections.flatMap((s) => s.animes)]) {
+      if (!seen.has(anime.id)) seen.set(anime.id, anime)
+    }
+    const pool = [...seen.values()]
+    return pool.length > 0 ? pool : getAllAnime()
+  }, [apiHero, realSections])
+
+  /** Whether real catalog data is available (API responded). Personal rails
+   *  (continue watching / revoir / watchlist) only render with real data. */
+  const hasRealCatalog = apiHero.length > 0 || realSections.length > 0
+
+  /* ── Continue watching : real watch progress from the authenticated
+     /watch/continue endpoint. No mock fallback — the rail stays hidden
+     when the user has no in-progress titles. ─────────────────────── */
+  const [continueWatching, setContinueWatching] = React.useState<ContinueWatchingItem[]>([])
+  React.useEffect(() => {
+    if (!isAuthenticated || !hasRealCatalog) {
+      setContinueWatching([])
+      return
+    }
+    let cancelled = false
+    discoverApi
+      .continueWatching(5)
+      .then((res) => {
+        if (cancelled) return
+        setContinueWatching(
+          res.items
+            .map((p) => mapWatchProgressToContinueWatching(p, catalogPool))
+            .filter((x): x is ContinueWatchingItem => x !== null)
+            .slice(0, 5),
+        )
+      })
+      .catch(() => {
+        if (!cancelled) setContinueWatching([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [isAuthenticated, hasRealCatalog, catalogPool])
+
+  /* ── Revoir : best rated titles worth revisiting, from the real catalog
+     pool only. No mock library fallback — the rail stays hidden when the
+     API has not delivered data. Filled to the 10-item minimum. ─────── */
+  const rewatchAnimes = React.useMemo(() => {
+    if (!hasRealCatalog) return []
+    return fillSectionItems(
+      catalogPool,
+      catalogPool
+        .filter((a) => a.rating >= 8.5)
+        .sort((a, b) => b.rating - a.rating),
+      'rewatch',
+    )
+  }, [hasRealCatalog, catalogPool])
+
+  /* ── Watchlist : real bookmarks from the pool only. No fallback to
+     upcoming/mock titles — the rail stays hidden when the user has not
+     bookmarked anything (or the API has not delivered data). ─────── */
+  const { bookmarkedIds } = useWatchlistBookmarks()
+  const watchlistAnimes = React.useMemo(() => {
+    if (!hasRealCatalog) return []
+    return [...bookmarkedIds]
+      .map((id) => catalogPool.find((a) => a.id === id))
+      .filter((a): a is Anime => Boolean(a))
+  }, [hasRealCatalog, bookmarkedIds, catalogPool])
+
+  /* ── Every content rail is filled to at least MIN_SECTION_ITEMS distinct
+     items (thematic selection first, then topped up with the best remaining
+     compatible pool titles, rotated per section for variety). Server genre
+     rails (`genre-*`) keep their theme via a derived predicate. ────────── */
+  const KNOWN_GENRE_IDS = [
+    'fantasy',
+    'action',
+    'adventure',
+    'slice-of-life',
+    'sci-fi',
+    'supernatural',
+    'sports',
+    'romance',
+    'drama',
+    'mystery',
+  ]
+  const filledRealSections: DiscoverSectionConfig[] = React.useMemo(() => {
+    return realSections.map((section) => {
+      const genreId = section.id.replace(/^genre-/, '').toLowerCase().replace(/\s+/g, '-')
+      const compatible =
+        section.id.startsWith('genre-') && KNOWN_GENRE_IDS.includes(genreId)
+          ? (a: Anime) => a.genres.some((g) => g.id === genreId)
+          : undefined
+      return {
+        ...section,
+        animes: fillSectionItems(
+          catalogPool,
+          section.animes,
+          section.id,
+          undefined,
+          compatible,
+        ),
+      }
+    })
+  }, [realSections, catalogPool])
+
+  /* ── Manual curated collections : every discover section from the
+     translation keys gets its own data-driven logic (see discover-sections),
+     selecting from the real catalog pool, filled to a minimum of 10 items
+     (the filler keeps each rail's theme via `def.compatible`). */
+  const manualCollections: DiscoverSectionConfig[] = React.useMemo(() => {
+    return DISCOVER_SECTION_DEFS.map((def) => ({
+      id: def.id,
+      title: def.titleParams ? t(def.titleKey, def.titleParams) : t(def.titleKey),
+      subtitle: def.subtitleKey ? t(def.subtitleKey) : undefined,
+      href: def.href || '/catalog',
+      ctaLabel: t('ctaViewAll'),
+      animes: fillSectionItems(
+        catalogPool,
+        def.select(catalogPool),
+        def.id,
+        undefined,
+        def.compatible,
+      ),
+    })).filter((section) => section.animes.length > 0)
+  }, [t, catalogPool])
+
+  /* ── Layout : the page is limited to 10 content sections (real API data
+     first, then curated collections), grouped 2 / 3 / 2 / rest, with the
+     three default personal rails interleaved. */
+  const mappedSections = [...filledRealSections, ...manualCollections].slice(0, 10)
+  const groupA = mappedSections.slice(0, 2)
+  const groupB = mappedSections.slice(2, 5)
+  const groupC = mappedSections.slice(5, 7)
+  const rest = mappedSections.slice(7)
 
   const sections: DiscoverSectionConfig[] = [
-    ...apiSectionsGroupA,
-    ...(isAuthenticated && username
+    ...groupA,
+    ...(isAuthenticated && username && continueWatching.length > 0
       ? [{
           id: 'continue-watching',
           title: t('sectionResumeUsername', { username }),
           href: '/library',
           subtitle: t('sectionResumeSub'),
-          animes: [] as Anime[],
+          animes: continueWatching.map((item) => item.anime),
           isResume: true,
         }]
       : []),
-    ...apiSectionsGroupB,
-    {
-      id: 'rewatch',
-      title: t('sectionRewatch'),
-      href: '/catalog?sort=rewatch',
-      subtitle: t('sectionRewatchSub'),
-      animes: allAnime.slice(1, 7),
-    },
-    ...apiSectionsGroupC,
-    ...(isAuthenticated
+    ...groupB,
+    ...groupC,
+    ...(isAuthenticated && rewatchAnimes.length > 0
+      ? [{
+          id: 'rewatch',
+          title: t('sectionRewatch'),
+          href: '/library',
+          subtitle: t('sectionRewatchSub'),
+          ctaLabel: t('ctaViewAll'),
+          animes: rewatchAnimes,
+        }]
+      : []),
+    ...(isAuthenticated && watchlistAnimes.length > 0
       ? [{
           id: 'watchlist',
           title: t('sectionWatchlist'),
           href: '/library',
           subtitle: t('sectionWatchlistSub'),
           ctaLabel: t('sectionWatchlistCta'),
-          animes: continueWatchingAnimes,
+          animes: watchlistAnimes,
         }]
       : []),
-    ...apiSectionsRest,
+    ...rest,
   ]
 
   return (
     <div className="min-h-screen overflow-x-hidden bg-[#141414] pb-16 text-white select-none">
-      <HeroBanner items={featured} />
+      <HeroBanner items={heroItems} />
 
       <main id="main-content" className="relative z-10 pb-12">
         {sections.map((section) =>

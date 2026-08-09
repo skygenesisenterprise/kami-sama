@@ -401,6 +401,10 @@ func SetupRoutes(router *gin.Engine, deps Dependencies) {
 		{
 			plexGroup.GET("/health", plex.HealthCheck)
 			plexGroup.GET("/identity", plex.GetIdentity)
+			plexGroup.GET("/remote", plex.RemoteConnections)
+			plexGroup.POST("/auth/start", plex.AuthStart)
+			plexGroup.GET("/auth/status", plex.AuthStatus)
+			plexGroup.POST("/auth/connect", plex.AuthConnect)
 			plexGroup.GET("/libraries", plex.ListLibraries)
 			plexGroup.GET("/libraries/:libraryId", plex.GetLibrary)
 			plexGroup.GET("/libraries/:libraryId/items", plex.ListItems)
@@ -410,12 +414,17 @@ func SetupRoutes(router *gin.Engine, deps Dependencies) {
 			plexGroup.GET("/hubs", plex.GetHubs)
 			plexGroup.GET("/search", plex.Search)
 			plexGroup.POST("/import", plex.ImportItem)
-			plexGroup.GET("/image", plex.ImageProxy)
 			plexGroup.POST("/transcode", plex.TranscodeDecision)
 			plexGroup.POST("/scrobble", plex.Scrobble)
 			plexGroup.POST("/unscrobble", plex.Unscrobble)
 			plexGroup.POST("/timeline", plex.UpdateTimeline)
 		}
+
+		// Public image proxy: <img> tags cannot attach the Authorization header
+		// the protected group requires, so Plex artwork would never load in the
+		// browser. This route is reachable without auth; ImageProxy validates
+		// the path so it cannot be abused as an open proxy (SSRF).
+		api.GET("/integrations/plex/image", plex.ImageProxy)
 
 		mal := NewMalHandler(deps)
 		malGroup := protected.Group("/integrations/myanimelist")
@@ -432,6 +441,7 @@ func SetupRoutes(router *gin.Engine, deps Dependencies) {
 		discoverGroup := api.Group("/discover")
 		{
 			discoverGroup.GET("", discover.GetDiscover)
+			discoverGroup.GET("/catalog", discover.GetPublishedCatalog)
 			discoverGroup.GET("/sections", discover.GetDiscoverSections)
 			discoverGroup.GET("/continue-watching", discover.GetDiscoverContinueWatching)
 			discoverGroup.GET("/content/:anilistId", discover.GetContentDetail)

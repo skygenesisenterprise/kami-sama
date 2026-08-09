@@ -102,10 +102,34 @@ export interface PlexConfigInput {
   url: string;
   token: string;
   clientIdentifier?: string;
+  /** Plex Media Server machineIdentifier, used to resolve app.plex.tv resources. */
+  machineIdentifier?: string;
   product?: string;
   version?: string;
   device?: string;
   timeoutSeconds: number;
+}
+
+/** One connection entry of a Plex server resource (app.plex.tv/api/resources). */
+export interface PlexConnection {
+  protocol: string;
+  address: string;
+  port: number;
+  uri: string;
+  local: boolean;
+  relay: boolean;
+}
+
+/** Plex Media Server entry in the app.plex.tv account resource list. */
+export interface PlexServerResource {
+  name: string;
+  product: string;
+  version: string;
+  clientIdentifier: string;
+  host: string;
+  port: number;
+  local: boolean;
+  connections: PlexConnection[];
 }
 
 interface PlexListResponse<T> {
@@ -137,6 +161,33 @@ export const plexApi = {
   /** Returns the raw Plex server identity (friendlyName, version, ...). */
   identity() {
     return apiRequest<PlexIdentity>("/integrations/plex/identity");
+  },
+
+  /** Resolves the server's local/remote/relay connections via plex.tv/api. */
+  remote() {
+    return apiRequest<PlexServerResource>("/integrations/plex/remote");
+  },
+
+  /** Starts the plex.tv OAuth (PIN) sign-in flow. */
+  authStart() {
+    return apiRequest<{ pinId: string; code: string; authUrl: string }>("/integrations/plex/auth/start", {
+      method: "POST",
+    });
+  },
+
+  /** Polls an in-progress sign-in; returns discovered servers once authenticated. */
+  authStatus(pinId: string) {
+    return apiRequest<{ authenticated: boolean; expiresAt?: string; servers?: PlexServerResource[] }>(
+      `/integrations/plex/auth/status${qs({ pinId })}`,
+    );
+  },
+
+  /** Completes the sign-in by persisting the selected server server-side. */
+  authConnect(pinId: string, serverClientIdentifier: string) {
+    return apiRequest<{ connected: boolean; serverName: string; url: string }>(`/integrations/plex/auth/connect`, {
+      method: "POST",
+      body: { pinId, serverClientIdentifier },
+    });
   },
 
   /** Lists the configured Plex library sections. */

@@ -382,16 +382,18 @@ func ImportPlexItem(ctx context.Context, db *gorm.DB, client *PlexClient, rating
 	tx := db.Where("source = ? AND metadata->>'sourceId' = ?", "plex", sourceID).First(&existing)
 	if tx.Error == gorm.ErrRecordNotFound {
 		row := models.Anime{
-			Common:        models.Common{ID: sourceID, CreatedAt: now, UpdatedAt: now},
-			Slug:          sourceID,
-			Title:         getStringFromMap(mapped, "name"),
-			JapaneseTitle: getStringFromMap(mapped, "originalTitle"),
-			Synopsis:      getStringFromMap(mapped, "overview"),
-			Status:        "added",
-			Rating:        getFloat64FromMap(mapped, "rating"),
-			ReleaseYear:   getIntFromMap(mapped, "year"),
-			Source:        "plex",
-			Metadata:      datatypes.JSON(rawMeta),
+			Common:         models.Common{ID: sourceID, CreatedAt: now, UpdatedAt: now},
+			Slug:           sourceID,
+			Title:          getStringFromMap(mapped, "name"),
+			JapaneseTitle:  getStringFromMap(mapped, "originalTitle"),
+			Synopsis:       getStringFromMap(mapped, "overview"),
+			CoverImageUrl:  getStringFromMap(mapped, "imageUrl"),
+			BannerImageUrl: getStringFromMap(mapped, "artUrl"),
+			Status:         "added",
+			Rating:         getFloat64FromMap(mapped, "rating"),
+			ReleaseYear:    getIntFromMap(mapped, "year"),
+			Source:         "plex",
+			Metadata:       datatypes.JSON(rawMeta),
 		}
 		if err := db.Create(&row).Error; err != nil {
 			return nil, err
@@ -412,6 +414,15 @@ func ImportPlexItem(ctx context.Context, db *gorm.DB, client *PlexClient, rating
 	existing.Title = getStringFromMap(mapped, "name")
 	existing.UpdatedAt = now
 	existing.Metadata = datatypes.JSON(rawMeta)
+	// Keep provider artwork in sync so the catalog rows carry the poster and
+	// backdrop/banner even before a dedicated asset sync runs. Only overwrite
+	// when the provider returns artwork, to avoid clobbering curated images.
+	if img := getStringFromMap(mapped, "imageUrl"); img != "" {
+		existing.CoverImageUrl = img
+	}
+	if art := getStringFromMap(mapped, "artUrl"); art != "" {
+		existing.BannerImageUrl = art
+	}
 	if err := db.Save(&existing).Error; err != nil {
 		return nil, err
 	}
