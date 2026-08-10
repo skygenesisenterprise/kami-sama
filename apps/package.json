@@ -90,7 +90,7 @@
     "expo-local-authentication": "^56.0.4",
     "expo-maps": "^56.0.7",
     "expo-network": "^56.0.5",
-    "expo-router": "~6.0.24",
+    "expo-router": "~57.0.11",
     "expo-secure-store": "^56.0.4",
     "expo-sharing": "^56.0.17",
     "expo-splash-screen": "~31.0.13",
