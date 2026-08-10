@@ -9,6 +9,7 @@ import {
   useState,
 } from 'react'
 import Hls from 'hls.js'
+import { Cast, Check, Settings } from 'lucide-react'
 import type { Episode } from '@/types/anime'
 import { formatTime } from './format-time'
 
@@ -36,8 +37,6 @@ export interface VideoPlayerHandle {
 
 interface VideoPlayerProps {
   episode: Episode
-  /** Hide the episode prefix in the center label (single-movie playback). */
-  isMovie?: boolean
   /**
    * When true, the player asks the browser to start playback as soon as a
    * source is attached. This attribute alone isn't reliable (Chrome blocks
@@ -70,6 +69,19 @@ interface VideoPlayerProps {
    */
   onPlaybackReady?: () => void
   /**
+   * Optional callback fired on every `<video>` `timeupdate` (approx 4x/s)
+   * with the current playhead + duration in seconds. Lets the watch page
+   * persist watch progress (throttled by the caller) so the discover
+   * "Reprendre" rail can resume where the user stopped.
+   */
+  onTimeUpdate?: (currentTime: number, duration: number) => void
+  /**
+   * Seconds to seek to once the source is ready (resume from a saved
+   * position). Applied once per source, after the manifest/metadata has
+   * loaded. Defaults to 0 (start from the beginning).
+   */
+  startTime?: number
+  /**
    * Hide the big centered Play button the component renders when paused.
    * Set this when the parent overlays its own play CTA (e.g. a Netflix-style
    * pre-play overlay) so we don't end up with two competing play buttons
@@ -85,7 +97,17 @@ interface VideoPlayerProps {
    * click handler. Defaults to false (unmuted, current behaviour).
    */
   startMuted?: boolean
+  /**
+   * Keep the video frame fully black until the first frame actually plays —
+   * no poster while the stream is warming up. Used by the watch page so the
+   * player doesn't look like an "asset loading screen" before autoplay kicks
+   * in (the page shows the real artwork anyway).
+   */
+  hidePosterUntilPlay?: boolean
 }
+
+/** Playback speed presets offered by the settings menu (Netflix-style). */
+const PLAYBACK_RATES = [0.5, 0.75, 1, 1.25, 1.5, 2]
 
 /**
  * The media-server stream URL (Jellyfin HLS master playlist, or the legacy
@@ -125,13 +147,15 @@ function describeMediaError(code: number): string {
 const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(function VideoPlayer(
   {
     episode,
-    isMovie = false,
     autoPlay = false,
     onPlayingChange,
     onPlaybackError,
     onPlaybackReady,
     hideBuiltInPlayOverlay = false,
     startMuted = false,
+    hidePosterUntilPlay = false,
+    onTimeUpdate,
+    startTime = 0,
   },
   ref
 ) {
@@ -178,6 +202,44 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(function Vid
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [isSeeking, setIsSeeking] = useState(false)
   const [seekPreview, setSeekPreview] = useState<number | null>(null)
+  // Buffering flag — Netflix shows a small spinner while the stream stalls.
+  const [isBuffering, setIsBuffering] = useState(false)
+  // Settings (playback speed) menu state.
+  const [showSettings, setShowSettings] = useState(false)
+  const [playbackRate, setPlaybackRate] = useState(1)
+  // True once the first frame has played — used by `hidePosterUntilPlay` to
+  // release the poster after the stream is genuinely live.
+  const [hasPlayed, setHasPlayed] = useState(false)
+
+  // ── Resume / progress plumbing ───────────────────────────────────────────
+  // Keep the latest callback in a ref so `handleTimeUpdate` (stable across
+  // renders) always invokes the current parent handler without rebinding.
+  const onTimeUpdateRef = useRef(onTimeUpdate)
+  useEffect(() => {
+    onTimeUpdateRef.current = onTimeUpdate
+  }, [onTimeUpdate])
+  // `startTime` is applied exactly once per source — reset the latch whenever
+  // the stream URL changes so an episode switch seeks to its own resume point.
+  const startTimeRef = useRef(startTime)
+  useEffect(() => {
+    startTimeRef.current = startTime
+  }, [startTime])
+  const startAppliedRef = useRef(false)
+  useEffect(() => {
+    startAppliedRef.current = false
+  }, [episode.videoUrl])
+
+  const applyStartTime = useCallback(() => {
+    const videoEl = videoRef.current
+    const target = startTimeRef.current
+    if (!videoEl || !target || target <= 0 || startAppliedRef.current) return
+    startAppliedRef.current = true
+    try {
+      videoEl.currentTime = target
+    } catch {
+      /* ignore — the seek is a best-effort resume */
+    }
+  }, [])
 
   // Auto-hide controls
   const resetHideTimer = useCallback(() => {
@@ -195,6 +257,12 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(function Vid
       if (hideTimer.current) clearTimeout(hideTimer.current)
     }
   }, [playing, resetHideTimer])
+
+  // Closing the settings menu whenever the control bar hides keeps the
+  // overlay clean (Netflix dismisses every menu with the controls).
+  useEffect(() => {
+    if (!showControls) setShowSettings(false)
+  }, [showControls])
 
   // Sync fullscreen state
   useEffect(() => {
@@ -223,6 +291,12 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(function Vid
       v.muted = true
     }
   }, [startMuted])
+
+  // Reset the poster latch whenever the source changes so an episode switch
+  // also starts on a black frame while the next stream warms up.
+  useEffect(() => {
+    setHasPlayed(false)
+  }, [episode.videoUrl])
 
   // Toggle helpers — pure side-effects on the current `<video>` ref. Defined
   // before the keyboard listener so its closure can reference them. The
@@ -317,7 +391,7 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(function Vid
     console.log('[VideoPlayer] Mounting | url:', url, '| HLS supported:', Hls.isSupported(), '| native:', isHlsUrl(url) ? 'hls.js' : 'native')
 
     if (isHlsUrl(url) && Hls.isSupported()) {
-            console.log('[VideoPlayer] Initializing hls.js for:', url)
+      console.log('[VideoPlayer] Initializing hls.js for:', url)
       // Only ONE full stream restart per source is allowed after repeated
       // media errors; beyond that it is a real decode failure that must be
       // surfaced instead of looping recoverMediaError() forever (which only
@@ -370,6 +444,8 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(function Vid
           // parsed. Lets the parent dismiss any stale playback banner — useful
           // when the prior attempt 404'd but `startLoad()` quietly recovered.
           if (mountedRef.current) onPlaybackReady?.()
+          // Resume the saved position now that the manifest is parsed.
+          applyStartTime()
           // Kick off playback as soon as the manifest is parsed. The `autoPlay`
           // attribute on the <video> element can't trigger this on its own
           // because hls.js owns the source — the manifest is never pointed at
@@ -520,7 +596,7 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(function Vid
       }
     }
 
-// Non-HLS (mp4 / direct play) or native HLS (Safari): let the browser
+    // Non-HLS (mp4 / direct play) or native HLS (Safari): let the browser
     // drive playback through the <source> element below.
     return () => {
       hlsRef.current = null
@@ -613,6 +689,7 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(function Vid
     const videoEl = videoRef.current
     if (videoEl && !isSeeking) {
       setCurrentTime(videoEl.currentTime)
+      onTimeUpdateRef.current?.(videoEl.currentTime, videoEl.duration || 0)
     }
   }, [isSeeking])
 
@@ -629,17 +706,37 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(function Vid
     videoEl.paused ? videoEl.play() : videoEl.pause()
   }, [])
 
-  const handleVolumeChange = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
-      const videoEl = videoRef.current
-      if (!videoEl) return
-      const val = parseFloat(e.target.value)
-      videoEl.volume = val
-      videoEl.muted = val === 0
-      setVolume(val)
-      setMuted(val === 0)
+  const applyVolume = useCallback((val: number) => {
+    const videoEl = videoRef.current
+    if (!videoEl) return
+    const clamped = Math.max(0, Math.min(1, val))
+    videoEl.volume = clamped
+    videoEl.muted = clamped === 0
+    setVolume(clamped)
+    setMuted(clamped === 0)
+  }, [])
+
+  // Vertical (Netflix-style) volume control: the bar grows upward from the
+  // volume icon and is dragged like the progress bar.
+  const handleVolumeMouseDown = useCallback(
+    (e: React.MouseEvent<HTMLDivElement>) => {
+      e.preventDefault()
+      const bar = e.currentTarget
+      const update = (clientY: number) => {
+        const rect = bar.getBoundingClientRect()
+        const pct = 1 - Math.max(0, Math.min(1, (clientY - rect.top) / rect.height))
+        applyVolume(pct)
+      }
+      update(e.clientY)
+      const onMove = (ev: MouseEvent) => update(ev.clientY)
+      const onUp = () => {
+        document.removeEventListener('mousemove', onMove)
+        document.removeEventListener('mouseup', onUp)
+      }
+      document.addEventListener('mousemove', onMove)
+      document.addEventListener('mouseup', onUp)
     },
-    []
+    [applyVolume]
   )
 
   const seekBack = useCallback(() => {
@@ -694,8 +791,18 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(function Vid
     [duration]
   )
 
+  const applyPlaybackRate = useCallback((rate: number) => {
+    const videoEl = videoRef.current
+    if (videoEl) videoEl.playbackRate = rate
+    setPlaybackRate(rate)
+    setShowSettings(false)
+  }, [])
+
   const progress = duration > 0 ? (currentTime / duration) * 100 : 0
   const bufferedPct = duration > 0 ? (buffered / duration) * 100 : 0
+  const previewPct = seekPreview !== null ? seekPreview * 100 : 0
+  const previewTime =
+    seekPreview !== null && duration > 0 ? seekPreview * duration : 0
 
   // hls.js takes over the stream on HLS manifests for non-Safari browsers;
   // in that case the <source> child must not be rendered (it would make the
@@ -723,12 +830,20 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(function Vid
     </svg>
   )
 
+  const controlsVisible = showControls || !playing
+
   return (
     <div
       ref={containerRef}
-      className="group/player relative w-full bg-black select-none"
+      className={`group/player relative w-full bg-black select-none ${
+        controlsVisible ? '' : 'cursor-none'
+      }`}
       onMouseMove={resetHideTimer}
-      onMouseLeave={() => playing && setShowControls(false)}
+      onMouseLeave={() => {
+        if (playing) setShowControls(false)
+      }}
+      // Netflix-style: double-click toggles fullscreen.
+      onDoubleClick={toggleFullscreen}
     >
       {/* Video element */}
       <video
@@ -742,8 +857,14 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(function Vid
           isFullscreen ? 'h-full' : 'aspect-24/9'
         }`}
         // Prefer the landscape backdrop over the portrait poster so the
-        // pre-play frame isn't the item's portrait artwork.
-        poster={episode.cover || episode.thumbnail}
+        // pre-play frame isn't the item's portrait artwork. With
+        // `hidePosterUntilPlay`, the poster is suppressed until the first
+        // frame actually plays so the warm-up stays a clean black frame.
+        poster={
+          !hidePosterUntilPlay || hasPlayed
+            ? episode.cover || episode.thumbnail
+            : undefined
+        }
         preload="metadata"
         playsInline
         // The `autoPlay` attribute kicks off native playback on mount
@@ -764,17 +885,24 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(function Vid
         // unset lets browsers play cross-origin streams (e.g. Plex direct play)
         // without requiring the media server to send CORS headers.
         crossOrigin={episode.tracks.length > 0 ? 'anonymous' : undefined}
-        onPlay={() => setPlaying(true)}
+        onPlay={() => {
+          setPlaying(true)
+          setIsBuffering(false)
+          setHasPlayed(true)
+        }}
         onPause={() => setPlaying(false)}
         onTimeUpdate={handleTimeUpdate}
         onLoadedMetadata={() => {
           // Native MP4 / Safari HLS path: the <source> child loaded its
           // metadata successfully — mirror hls.js's MANIFEST_PARSED signal
           // here so the parent can dismiss any stale error banner.
+          applyStartTime()
           if (mountedRef.current) onPlaybackReady?.()
         }}
         onDurationChange={(e) => setDuration((e.target as HTMLVideoElement).duration)}
+        onWaiting={() => setIsBuffering(true)}
         onCanPlay={() => {
+          setIsBuffering(false)
           // `canplay` fires when the browser has enough buffered data to
           // start playback. Mirror MANIFEST_PARSED for non-hls.js sessions
           // (Safari / direct mp4). The hls.js path is already covered by
@@ -797,11 +925,6 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(function Vid
           if (hlsDrivesPlayback && code === 2) return
           onPlaybackError?.(describeMediaError(code))
         }}
-        onWaiting={() => {
-          // When the browser stalls without firing an `error`, treat it
-          // like a recoverable hiccup but mark the buffering state so the
-          // controls UI can hide the central Play button if needed.
-        }}
       >
         {episode.videoUrl && !hlsDrivesPlayback && (
           <source src={episode.videoUrl} type={episode.videoUrl.endsWith('.m3u8') ? 'application/x-mpegURL' : 'video/mp4'} />
@@ -817,6 +940,13 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(function Vid
           />
         ))}
       </video>
+
+      {/* Buffering spinner — small, centered, non-interactive (Netflix-style). */}
+      {isBuffering && playing && (
+        <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center">
+          <div className="size-12 rounded-full border-2 border-white/20 border-t-white/90 animate-spin" />
+        </div>
+      )}
 
       {/* Big play button when paused — hidden while a parent overlay covers
           the player (e.g. the watch page's Netflix-style CTA) so we don't
@@ -838,50 +968,22 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(function Vid
         </button>
       )}
 
-      {/* Controls overlay */}
+      {/* Controls overlay — Netflix-style bottom panel with the episode info
+          block, the control row and the progress bar at the very bottom edge. */}
       <div
-        className={`absolute inset-0 z-30 flex flex-col justify-end transition-opacity duration-300 ${
-          showControls || !playing ? 'opacity-100' : 'opacity-0 pointer-events-none'
+        className={`absolute inset-0 z-30 flex flex-col justify-between transition-opacity duration-300 ${
+          controlsVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'
         }`}
       >
         {/* Gradient background */}
-        <div className="absolute inset-0 bg-linear-to-t from-black/90 via-black/20 to-transparent pointer-events-none" />
+        <div className="absolute inset-0 bg-linear-to-t from-black/90 via-black/25 to-black/60 pointer-events-none" />
 
-        <div className="relative z-10 px-4 pb-3 pt-20 md:px-6">
-          {/* Progress bar */}
-          <div
-            data-progress-bar
-            className="group/bar relative h-1 w-full cursor-pointer rounded-full bg-white/20 transition-all duration-200 hover:h-1.5"
-            onMouseDown={handleProgressMouseDown}
-            onMouseMove={handleProgressHover}
-            onMouseLeave={() => setSeekPreview(null)}
-          >
-            {/* Buffered */}
-            <div
-              className="absolute inset-y-0 left-0 rounded-full bg-white/20"
-              style={{ width: `${bufferedPct}%` }}
-            />
-            {/* Played */}
-            <div
-              className="absolute inset-y-0 left-0 rounded-full bg-[#e50914] transition-[width] duration-75"
-              style={{ width: `${progress}%` }}
-            />
-            {/* Seek preview */}
-            {seekPreview !== null && (
-              <div
-                className="absolute inset-y-0 left-0 rounded-full bg-white/10"
-                style={{ width: `${seekPreview * 100}%` }}
-              />
-            )}
-            {/* Scrubber dot */}
-            <div
-              className="absolute top-1/2 size-3 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[#e50914] opacity-0 transition-opacity duration-200 group-hover/bar:opacity-100"
-              style={{ left: `${progress}%` }}
-            />
-          </div>
+        {/* Top spacer — keeps the bottom panel anchored to the bottom edge. */}
+        <div className="relative z-10" />
 
-          {/* Control row */}
-          <div className="mt-2 flex items-center justify-between gap-2">
+        <div className="relative z-10 px-3 pb-2 pt-16 md:px-5 md:pb-3">
+          {/* ── Control row ── */}
+          <div className="flex items-center justify-between gap-2">
             {/* Left: Play, skip, volume */}
             <div className="flex items-center gap-1">
               {/* Play / Pause */}
@@ -914,33 +1016,41 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(function Vid
                 </svg>
               </button>
 
-              {/* Volume */}
-              <div className="flex items-center gap-1 group/vol">
+              {/* Volume — Netflix-style vertical bar that grows upward */}
+              <div className="group/vol relative flex items-center">
                 <button type="button" onClick={toggleMute} className="p-1.5 text-white/90 hover:text-white transition-colors rounded" aria-label={muted ? 'Activer le son' : 'Couper le son'}>
                   {VolumeIcon}
                 </button>
-                <input
-                  type="range"
-                  min={0}
-                  max={1}
-                  step={0.01}
-                  value={muted ? 0 : volume}
-                  onChange={handleVolumeChange}
-                  className="h-1 w-0 cursor-pointer appearance-none rounded-full bg-white/30 accent-white transition-all duration-200 group-hover/vol:w-20 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:size-2.5 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:cursor-pointer"
+                <div
+                  data-volume-bar
+                  role="slider"
                   aria-label="Volume"
-                />
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={Math.round((muted ? 0 : volume) * 100)}
+                  onMouseDown={handleVolumeMouseDown}
+                  className="pointer-events-none absolute bottom-full left-1/2 mb-2 h-24 w-8 -translate-x-1/2 cursor-pointer opacity-0 transition-opacity duration-200 group-hover/vol:pointer-events-auto group-hover/vol:opacity-100"
+                >
+                  {/* Track */}
+                  <div className="absolute inset-y-0 left-1/2 w-1 -translate-x-1/2 rounded-full bg-white/30" />
+                  {/* Fill (from the bottom up) */}
+                  <div
+                    className="absolute bottom-0 left-1/2 w-1 -translate-x-1/2 rounded-full bg-white"
+                    style={{ height: `${(muted ? 0 : volume) * 100}%` }}
+                  />
+                  {/* Thumb */}
+                  <div
+                    className="absolute left-1/2 size-3 -translate-x-1/2 translate-y-1/2 rounded-full bg-white shadow-md"
+                    style={{ bottom: `${(muted ? 0 : volume) * 100}%` }}
+                  />
+                </div>
               </div>
             </div>
 
-            {/* Center: Episode title */}
-            <span className="hidden text-sm font-medium text-white/80 md:inline truncate max-w-xs px-4">
-              {isMovie ? episode.title : `EP ${episode.number} — ${episode.title}`}
-            </span>
-
-            {/* Right: Time, CC, fullscreen */}
+            {/* Right: Time, CC, settings, fullscreen */}
             <div className="flex items-center gap-1">
               {/* Time */}
-              <span className="text-xs tabular-nums text-white/60 mr-2 hidden sm:inline">
+              <span className="mr-1 hidden text-xs tabular-nums text-white/70 sm:inline">
                 {formatTime(currentTime)} / {formatTime(duration)}
               </span>
 
@@ -955,6 +1065,52 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(function Vid
                   </svg>
                 </button>
               )}
+
+              {/* Cast */}
+              <button type="button" className="p-1.5 text-white/90 hover:text-white transition-colors rounded" aria-label="Caster">
+                <Cast className="size-5" />
+              </button>
+
+              {/* Settings — playback speed */}
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setShowSettings((v) => !v)}
+                  className={`p-1.5 text-white/90 hover:text-white transition-colors rounded ${
+                    playbackRate !== 1 ? 'text-white' : ''
+                  }`}
+                  aria-label="Réglages"
+                >
+                  <Settings className="size-5" />
+                </button>
+                {showSettings && (
+                  <div className="absolute bottom-full right-0 z-40 mb-2 w-40 overflow-hidden rounded-md border border-white/10 bg-[#141414]/95 shadow-[0_8px_30px_rgba(0,0,0,0.6)] backdrop-blur-sm">
+                    <p className="px-3 pb-1 pt-2 text-[10px] font-bold uppercase tracking-[0.15em] text-white/50">
+                      Vitesse
+                    </p>
+                    <div className="pb-1">
+                      {PLAYBACK_RATES.map((rate) => {
+                        const active = playbackRate === rate
+                        return (
+                          <button
+                            key={rate}
+                            type="button"
+                            onClick={() => applyPlaybackRate(rate)}
+                            className={`flex w-full items-center justify-between px-3 py-1.5 text-left text-xs font-semibold transition-colors ${
+                              active
+                                ? 'text-[#e50914]'
+                                : 'text-white/80 hover:bg-white/10 hover:text-white'
+                            }`}
+                          >
+                            <span>{rate}×</span>
+                            {active && <Check className="size-3.5" />}
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
 
               {/* Fullscreen */}
               <button type="button" onClick={toggleFullscreen} className="p-1.5 text-white/90 hover:text-white transition-colors rounded" aria-label={isFullscreen ? 'Quitter le plein écran' : 'Plein écran'}>
@@ -975,6 +1131,47 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(function Vid
                 )}
               </button>
             </div>
+          </div>
+
+          {/* ── Progress bar (bottom edge) ── */}
+          <div
+            data-progress-bar
+            className="group/bar relative mt-2 h-1 w-full cursor-pointer rounded-full bg-white/20 transition-all duration-200 hover:h-1.5 md:mt-3"
+            onMouseDown={handleProgressMouseDown}
+            onMouseMove={handleProgressHover}
+            onMouseLeave={() => setSeekPreview(null)}
+          >
+            {/* Buffered */}
+            <div
+              className="absolute inset-y-0 left-0 rounded-full bg-white/25"
+              style={{ width: `${bufferedPct}%` }}
+            />
+            {/* Played */}
+            <div
+              className="absolute inset-y-0 left-0 rounded-full bg-[#e50914] transition-[width] duration-75"
+              style={{ width: `${progress}%` }}
+            />
+            {/* Seek preview segment (red, from played to hovered) */}
+            {seekPreview !== null && previewPct > progress && (
+              <div
+                className="absolute inset-y-0 rounded-full bg-[#e50914]/60"
+                style={{ left: `${progress}%`, width: `${previewPct - progress}%` }}
+              />
+            )}
+            {/* Scrubber dot */}
+            <div
+              className="absolute top-1/2 size-3 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[#e50914] opacity-0 transition-opacity duration-200 group-hover/bar:opacity-100"
+              style={{ left: `${progress}%` }}
+            />
+            {/* Time tooltip while scrubbing */}
+            {seekPreview !== null && (
+              <div
+                className="pointer-events-none absolute bottom-full mb-2 -translate-x-1/2 rounded bg-black/80 px-1.5 py-0.5 text-[10px] font-bold tabular-nums text-white shadow-md"
+                style={{ left: `${previewPct}%` }}
+              >
+                {formatTime(previewTime)}
+              </div>
+            )}
           </div>
         </div>
       </div>

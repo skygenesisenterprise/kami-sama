@@ -16,6 +16,7 @@ import {
 } from 'lucide-react'
 import { Progress } from '@/components/ui/progress'
 import { getWatchHistory, type WatchHistoryItem } from '@/lib/mock-history'
+import { setPendingEpisode } from '@/lib/watch-session'
 import { cn } from '@/lib/utils'
 
 /* -------------------------------------------------------------------------- */
@@ -106,7 +107,8 @@ function HistoryCard({
 
   return (
     <Link
-      href={`/watch/${anime.slug}?ep=${episode.id}`}
+      href={`/${locale}/watch/${anime.slug}`}
+      onClick={() => setPendingEpisode(episode.id)}
       className="group relative flex gap-4 rounded-xl border border-white/5 bg-white/3 p-3 transition-all duration-300 hover:-translate-y-0.5 hover:border-white/15 hover:bg-white/[0.07] focus-visible:ring-2 focus-visible:ring-white/30"
       style={{ animationDelay: `${index * 50}ms` }}
     >

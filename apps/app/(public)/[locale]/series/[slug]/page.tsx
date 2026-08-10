@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { DetailHero } from '@/components/kami/detail-hero'
 import { discoverApi } from '@/lib/api/discover'
+import { setPendingEpisode } from '@/lib/watch-session'
 import { mapApiItemToAnime } from '@/lib/api/discover-adapter'
 import { formatDuration } from '@/lib/mock-data'
 import { getUserFacingError } from '@/lib/api/errors'
@@ -18,7 +19,7 @@ interface SeriesDetailPageProps {
 }
 
 export default function SeriesDetailPage({ params }: SeriesDetailPageProps) {
-  const { slug } = use(params)
+  const { slug, locale } = use(params)
 
   const [detail, setDetail] = useState<ApiContentDetailResponse | null>(null)
   const [loading, setLoading] = useState(true)
@@ -108,7 +109,11 @@ export default function SeriesDetailPage({ params }: SeriesDetailPageProps) {
   const seasonEpisodes = currentSeason?.episodes ?? []
   const firstEpisode = seasons.find((s) => s.episodes.length > 0)?.episodes[0]
   const playLabel = firstEpisode ? `LECTURE E${firstEpisode.number}` : 'LECTURE'
-  const playHref = firstEpisode ? `/watch/${anime.slug}?ep=${firstEpisode.id}` : undefined
+  // Clean URL: the watch page auto-selects the first episode (or resumes from
+  // saved progress) — no `?ep=` in the address bar.
+  const playHref = firstEpisode
+    ? `/${locale}/watch/${anime.slug}`
+    : undefined
 
   return (
     <div className="min-h-screen bg-background">
@@ -156,7 +161,8 @@ export default function SeriesDetailPage({ params }: SeriesDetailPageProps) {
               {seasonEpisodes.map((episode) => (
                 <Link
                   key={episode.id}
-                  href={`/watch/${anime.slug}?ep=${episode.id}`}
+                  href={`/${locale}/watch/${anime.slug}`}
+                  onClick={() => setPendingEpisode(episode.id)}
                   className="group block"
                 >
                   <div className="relative aspect-video overflow-hidden rounded-lg">

@@ -44,14 +44,14 @@ const byStudio = (pool: Anime[], studioName: string) =>
 const byAgeRating = (pool: Anime[], ageRating: string) =>
   pool.filter((a) => a.ageRating === ageRating)
 
-const topRated = (pool: Anime[], count: number) =>
-  [...pool].sort((a, b) => b.rating - a.rating).slice(0, count)
+const topRated = (pool: Anime[], count?: number) =>
+  [...pool].sort((a, b) => b.rating - a.rating).slice(0, count ?? pool.length)
 
-const newest = (pool: Anime[], count: number) =>
-  [...pool].sort((a, b) => b.year - a.year).slice(0, count)
+const newest = (pool: Anime[], count?: number) =>
+  [...pool].sort((a, b) => b.year - a.year).slice(0, count ?? pool.length)
 
-const shortest = (pool: Anime[], count: number) =>
-  [...pool].sort((a, b) => a.totalEpisodes - b.totalEpisodes).slice(0, count)
+const shortest = (pool: Anime[], count?: number) =>
+  [...pool].sort((a, b) => a.totalEpisodes - b.totalEpisodes).slice(0, count ?? pool.length)
 
 const dedupe = (pool: Anime[]): Anime[] => {
   const seen = new Set<string>()
@@ -59,7 +59,13 @@ const dedupe = (pool: Anime[]): Anime[] => {
 }
 
 /** Minimum number of distinct items every content rail should display. */
-export const MIN_SECTION_ITEMS = 10
+export const MIN_SECTION_ITEMS = 20
+
+/** Maximum number of items a single rail displays. Capping each rail leaves
+ *  room for the OTHER rails to draw from the pool: without a cap, the first
+ *  generic rail (e.g. "Les plus populaires") would swallow the whole pool and
+ *  every following rail would be forced to repeat the same titles. */
+export const MAX_SECTION_ITEMS = 40
 
 /** Rotates an array by `offset` so per-section fillers differ between rails. */
 function rotate<T>(arr: T[], offset: number): T[] {
@@ -78,10 +84,19 @@ function hashSeed(str: string): number {
 }
 
 /**
- * Guarantees a rail always shows at least `min` distinct items: the
- * thematic selection first, then topped up with the best remaining pool
- * titles (rotated per section so adjacent rails don't repeat the same
- * filler). Returns at most `min` items.
+ * Builds a single rail's item list, guaranteeing `min` distinct items and
+ * never exceeding `max`. `usedIds` carries the titles already shown by other
+ * rails on the page so this rail prefers titles nobody else is showing yet
+ * (variety between sections):
+ *
+ *   1. Thematic selection — unused titles first, then already-used ones so a
+ *      rich theme never empties out.
+ *   2. Top-up to the minimum with the best compatible titles not used yet.
+ *   3. Last resort — top-up with titles already used elsewhere (pool
+ *      exhausted) so the rail still reaches its minimum.
+ *
+ * The rail never shrinks below `min` when the pool allows, and never grows
+ * past `max`, which is what lets the NEXT rails stay distinct too.
  */
 export function fillSectionItems(
   pool: Anime[],
@@ -89,22 +104,54 @@ export function fillSectionItems(
   sectionId: string,
   min = MIN_SECTION_ITEMS,
   compatible?: (anime: Anime) => boolean,
+  max = MAX_SECTION_ITEMS,
+  usedIds?: ReadonlySet<string>,
 ): Anime[] {
-  const out = dedupe(selected)
-  // Already at/above the minimum — keep the full selection for variety
-  // ("au minimum", not "exactement"): never shrink a rich rail.
-  if (out.length >= min) return out
-  const seen = new Set(out.map((a) => a.id))
-  const candidates = rotate(
-    [...pool]
-      .filter((a) => !seen.has(a.id) && (!compatible || compatible(a)))
-      .sort((a, b) => b.rating - a.rating),
-    hashSeed(sectionId),
-  )
-  for (const a of candidates) {
-    if (out.length >= min) break
+  const out: Anime[] = []
+  const seen = new Set<string>()
+  const push = (a: Anime) => {
+    if (seen.has(a.id) || out.length >= max) return
+    seen.add(a.id)
     out.push(a)
   }
+
+  // 1) Thematic selection: unused titles first (they are not shown by any
+  //    other rail yet), then already-used ones so a rich theme survives.
+  const thematic = dedupe(selected)
+  for (const a of thematic) {
+    if (out.length >= max) break
+    if (!usedIds?.has(a.id)) push(a)
+  }
+  for (const a of thematic) {
+    if (out.length >= max) break
+    push(a)
+  }
+
+  // 2) Top-up to the minimum with the best compatible titles no other rail
+  //    shows yet (variety between sections).
+  if (out.length < min) {
+    const ranked = [...pool]
+      .filter((a) => !seen.has(a.id) && (!compatible || compatible(a)))
+      .sort((a, b) => b.rating - a.rating)
+    const fresh = usedIds ? ranked.filter((a) => !usedIds.has(a.id)) : ranked
+    for (const a of rotate(fresh, hashSeed(sectionId))) {
+      if (out.length >= min) break
+      push(a)
+    }
+  }
+
+  // 3) Last resort: top-up with titles already used elsewhere (the pool is
+  //    exhausted) so the rail still reaches its minimum.
+  if (out.length < min) {
+    const ranked = [...pool]
+      .filter((a) => !seen.has(a.id) && (!compatible || compatible(a)))
+      .sort((a, b) => b.rating - a.rating)
+    for (const a of rotate(ranked, hashSeed(sectionId))) {
+      if (out.length >= min) break
+      push(a)
+    }
+  }
+
   return out
 }
 
@@ -138,44 +185,44 @@ export const DISCOVER_SECTION_DEFS: DiscoverSectionDef[] = [
     id: 'kami-pick',
     titleKey: 'sectionKamiPick',
     subtitleKey: 'sectionKamiPickSub',
-    select: (pool) => topRated(pool, 8),
+    select: (pool) => topRated(pool),
   },
   {
     id: 'trending',
     titleKey: 'sectionTrending',
     subtitleKey: 'sectionTrendingSub',
-    select: (pool) => topRated(pool, 10),
+    select: (pool) => topRated(pool),
   },
   {
     id: 'recently-added',
     titleKey: 'sectionRecentlyAdded',
     subtitleKey: 'sectionRecentlyAddedSub',
-    select: (pool) => newest(pool, 8),
+    select: (pool) => newest(pool),
   },
   {
     id: 'must-watch',
     titleKey: 'sectionMustWatch',
     subtitleKey: 'sectionMustWatchSub',
-    select: (pool) => pool.filter((a) => a.rating >= 8.5).sort((a, b) => b.rating - a.rating).slice(0, 8),
+    select: (pool) => pool.filter((a) => a.rating >= 8.5).sort((a, b) => b.rating - a.rating),
   },
   {
     id: 'recommended',
     titleKey: 'sectionRecommended',
     subtitleKey: 'sectionRecommendedSub',
-    select: (pool) => pool.filter((a) => a.rating >= 8 && a.rating < 9).sort((a, b) => b.rating - a.rating).slice(0, 8),
+    select: (pool) => pool.filter((a) => a.rating >= 8 && a.rating < 9).sort((a, b) => b.rating - a.rating),
   },
   {
     id: 'films',
     titleKey: 'sectionFilms',
     subtitleKey: 'sectionFilmsSub',
     compatible: ofType('movies'),
-    select: (pool) => pool.filter((a) => a.type === 'movies').slice(0, 8),
+    select: (pool) => pool.filter((a) => a.type === 'movies'),
   },
   {
     id: 'simulcast',
     titleKey: 'sectionSimulcast',
     subtitleKey: 'sectionSimulcastSub',
-    select: (pool) => newest(pool, 8),
+    select: (pool) => newest(pool),
   },
   {
     id: 'sci-fi',
@@ -195,13 +242,13 @@ export const DISCOVER_SECTION_DEFS: DiscoverSectionDef[] = [
     id: 'exclusive',
     titleKey: 'sectionExclusive',
     subtitleKey: 'sectionExclusiveSub',
-    select: (pool) => pool.filter((a) => a.rating >= 8.8).sort((a, b) => b.rating - a.rating).slice(0, 6),
+    select: (pool) => pool.filter((a) => a.rating >= 8.8).sort((a, b) => b.rating - a.rating),
   },
   {
     id: 'editorial',
     titleKey: 'sectionEditorial',
     subtitleKey: 'sectionEditorialSub',
-    select: (pool) => topRated(pool, 6),
+    select: (pool) => topRated(pool),
   },
   {
     id: 'explore',
@@ -228,7 +275,7 @@ export const DISCOVER_SECTION_DEFS: DiscoverSectionDef[] = [
     id: 'blockbusters',
     titleKey: 'sectionBlockbusters',
     subtitleKey: 'sectionBlockbustersSub',
-    select: (pool) => topRated(byGenre(pool, ['action', 'drama']), 6),
+    select: (pool) => topRated(byGenre(pool, ['action', 'drama'])),
   },
   {
     id: 'multiverse',
@@ -249,14 +296,14 @@ export const DISCOVER_SECTION_DEFS: DiscoverSectionDef[] = [
     titleKey: 'sectionSpaceOpera',
     subtitleKey: 'sectionSpaceOperaSub',
     compatible: inGenres('sci-fi'),
-    select: (pool) => topRated(byGenre(pool, ['sci-fi']), 6),
+    select: (pool) => topRated(byGenre(pool, ['sci-fi'])),
   },
   {
     id: 'top10',
     titleKey: 'sectionTop10',
     subtitleKey: 'sectionTop10Sub',
     titleParams: { country: 'France' },
-    select: (pool) => topRated(pool, 10),
+    select: (pool) => topRated(pool),
   },
   {
     id: 'war-politics',
@@ -268,20 +315,20 @@ export const DISCOVER_SECTION_DEFS: DiscoverSectionDef[] = [
     id: 'new-week',
     titleKey: 'sectionNewWeek',
     subtitleKey: 'sectionNewWeekSub',
-    select: (pool) => newest(pool, 6),
+    select: (pool) => newest(pool),
   },
   {
     id: 'new-eps',
     titleKey: 'sectionNewEps',
     subtitleKey: 'sectionNewEpsSub',
-    select: (pool) => newest(pool, 6),
+    select: (pool) => newest(pool),
   },
   {
     id: 'inspired',
     titleKey: 'sectionInspired',
     subtitleKey: 'sectionInspiredSub',
     compatible: inGenres('slice-of-life', 'drama', 'romance'),
-    select: (pool) => topRated(byGenre(pool, ['slice-of-life', 'drama', 'romance']), 6),
+    select: (pool) => topRated(byGenre(pool, ['slice-of-life', 'drama', 'romance'])),
   },
   {
     id: 'daily-pick',
@@ -296,8 +343,7 @@ export const DISCOVER_SECTION_DEFS: DiscoverSectionDef[] = [
     select: (pool) =>
       pool
         .filter((a) => a.year <= 2023)
-        .sort((a, b) => b.rating - a.rating)
-        .slice(0, 8),
+        .sort((a, b) => b.rating - a.rating),
   },
   {
     id: 'family',
@@ -324,13 +370,13 @@ export const DISCOVER_SECTION_DEFS: DiscoverSectionDef[] = [
     id: 'finish-line',
     titleKey: 'sectionFinishLine',
     subtitleKey: 'sectionFinishLineSub',
-    select: (pool) => shortest(pool, 6),
+    select: (pool) => shortest(pool),
   },
   {
     id: 'short',
     titleKey: 'sectionShort',
     subtitleKey: 'sectionShortSub',
-    select: (pool) => shortest(pool, 6),
+    select: (pool) => shortest(pool),
   },
   {
     id: 'fanfiction',
@@ -344,7 +390,7 @@ export const DISCOVER_SECTION_DEFS: DiscoverSectionDef[] = [
     titleKey: 'sectionStrategy',
     subtitleKey: 'sectionStrategySub',
     compatible: inGenres('mystery'),
-    select: (pool) => byGenre(pool, ['mystery']).slice(0, 6),
+    select: (pool) => byGenre(pool, ['mystery']),
   },
   {
     id: 'comedy',
@@ -357,13 +403,13 @@ export const DISCOVER_SECTION_DEFS: DiscoverSectionDef[] = [
     id: 'popular-fr',
     titleKey: 'sectionPopularFR',
     subtitleKey: 'sectionPopularFRSub',
-    select: (pool) => topRated(pool, 8),
+    select: (pool) => topRated(pool),
   },
   {
     id: 'card-game',
     titleKey: 'sectionCardGame',
     subtitleKey: 'sectionCardGameSub',
-    select: (pool) => dedupe([...byGenre(pool, ['sports']), ...byGenre(pool, ['action'])]).slice(0, 6),
+    select: (pool) => dedupe([...byGenre(pool, ['sports']), ...byGenre(pool, ['action'])]),
   },
   {
     id: 'vampire',
@@ -384,24 +430,24 @@ export const DISCOVER_SECTION_DEFS: DiscoverSectionDef[] = [
     titleKey: 'sectionFemaleLeads',
     subtitleKey: 'sectionFemaleLeadsSub',
     compatible: inGenres('romance', 'drama'),
-    select: (pool) => topRated(byGenre(pool, ['romance', 'drama']), 6),
+    select: (pool) => topRated(byGenre(pool, ['romance', 'drama'])),
   },
   {
     id: 'vf',
     titleKey: 'sectionVF',
     subtitleKey: 'sectionVFSub',
-    select: (pool) => topRated(pool, 8),
+    select: (pool) => topRated(pool),
   },
   {
     id: 'picks',
     titleKey: 'sectionPicks',
     subtitleKey: 'sectionPicksSub',
-    select: (pool) => topRated(pool, 6),
+    select: (pool) => topRated(pool),
   },
   {
     id: 'latest',
     titleKey: 'sectionLatest',
     subtitleKey: 'sectionLatestSub',
-    select: (pool) => newest(pool, 6),
+    select: (pool) => newest(pool),
   },
 ]

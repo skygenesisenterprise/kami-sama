@@ -339,6 +339,8 @@
       "seasonCountPlural": "{count} Saisons",
       "episodeCount": "{count} Ep.",
       "seasonOne": "Saison 1",
+      "ratingValue": "{value}/10",
+      "studioLabel": "Studio",
       "timeSur": "{current} sur {total} min",
       "ctaLooking": "Vous cherchez encore quelque chose à regarder ?",
       "ctaDiscover": "Découvrez notre bibliothèque complète",

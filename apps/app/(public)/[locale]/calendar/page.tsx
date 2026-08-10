@@ -1,12 +1,13 @@
 'use client'
 
-import { useMemo } from 'react'
+import { use, useMemo } from 'react'
 import Image from 'next/image'
 import Link from 'next/link'
 import { Filter, Info } from 'lucide-react'
 import { useTranslations } from 'next-intl'
 import { cn } from '@/lib/utils'
 import { getSimulcasts, getEpisodes, getAllAnime } from '@/lib/mock-data'
+import { setPendingEpisode } from '@/lib/watch-session'
 import type { Anime, Episode, SimulcastItem } from '@/types/anime'
 
 function getCurrentWeekDates(): Date[] {
@@ -89,7 +90,12 @@ function JapaneseFlag() {
   )
 }
 
-export default function CalendarPage() {
+export default function CalendarPage({
+  params,
+}: {
+  params: Promise<{ locale: string }>
+}) {
+  const { locale } = use(params)
   const t = useTranslations('Public.calendar')
   const schedule = useMemo(() => buildSchedule(), [])
 
@@ -141,7 +147,8 @@ export default function CalendarPage() {
                   {day.anime.map((item) => (
                     <Link
                       key={item.anime.id}
-                      href={`/watch/${item.anime.slug}?ep=${item.nextEp.id}`}
+                      href={`/${locale}/watch/${item.anime.slug}`}
+                      onClick={() => setPendingEpisode(item.nextEp.id)}
                       className="mb-4 block w-full"
                     >
                       <div className="calendrier-card relative flex h-48 w-full flex-col flex-nowrap items-center justify-between overflow-hidden rounded-lg bg-gray-800 md:h-75">

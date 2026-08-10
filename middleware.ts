@@ -212,7 +212,12 @@ export default function proxy(request: NextRequest) {
       return NextResponse.next();
     }
     const locale = getLocaleFromCountry(getCountryFromRequest(request));
-    return NextResponse.redirect(new URL(`/${locale}${pathname}`, request.url));
+    // Preserve the original query string (e.g. `?ep=<episodeId>` on watch
+    // links) — `new URL(path, base)` would silently drop it, sending users
+    // to the wrong episode after the locale redirect.
+    const url = request.nextUrl.clone();
+    url.pathname = `/${locale}${pathname}`;
+    return NextResponse.redirect(url);
   }
 
   return NextResponse.next();

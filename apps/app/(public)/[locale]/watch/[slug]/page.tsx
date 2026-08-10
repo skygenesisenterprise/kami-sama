@@ -1,7 +1,7 @@
 'use client'
 
 import { use, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useSearchParams, usePathname } from 'next/navigation'
+import { useRouter, usePathname } from 'next/navigation'
 import Link from 'next/link'
 import { useTranslations } from 'next-intl'
 import {
@@ -19,7 +19,9 @@ import { Button } from '@/components/ui/button'
 import { ScrollReveal } from '@/components/kami/scroll-reveal'
 import { Spinner } from '@/components/ui/spinner'
 import VideoPlayer, { type VideoPlayerHandle } from '@/components/video-player'
+import { useAuth } from '@/context/AuthContext'
 import { discoverApi } from '@/lib/api/discover'
+import { takePendingEpisode } from '@/lib/watch-session'
 import { mapApiItemToAnime } from '@/lib/api/discover-adapter'
 import { ApiError, getUserFacingError } from '@/lib/api/errors'
 import { formatDuration } from '@/lib/mock-data'
@@ -89,10 +91,20 @@ export default function WatchPage({
   const { slug, locale } = use(params)
   const t = useTranslations('watch')
   const pathname = usePathname()
-  const searchParams = useSearchParams()
-  const epId = searchParams.get('ep')
+  const router = useRouter()
+  const { isAuthenticated } = useAuth()
 
   const currentLocale = locale || pathname?.split('/')[1] || 'fr'
+
+  /**
+   * Client-side episode selection. The URL stays clean (`/watch/<slug>` —
+   * no `?ep=`), so switching episodes only updates this state; the selected
+   * episode is chosen automatically (pending hand-off, saved progress, then
+   * episode 1).
+   */
+  const [selectedEpisodeId, setSelectedEpisodeId] = useState<string | null>(null)
+  /** Seconds to resume at for the currently selected episode (0 = start). */
+  const [resumeAt, setResumeAt] = useState(0)
 
   // ── Real data ──
   const [detail, setDetail] = useState<ApiContentDetailResponse | null>(null)
@@ -208,6 +220,29 @@ export default function WatchPage({
     }
   }, [slug])
 
+  /**
+   * Resolve the initial episode to play (client-side, no URL param):
+   *   1. a pending episode handed off via sessionStorage (episode grid,
+   *      history, calendar…) — also cleans up a legacy `?ep=` query so the
+   *      address bar stays `/watch/<slug>`;
+   *   2. the user's saved watch progress for this title (auto-resume);
+   *   3. episode 1.
+   */
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const pending = takePendingEpisode()
+    // Legacy deep links (`/watch/<slug>?ep=<id>`) are honored then rewritten
+    // to the clean URL.
+    const url = new URL(window.location.href)
+    const legacyEp = url.searchParams.get('ep')
+    const initial = pending ?? legacyEp
+    if (initial) setSelectedEpisodeId(initial)
+    if (legacyEp) {
+      url.searchParams.delete('ep')
+      router.replace(`${url.pathname}${url.search}${url.hash}`, { scroll: false })
+    }
+  }, [router])
+
   const anime: Anime | null = detail ? mapApiItemToAnime(detail.item) : null
   const isMovie =
     !!detail && (detail.item.type === 'movie' || detail.item.format === 'movie')
@@ -219,9 +254,15 @@ export default function WatchPage({
 
   const currentFlat = useMemo(() => {
     if (!detail || isMovie) return null
-    if (epId) return episodes.find((e) => e.episode.id === epId) ?? episodes[0] ?? null
+    if (selectedEpisodeId) {
+      return (
+        episodes.find((e) => e.episode.id === selectedEpisodeId) ??
+        episodes[0] ??
+        null
+      )
+    }
     return episodes[0] ?? null
-  }, [detail, isMovie, epId, episodes])
+  }, [detail, isMovie, selectedEpisodeId, episodes])
 
   const episodesBySeason = useMemo(() => {
     const map = new Map<number, FlatEpisode[]>()
@@ -242,6 +283,49 @@ export default function WatchPage({
       ? episodes[currentIndex + 1]
       : null
 
+  /** Switch episode client-side — the URL never changes. */
+  const selectEpisode = useCallback(
+    (episodeId: string) => {
+      setSelectedEpisodeId(episodeId)
+      setResumeAt(0)
+    },
+    []
+  )
+
+  /**
+   * Auto-resume: when the user is signed in and has in-progress playback for
+   * this title, jump straight to that episode and seek to the saved position.
+   * Only applies when nothing else (pending hand-off / ?ep=) already picked
+   * an episode — user intent wins over history.
+   */
+  const resumeAppliedRef = useRef(false)
+  useEffect(() => {
+    if (!isAuthenticated || !detail || resumeAppliedRef.current) return
+    if (selectedEpisodeId) {
+      resumeAppliedRef.current = true
+      return
+    }
+    let cancelled = false
+    discoverApi
+      .continueWatching(50)
+      .then((res) => {
+        if (cancelled || resumeAppliedRef.current) return
+        const progress = res.items.find(
+          (p) => p.animeId === detail.item.id && p.percentage > 0 && p.percentage < 98
+        )
+        if (!progress) return
+        resumeAppliedRef.current = true
+        setSelectedEpisodeId(progress.episodeId)
+        if (progress.progress > 0) setResumeAt(progress.progress)
+      })
+      .catch(() => {
+        /* no progress / not authenticated — default to episode 1 */
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [isAuthenticated, detail, selectedEpisodeId])
+
   // Memoized so its identity stays stable across re-renders — the stream
   // effect below must not re-run (and re-set state) on every render.
   const playerEpisode: Episode | null = useMemo(() => {
@@ -250,25 +334,26 @@ export default function WatchPage({
   }, [detail, currentFlat, isMovie])
 
   // Resolve the playable stream URL as soon as the item + selected episode
-  // are known — we pre-load the manifest so by the time the user clicks the
-  // Play overlay, playback can start without an extra round-trip to the
-  // media-server / transcode backend. Depends on stable primitives (ids +
-  // retry), never on object identity.
-  //
-  // We hit `/discover/item/:slug/stream` purely for metadata (title +
-  // isMovie availability check). The actual playback URL is the local
-  // proxy route, so hls.js can fetch both the manifest and every segment
-  // same-origin and never trip the media server's flaky CORS protection.
-  //
-  // First resolution of a title can be slow: when the content comes from a
-  // content-only provider (Plex), the worker bridges the media into Jellyfin
-  // (writes a .strm file, waits for the library scan) before it can return
-  // an HLS URL. That routinely exceeds the default 15s request budget, so we
-  // grant this call a generous timeout instead of failing the first play.
+  // are known. This MUST complete before the player's proxy request fires:
+  // the /stream endpoint performs the provider resolution AND, for Plex-fed
+  // content, the Plex→Jellyfin bridge (writes the .strm, waits for the
+  // library scan) plus the transcode pre-warm. The proxy depends on that
+  // cached state — racing it (mounting the player first) makes two
+  // concurrent bridges fight over the same .strm and the manifest request
+  // answers 400. First resolution of a title can be slow (the bridge), so
+  // this call gets a generous timeout instead of failing the first play.
   const streamReqId = useRef(0)
   const episodeKey = playerEpisode?.id ?? null
   useEffect(() => {
     if (!detail || !playerEpisode) return
+    // Metadata-only item (no media linked on Plex/Jellyfin — e.g. rows
+    // imported from AniList): the stream resolver would only fail with
+    // "No … found on the media server" after a slow provider search, so
+    // surface the unavailable state immediately instead.
+    if (detail.item.availability?.watchable === false) {
+      setStream({ url: '', loading: false, error: 'unavailable' })
+      return
+    }
     const id = ++streamReqId.current
     console.log('[Watch] Resolving stream for slug:', detail.item.slug, '| episode:', episodeKey, '| isMovie:', isMovie)
     setStream({ url: '', loading: true, error: null })
@@ -317,13 +402,83 @@ export default function WatchPage({
     setPlaybackError(null)
   }, [episodeKey])
 
-  // Log the resolved proxy URL once per stream instead of on every render
-  // (a render-time console.log would spam the console 4+ times per page).
+  /* ── Watch progress persistence ────────────────────────────────────────
+     Every ~8s of real playback the page PUTs the playhead to
+     /watch/progress/:episodeId. That is what feeds the discover "Reprendre"
+     rail (continue-watching) and the auto-resume above. A final write is
+     flushed when playback pauses / the episode switches, so the stored
+     position is never more than a few seconds stale. */
+  const lastReportedRef = useRef(0)
+  const reportProgress = useCallback(
+    (currentTime: number, duration: number) => {
+      if (!isAuthenticated || !detail || !playerEpisode) return
+      const now = Date.now()
+      if (now - lastReportedRef.current < 8000) return
+      lastReportedRef.current = now
+      const percentage = duration > 0 ? Math.min(100, (currentTime / duration) * 100) : 0
+      discoverApi
+        .updateProgress(playerEpisode.id, {
+          animeId: playerEpisode.animeId,
+          progress: currentTime,
+          duration,
+          percentage,
+          completed: percentage >= 95,
+        })
+        .catch(() => {
+          /* silent — progress is best-effort */
+        })
+    },
+    [isAuthenticated, detail, playerEpisode]
+  )
+
+  const handlePlayerTimeUpdate = useCallback(
+    (currentTime: number, duration: number) => {
+      reportProgress(currentTime, duration)
+    },
+    [reportProgress]
+  )
+
+  // Flush a final progress write whenever playback stops (pause / episode
+  // switch / unmount) so the stored position is current.
+  const flushProgressRef = useRef<() => void>(() => {})
+  flushProgressRef.current = () => {
+    const video = document.querySelector('video')
+    if (!video || !isAuthenticated || !detail || !playerEpisode) return
+    const duration = video.duration || 0
+    const percentage = duration > 0 ? Math.min(100, (video.currentTime / duration) * 100) : 0
+    discoverApi
+      .updateProgress(playerEpisode.id, {
+        animeId: playerEpisode.animeId,
+        progress: video.currentTime,
+        duration,
+        percentage,
+        completed: percentage >= 95,
+      })
+      .catch(() => {
+        /* silent */
+      })
+  }
+
+  const handlePlayingChangeWithFlush = useCallback(
+    (playing: boolean) => {
+      handlePlayingChange(playing)
+      if (!playing) {
+        flushProgressRef.current()
+        lastReportedRef.current = 0
+      }
+    },
+    [handlePlayingChange]
+  )
+
+  // Flush on episode switch + unmount so the last position sticks.
   useEffect(() => {
-    if (stream.url) {
-      console.log('[Watch] Rendering VideoPlayer with URL:', stream.url)
+    flushProgressRef.current()
+  }, [episodeKey])
+  useEffect(() => {
+    return () => {
+      flushProgressRef.current()
     }
-  }, [stream.url])
+  }, [playerEpisode])
 
   // Shared retry logic for the two error banners: forget the click intent
   // and the preview state, clear the per-attempt flags and re-resolve the
@@ -379,22 +534,16 @@ export default function WatchPage({
       {/* ── Video Player ── */}
       <div className="relative w-full bg-black">
         <div className="relative mx-auto w-full">
-          {/* No "player preparing" message: the content IS the loading
-              frame. The item's backdrop fills the player area while the
-              stream resolves in the background; a silent progress bar is
-              the only hint. The moment it resolves, the muted video takes
-              over seamlessly. */}
+          {/* While the stream resolves, show a clean black frame with a
+              spinner — NO movie/series asset (the old "loading screen" is
+              gone). The /stream call must finish first: it runs the
+              Plex→Jellyfin bridge + transcode pre-warm, so the proxy
+              manifest request that follows always hits a ready session and
+              the muted autoplay launches the content automatically. */}
           {stream.loading && (
             <div className="relative aspect-24/9 w-full overflow-hidden bg-black">
-              <img
-                src={playerEpisode.cover || playerEpisode.thumbnail}
-                alt=""
-                aria-hidden="true"
-                className="absolute inset-0 size-full object-cover"
-              />
-              <div className="absolute inset-0 bg-black/30" />
-              <div className="absolute inset-x-0 bottom-0 h-0.5 overflow-hidden bg-white/10">
-                <div className="h-full w-1/2 animate-pulse bg-[#e50914]" />
+              <div className="absolute inset-0 flex items-center justify-center">
+                <div className="size-10 rounded-full border-2 border-white/20 border-t-white/90 animate-spin" />
               </div>
             </div>
           )}
@@ -431,9 +580,42 @@ export default function WatchPage({
             </div>
           )}
 
+          {!stream.loading && !stream.error && stream.url && (
+            <VideoPlayer
+              ref={playerRef}
+              episode={{ ...playerEpisode, videoUrl: stream.url }}
+              // Auto-play: the stream engine (Jellyfin transcoding + hls.js)
+              // starts as soon as the manifest is ready. If the browser blocks
+              // autoplay (NotAllowedError), the Netflix-style overlay stays up
+              // so the user can click to start manually.
+              autoPlay={true}
+              onPlaybackError={handlePlaybackError}
+              onPlayingChange={handlePlayingChangeWithFlush}
+              onPlaybackReady={handlePlaybackReady}
+              // Persist watch progress (throttled inside the handler) so the
+              // discover "Reprendre" rail resumes where the user stopped.
+              onTimeUpdate={handlePlayerTimeUpdate}
+              // Auto-resume: seek to the saved position once the stream loads.
+              startTime={resumeAt}
+              // Muted autoplay: browsers allow it without a gesture, so the
+              // stream genuinely starts the instant the manifest is ready —
+              // the video is live instead of a dead still. The click below
+              // reveals the audio.
+              startMuted
+              // No poster until the first frame flows: the frame stays black
+              // during the short warm-up after mount (no art flash).
+              hidePosterUntilPlay
+              // While the Netflix overlay is visible (`!started`), suppress
+              // the player's intrinsic big Play button so the two CTAs don't
+              // compete. Once playback starts, this flips back to false and
+              // the player's button reasserts itself for pause/resume.
+              hideBuiltInPlayOverlay={!started}
+            />
+          )}
+
           {/* Playback error (raised by VideoPlayer — hls.js / <video> /
-              autoplay gate). Shown in front of the poster while keeping
-              the same Retry CTA so the user can re-trigger the stream. */}
+              autoplay gate). Shown in front of the player while keeping the
+              same Retry CTA so the user can re-trigger the stream. */}
           {!stream.loading && !stream.error && stream.url && playbackError && (
             <div className="absolute inset-0 z-30 flex aspect-24/9 w-full flex-col items-center justify-center gap-3 bg-black/70 px-6 text-center">
               <WarningCircle className="size-10 text-white/40" weight="light" />
@@ -455,34 +637,6 @@ export default function WatchPage({
                 </Button>
               </div>
             </div>
-          )}
-
-          {!stream.loading && !stream.error && stream.url && (
-            <>
-            <VideoPlayer
-              ref={playerRef}
-              episode={{ ...playerEpisode, videoUrl: stream.url }}
-              isMovie={isMovie}
-              // Auto-play: the stream engine (Jellyfin transcoding + hls.js)
-              // starts as soon as the manifest is ready. If the browser blocks
-              // autoplay (NotAllowedError), the Netflix-style overlay stays up
-              // so the user can click to start manually.
-              autoPlay={true}
-              onPlaybackError={handlePlaybackError}
-              onPlayingChange={handlePlayingChange}
-              onPlaybackReady={handlePlaybackReady}
-              // Muted autoplay: browsers allow it without a gesture, so the
-              // stream genuinely starts the instant the manifest is ready —
-              // the video is live behind the overlay's asset instead of a
-              // dead still. The click below reveals the audio.
-              startMuted
-              // While the Netflix overlay is visible (`!started`), suppress
-              // the player's intrinsic big Play button so the two CTAs don't
-              // compete. Once playback starts, this flips back to false and
-              // the player's button reasserts itself for pause/resume.
-              hideBuiltInPlayOverlay={!started}
-            />
-            </>
           )}
 
           {/* ── Audio-reveal chip ──
@@ -686,9 +840,10 @@ export default function WatchPage({
                         <h3 className="mb-3 text-xs font-bold uppercase tracking-[0.15em] text-white/60">
                           {t('episodes.nextEpisode')}
                         </h3>
-                        <Link
-                          href={`/${currentLocale}/watch/${slug}?ep=${nextEpisode.episode.id}`}
-                          className="group flex gap-3"
+                        <button
+                          type="button"
+                          onClick={() => selectEpisode(nextEpisode.episode.id)}
+                          className="group flex w-full gap-3 text-left"
                         >
                           <div className="relative h-20 w-32 shrink-0 overflow-hidden rounded-md bg-white/10">
                             <img
@@ -708,7 +863,7 @@ export default function WatchPage({
                             </h4>
                             <p className="mt-1 text-xs text-white/50">{t('meta.subtitled')}</p>
                           </div>
-                        </Link>
+                        </button>
                       </div>
                     )}
                     {prevEpisode && (
@@ -716,9 +871,10 @@ export default function WatchPage({
                         <h3 className="mb-3 text-xs font-bold uppercase tracking-[0.15em] text-white/60">
                           {t('episodes.prevEpisode')}
                         </h3>
-                        <Link
-                          href={`/${currentLocale}/watch/${slug}?ep=${prevEpisode.episode.id}`}
-                          className="group flex gap-3"
+                        <button
+                          type="button"
+                          onClick={() => selectEpisode(prevEpisode.episode.id)}
+                          className="group flex w-full gap-3 text-left"
                         >
                           <div className="relative h-20 w-32 shrink-0 overflow-hidden rounded-md bg-white/10">
                             <img
@@ -733,7 +889,7 @@ export default function WatchPage({
                             </h4>
                             <p className="mt-1 text-xs text-white/50">{t('meta.subtitled')}</p>
                           </div>
-                        </Link>
+                        </button>
                       </div>
                     )}
                     <button
@@ -772,10 +928,11 @@ export default function WatchPage({
                               {seasonEpisodes.map((item) => {
                                 const isCurrent = item.episode.id === currentFlat?.episode.id
                                 return (
-                                  <Link
+                                  <button
                                     key={item.episode.id}
-                                    href={`/${currentLocale}/watch/${slug}?ep=${item.episode.id}`}
-                                    className={`group flex gap-3 rounded-md p-1.5 transition-colors ${
+                                    type="button"
+                                    onClick={() => selectEpisode(item.episode.id)}
+                                    className={`group flex w-full gap-3 rounded-md p-1.5 text-left transition-colors ${
                                       isCurrent ? 'bg-white/10' : 'hover:bg-white/5'
                                     }`}
                                   >
@@ -797,7 +954,7 @@ export default function WatchPage({
                                       </h4>
                                       <p className="mt-1 text-xs text-white/50">{t('meta.subtitled')}</p>
                                     </div>
-                                  </Link>
+                                  </button>
                                 )
                               })}
                             </div>

@@ -1,6 +1,7 @@
 package routes
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 	"strings"
@@ -214,6 +215,12 @@ func (h *AnimeHandler) Delete(c *gin.Context) {
 	utils.Success(c, http.StatusOK, gin.H{"deleted": true})
 }
 
+// plexClient resolves the configured Plex client (see plexClientFromDeps),
+// shared with the stream resolver so the admin sync uses the same client.
+func (h *AnimeHandler) plexClient(ctx context.Context) (*services.PlexClient, error) {
+	return plexClientFromDeps(ctx, h.deps)
+}
+
 func (h *AnimeHandler) Sync(c *gin.Context) {
 	id := c.Param("animeId")
 	if id == "" {
@@ -230,6 +237,25 @@ func (h *AnimeHandler) Sync(c *gin.Context) {
 		principal, _ := middleware.GetPrincipal(c)
 		h.deps.AnilistService.RefreshFromAnilist(c.Request.Context(), item, principal.UserID)
 		h.deps.AnilistService.EnsureSeasonsAndEpisodes(c.Request.Context(), item, nil)
+	}
+	// Plex-sourced rows carry their REAL episode grid only on the provider:
+	// refresh it from Plex (metadata.sourceId) so series imported before the
+	// episode importer existed get their episodes backfilled on sync. AniList
+	// cannot fill those — it is metadata-only for most Plex titles.
+	if item.Source == "plex" {
+		if showKey := providerSourceIDFromMetadata(item); showKey != "" {
+			if client, cerr := h.plexClient(c.Request.Context()); cerr == nil {
+				if db := h.deps.Database.Gorm(); db != nil {
+					ctx := c.Request.Context()
+					n, ierr := services.ImportPlexShowEpisodes(ctx, db, client, item.ID, showKey)
+					if ierr == nil && n > 0 {
+						h.deps.Logger.Info("imported plex episodes during sync", "animeId", item.ID, "episodes", n)
+					} else if ierr != nil {
+						h.deps.Logger.Warn("plex episode import failed during sync", "animeId", item.ID, "error", ierr)
+					}
+				}
+			}
+		}
 	}
 	// Reload from DB to get updated data
 	item, err = h.deps.AnimeService.GetByID(c.Request.Context(), id)

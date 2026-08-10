@@ -7,6 +7,12 @@ import type {
   SeriesSource,
   SeriesType,
 } from "@/lib/series-catalog-data";
+import type { MovieItem, MovieSource } from "@/lib/movies-catalog-data";
+import type {
+  TvShowItem,
+  TvShowSeason,
+  TvShowSource,
+} from "@/lib/tv-shows-catalog-data";
 
 /**
  * Catalog (anime) API client + mapper between the backend `Anime` model and the
@@ -61,6 +67,24 @@ export interface ApiAnime {
   createdAt: string;
   updatedAt: string;
 }
+
+/** Providers the admin movie / tv-show data models recognize — used to keep
+ *  only compatible source badges when mapping persisted rows. */
+const MOVIE_SOURCE_PROVIDERS = new Set<string>([
+  'Plex',
+  'Jellyfin',
+  'IMDb',
+  'TMDB',
+])
+const TV_SHOW_SOURCE_PROVIDERS = new Set<string>([
+  'Plex',
+  'Jellyfin',
+  'TMDB',
+  'IMDb',
+  'TheTVDB',
+  'Trakt',
+  'TMDb',
+])
 
 export interface AnimeListParams {
   page?: number;
@@ -231,6 +255,106 @@ export function apiAnimeToSeriesItem(a: ApiAnime): SeriesItem {
     updatedAt: timeAgo(a.updatedAt),
     updatedBy: "API",
   };
+}
+
+export type AnimeContentKind = "series" | "movie" | "tv-show"
+
+/**
+ * Classifies a backend anime row into the admin catalog kind. Plex rows carry
+ * metadata.type ("Movie" / "Series"), AniList rows carry metadata.format
+ * ("MOVIE", "TV", "ONA", …). Anything without a movie hint stays a series
+ * so movies are never flattened into the series tab.
+ */
+export function animeContentKind(a: ApiAnime): AnimeContentKind {
+  const meta = a.metadata ?? {}
+  const type = str(meta.type).toLowerCase()
+  const format = str(meta.format).toLowerCase()
+  if (type === "movie" || format === "movie") return "movie"
+  if (type === "series" || type === "show") return "tv-show"
+  return "series"
+}
+
+/** Maps a backend anime row to the admin MovieItem shape (metadata + assets). */
+export function apiAnimeToMovieItem(a: ApiAnime): MovieItem {
+  const meta = a.metadata ?? {}
+  const external = extractExternalIds(a, meta)
+  // Keep only providers the movie data model knows about (display-only).
+  const sources = (extractSources(a, meta, external) as unknown as MovieSource[]).filter(
+    (s) => MOVIE_SOURCE_PROVIDERS.has(s.provider),
+  )
+  const poster = a.coverImageUrl || str(meta.imageUrl) || str(meta.coverImage) || ""
+  const banner = a.bannerImageUrl || str(meta.artUrl) || str(meta.bannerImage) || poster
+  return {
+    id: a.id,
+    slug: a.slug,
+    title: a.title,
+    titleOriginal: a.japaneseTitle ?? "",
+    synopsis: a.synopsis ?? "",
+    status: mapPublicationStatus(a.status),
+    genres: extractGenres(a, meta),
+    director: "",
+    writers: [],
+    cast: [],
+    tags: [],
+    year: a.releaseYear,
+    rating: a.rating,
+    duration: 0,
+    ageRating: a.ageRating ?? "Unknown",
+    assets: { poster, banner, backdrop: banner || poster },
+    externalIds: external,
+    sources,
+    relations: [],
+    metadataStatus: sources.length > 0 ? "synced" : "missing",
+    updatedAt: timeAgo(a.updatedAt),
+    updatedBy: "API",
+  }
+}
+
+/** Maps a backend anime row to the admin TvShowItem shape (seasons included). */
+export function apiAnimeToTvShowItem(a: ApiAnime): TvShowItem {
+  const meta = a.metadata ?? {}
+  const airing = str(meta.airing_status) || a.status
+  const external = extractExternalIds(a, meta)
+  // Keep only providers the tv-show data model knows about (display-only).
+  const sources = (extractSources(a, meta, external) as unknown as TvShowSource[]).filter(
+    (s) => TV_SHOW_SOURCE_PROVIDERS.has(s.provider),
+  )
+  const poster = a.coverImageUrl || str(meta.imageUrl) || str(meta.coverImage) || ""
+  const banner = a.bannerImageUrl || str(meta.artUrl) || str(meta.bannerImage) || poster
+  const seasons: TvShowSeason[] = (a.seasons ?? []).map((s) => ({
+    id: s.id,
+    number: s.number,
+    title: s.title ?? "",
+    episodeCount: s.episodeCount,
+    year: yearFromAirDate(s.airDate) ?? a.releaseYear,
+    aired: !s.airDate,
+  }))
+  return {
+    id: a.id,
+    slug: a.slug,
+    title: a.title,
+    titleOriginal: a.japaneseTitle ?? "",
+    synopsis: a.synopsis ?? "",
+    type: "animation",
+    status: mapPublicationStatus(a.status),
+    airingStatus: mapAiringStatus(airing),
+    genres: extractGenres(a, meta),
+    networks: [],
+    tags: [],
+    year: a.releaseYear,
+    rating: a.rating,
+    seasonCount: seasons.length,
+    totalEpisodes: a.totalEpisodes,
+    ageRating: a.ageRating ?? "Unknown",
+    assets: { poster, banner, backdrop: banner || poster },
+    externalIds: external,
+    sources,
+    seasons,
+    relations: [],
+    metadataStatus: sources.length > 0 ? "synced" : "missing",
+    updatedAt: timeAgo(a.updatedAt),
+    updatedBy: "API",
+  }
 }
 
 export function seriesItemToAnimeCreatePayload(item: SeriesItem): CreateAnimePayload {

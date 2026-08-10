@@ -5,9 +5,12 @@ import (
 	"net/http"
 	"net/url"
 	"testing"
+	"time"
 
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
+
+	"github.com/skygenesisenterprise/kami-sama/server/src/models"
 )
 
 // TestPlexMediaSource_DisabledWhenConfigEmpty ensures the provider returns a
@@ -121,6 +124,144 @@ func newPlexTestDB(t *testing.T) *gorm.DB {
 		t.Fatalf("open sqlite: %v", err)
 	}
 	return db
+}
+
+// TestImportPlexShowEpisodes_SeedsSeasonAndEpisodeGrid locks the fix that
+// makes series imported from Plex playable: the library sync only writes the
+// show row, so importPlexShowEpisodes must fetch the provider's season +
+// episode grid (/allLeaves) and persist it under the anime row — otherwise
+// the watch page shows "épisode introuvable" for every Plex series.
+func TestImportPlexShowEpisodes_SeedsSeasonAndEpisodeGrid(t *testing.T) {
+	_, client := plexTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/library/metadata/844130/allLeaves" {
+			t.Fatalf("unexpected path %q", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"MediaContainer":{"Metadata":[
+			{"ratingKey":"9001","title":"Premier \u00e9pisode","parentIndex":1,"index":1,"duration":2940000,"summary":"Synopsis 1","thumb":"/library/metadata/9001/thumb/1"},
+			{"ratingKey":"9002","title":"Deuxi\u00e8me \u00e9pisode","parentIndex":1,"index":2,"duration":2940000,"summary":"Synopsis 2","thumb":"/library/metadata/9002/thumb/1"},
+			{"ratingKey":"9101","title":"Sp\u00e9cial","parentIndex":2,"index":1,"duration":1200000,"summary":"Synopsis 3","thumb":"/library/metadata/9101/thumb/1"}
+		]}}`))
+	})
+
+	db := newPlexTestDB(t)
+	if err := db.AutoMigrate(&models.Anime{}, &models.AnimeSeason{}, &models.Episode{}); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	// The show row as SyncLibrary creates it (ID = Plex ratingKey).
+	anime := models.Anime{
+		Common: models.Common{ID: "844130", CreatedAt: time.Now(), UpdatedAt: time.Now()},
+		Slug:   "dutton-ranch",
+		Title:  "Dutton Ranch",
+		Source: "plex",
+	}
+	if err := db.Create(&anime).Error; err != nil {
+		t.Fatalf("create anime: %v", err)
+	}
+
+	n, err := importPlexShowEpisodes(context.Background(), db, client, "844130", "844130")
+	if err != nil {
+		t.Fatalf("importPlexShowEpisodes: %v", err)
+	}
+	if n != 3 {
+		t.Fatalf("expected 3 episodes imported, got %d", n)
+	}
+
+	var seasons []models.AnimeSeason
+	if err := db.Where("anime_id = ?", "844130").Order("number asc").Find(&seasons).Error; err != nil {
+		t.Fatalf("load seasons: %v", err)
+	}
+	if len(seasons) != 2 {
+		t.Fatalf("expected 2 seasons, got %d", len(seasons))
+	}
+	if seasons[0].EpisodeCount != 2 || seasons[1].EpisodeCount != 1 {
+		t.Fatalf("unexpected episode counts: %d / %d", seasons[0].EpisodeCount, seasons[1].EpisodeCount)
+	}
+
+	var episodes []models.Episode
+	// Order by SEASON NUMBER (not season_id — that is a random UUIDv4, so
+	// ordering on it is arbitrary and makes this assertion flaky), then by
+	// episode number inside each season.
+	if err := db.Where("episodes.anime_id = ?", "844130").
+		Joins("JOIN anime_seasons ON anime_seasons.id = episodes.season_id").
+		Order("anime_seasons.number asc").
+		Order("episodes.number asc").
+		Find(&episodes).Error; err != nil {
+		t.Fatalf("load episodes: %v", err)
+	}
+	if len(episodes) != 3 {
+		t.Fatalf("expected 3 episodes, got %d", len(episodes))
+	}
+	if episodes[0].Title != "Premier épisode" || episodes[0].Number != 1 {
+		t.Fatalf("unexpected first episode: %q #%d", episodes[0].Title, episodes[0].Number)
+	}
+	if episodes[2].Title != "Spécial" || episodes[2].Number != 1 {
+		t.Fatalf("unexpected season-2 episode: %q #%d", episodes[2].Title, episodes[2].Number)
+	}
+	// Both episodes of season 1 must share the same season row.
+	if episodes[0].SeasonID == nil || episodes[1].SeasonID == nil || *episodes[0].SeasonID != *episodes[1].SeasonID {
+		t.Fatalf("season-1 episodes must share one season row")
+	}
+	if episodes[2].SeasonID == nil || *episodes[2].SeasonID == *episodes[0].SeasonID {
+		t.Fatalf("season-2 episode must belong to a different season")
+	}
+
+	// total_episodes must reflect the imported grid (the watch page and the
+	// discover rails read it from the API availability block).
+	var updated models.Anime
+	if err := db.First(&updated, "id = ?", "844130").Error; err != nil {
+		t.Fatalf("reload anime: %v", err)
+	}
+	if updated.TotalEpisodes != 3 {
+		t.Fatalf("expected total_episodes=3, got %d", updated.TotalEpisodes)
+	}
+}
+
+// TestImportPlexShowEpisodes_Idempotent ensures a second run refreshes in
+// place instead of duplicating rows — the sync re-runs periodically and must
+// not grow the episode grid every hour.
+func TestImportPlexShowEpisodes_Idempotent(t *testing.T) {
+	_, client := plexTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"MediaContainer":{"Metadata":[
+			{"ratingKey":"9001","title":"E1","parentIndex":1,"index":1,"duration":1000,"summary":"","thumb":"/library/metadata/9001/thumb/1"}
+		]}}`))
+	})
+
+	db := newPlexTestDB(t)
+	if err := db.AutoMigrate(&models.Anime{}, &models.AnimeSeason{}, &models.Episode{}); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	anime := models.Anime{
+		Common: models.Common{ID: "844130", CreatedAt: time.Now(), UpdatedAt: time.Now()},
+		Slug:   "dutton-ranch",
+		Title:  "Dutton Ranch",
+		Source: "plex",
+	}
+	if err := db.Create(&anime).Error; err != nil {
+		t.Fatalf("create anime: %v", err)
+	}
+
+	for i := 0; i < 2; i++ {
+		if _, err := importPlexShowEpisodes(context.Background(), db, client, "844130", "844130"); err != nil {
+			t.Fatalf("run %d: %v", i, err)
+		}
+	}
+
+	var count int64
+	if err := db.Model(&models.Episode{}).Where("anime_id = ?", "844130").Count(&count).Error; err != nil {
+		t.Fatalf("count episodes: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("expected exactly 1 episode after re-sync, got %d", count)
+	}
+	var seasons int64
+	if err := db.Model(&models.AnimeSeason{}).Where("anime_id = ?", "844130").Count(&seasons).Error; err != nil {
+		t.Fatalf("count seasons: %v", err)
+	}
+	if seasons != 1 {
+		t.Fatalf("expected exactly 1 season after re-sync, got %d", seasons)
+	}
 }
 
 // TestBuildPlexStreamURL_ProducesUniversalStartURL locks the shape of the

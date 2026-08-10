@@ -4,7 +4,7 @@ import * as React from 'react'
 import { use } from 'react'
 import { createPortal } from 'react-dom'
 import { usePathname } from 'next/navigation'
-import { Bookmark, Check, ChevronLeft, ChevronRight, Play, Plus, ThumbsDown, ThumbsUp } from 'lucide-react'
+import { Check, ChevronLeft, ChevronRight, Play, Plus, Star, ThumbsDown, ThumbsUp } from 'lucide-react'
 import { useTranslations } from 'next-intl'
 import { Button } from '@/components/ui/button'
 import { HeroBanner } from '@/components/kami/hero-banner'
@@ -35,6 +35,35 @@ interface DiscoverSectionConfig {
   animes: Anime[]
   isResume?: boolean
 }
+
+/** A content section BEFORE it is filled: holds its raw thematic selection
+ *  (`animes`) plus an optional compatibility predicate used for the top-up,
+ *  so the page can interleave the sources and then fill every rail
+ *  sequentially with a shared `usedIds` set (variety between rails). */
+interface DiscoverSectionSeed {
+  id: string
+  title: string
+  href: string
+  subtitle?: string
+  ctaLabel?: string
+  animes: Anime[]
+  compatible?: (anime: Anime) => boolean
+}
+
+/** Server genre rails (`genre-*`) whose theme is recognized: the top-up keeps
+ *  only titles carrying that genre id so the rail never drifts off-theme. */
+const KNOWN_GENRE_IDS = [
+  'fantasy',
+  'action',
+  'adventure',
+  'slice-of-life',
+  'sci-fi',
+  'supernatural',
+  'sports',
+  'romance',
+  'drama',
+  'mystery',
+]
 
 interface DiscoverRailProps {
   title: string
@@ -138,9 +167,14 @@ interface DiscoverAnimeTileProps {
 
 function DiscoverAnimeTile({ anime, currentLocale, badge, progressPercent, remainingLabel, episodeNumber, episodeTitle, currentTime, totalTime }: DiscoverAnimeTileProps) {
   const t = useTranslations('Public.discover')
-  const { isAuthenticated } = useAuth()
   const isContinueWatching = progressPercent !== undefined
   const tileRef = React.useRef<HTMLDivElement>(null)
+  const cardRef = React.useRef<HTMLDivElement>(null)
+  // Natural (untransformed) size of the hover card, measured once it is
+  // mounted. The card is `w-72` (288px) wide; its height varies with content
+  // (title, synopsis…). Used by updateCardPosition to keep the SCALED card
+  // inside the viewport without re-measuring the animated DOM.
+  const cardSizeRef = React.useRef<{ w: number; h: number }>({ w: 288, h: 400 })
   const [isHovered, setIsHovered] = React.useState(false)
   const [isVisible, setIsVisible] = React.useState(false)
   const [cardPosition, setCardPosition] = React.useState<{ top: number; left: number } | null>(null)
@@ -152,15 +186,47 @@ function DiscoverAnimeTile({ anime, currentLocale, badge, progressPercent, remai
   const [isDisliked, setIsDisliked] = React.useState(false)
   const [isLiked, setIsLiked] = React.useState(false)
 
+  // Positions the card on the tile and clamps its ANCHOR so the fully
+  // rendered card (translateX(-50%) translateY(-8px) scale(1.15), origin
+  // "center bottom") stays inside the viewport. The rendered box relative to
+  // the anchor (top, left) is:
+  //   left' = left - 0.575w · top' = top - 0.15h - 8 · size = 1.15w × 1.15h
+  // so clamping the anchor once is enough — no feedback loop. (The old
+  // measure-the-rendered-rect approach compared the rendered edge — already
+  // shifted by translateX(-50%) — against the anchor value and never
+  // converged on edge tiles, re-rendering forever and freezing the card on
+  // the first item of a rail.)
   const updateCardPosition = React.useCallback(() => {
-    if (tileRef.current) {
-      const rect = tileRef.current.getBoundingClientRect()
-      setCardPosition({
-        top: rect.top,
-        left: rect.left + rect.width / 2,
-      })
-    }
+    const tile = tileRef.current
+    if (!tile) return
+    const rect = tile.getBoundingClientRect()
+    const { w, h } = cardSizeRef.current
+    const margin = 16
+    const vw = window.innerWidth
+    const vh = window.innerHeight
+    const minLeft = margin + 0.575 * w
+    const maxLeft = vw - margin - 0.575 * w
+    const minTop = margin + 0.15 * h + 8
+    const maxTop = vh - margin - h + 8
+    setCardPosition({
+      top: Math.min(Math.max(rect.top, minTop), maxTop),
+      left: Math.min(Math.max(rect.left + rect.width / 2, minLeft), maxLeft),
+    })
   }, [])
+
+  // Measure the card's natural size once it is mounted and re-clamp with the
+  // real height. offsetWidth/offsetHeight ignore transforms, so the values
+  // stay stable while the scale entrance animation runs.
+  React.useLayoutEffect(() => {
+    if (!isHovered) return
+    const el = cardRef.current
+    if (!el) return
+    const next = { w: el.offsetWidth, h: el.offsetHeight }
+    if (next.w !== cardSizeRef.current.w || next.h !== cardSizeRef.current.h) {
+      cardSizeRef.current = next
+      updateCardPosition()
+    }
+  }, [isHovered, updateCardPosition])
 
   const handleMouseEnter = React.useCallback(() => {
     hoverTimeoutRef.current = setTimeout(() => {
@@ -220,8 +286,14 @@ function DiscoverAnimeTile({ anime, currentLocale, badge, progressPercent, remai
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
     >
+      {/* Resume tiles go straight to the watch page (which auto-seeks to the
+          saved position); everything else opens the detail page. */}
       <a
-        href={getDomainUrl('main', `/${currentLocale}${getContentPath(anime)}/${anime.slug}`)}
+        href={
+          isContinueWatching
+            ? getDomainUrl('main', `/${currentLocale}/watch/${anime.slug}`)
+            : getDomainUrl('main', `/${currentLocale}${getContentPath(anime)}/${anime.slug}`)
+        }
         className="block overflow-hidden rounded-md"
       >
         <div className="relative aspect-video overflow-hidden bg-[#1a1a1a]">
@@ -230,22 +302,15 @@ function DiscoverAnimeTile({ anime, currentLocale, badge, progressPercent, remai
             alt={anime.title}
             className="size-full object-cover transition-transform duration-300 group-hover:scale-105 motion-reduce:transition-none"
           />
-          <div className="absolute inset-0 bg-linear-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-200" />
+          {/* Permanent bottom gradient so the resting title stays readable. */}
+          <div className="absolute inset-0 bg-linear-to-t from-black/80 via-transparent to-transparent" />
           {badge && (
             <span className="absolute bottom-2 left-2 rounded bg-[#e50914] px-2 py-0.5 text-[10px] font-bold text-white shadow-md">
               {badge}
             </span>
           )}
-          {isAuthenticated && !isContinueWatching && (
-            <button
-              type="button"
-              className="absolute right-2 top-2 flex size-8 items-center justify-center rounded-full bg-black/60 text-white opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 hover:bg-black/80"
-              aria-label={t('addToWatchlist', { title: anime.title })}
-            >
-              <Bookmark className="size-4" aria-hidden="true" />
-            </button>
-          )}
-          <div className="absolute bottom-0 left-0 right-0 p-3 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+          {/* Title always visible at the bottom-left of the frame (at rest). */}
+          <div className="absolute inset-x-0 bottom-0 p-3 text-left">
             <h3 className="line-clamp-2 text-sm font-bold leading-tight text-white drop-shadow-md">
               {anime.title}
             </h3>
@@ -268,6 +333,7 @@ function DiscoverAnimeTile({ anime, currentLocale, badge, progressPercent, remai
       {/* Netflix-style hover card - rendered via Portal, overlays the item */}
       {isHovered && cardPosition && typeof window !== 'undefined' && createPortal(
         <div
+          ref={cardRef}
           className="fixed z-9999 pointer-events-auto"
           style={{
             top: `${cardPosition.top}px`,
@@ -296,6 +362,16 @@ function DiscoverAnimeTile({ anime, currentLocale, badge, progressPercent, remai
 
             {/* Content area - separated from image */}
             <div className="px-4 pb-3 pt-2">
+              {/* Title block — the resting tile shows the title at the
+                  bottom, the hover card carries it too so the user always
+                  knows what they are looking at. */}
+              <h3 className="mb-1 line-clamp-2 text-base font-bold leading-tight text-white">
+                {anime.title}
+              </h3>
+              {anime.japaneseTitle && anime.japaneseTitle !== anime.title && (
+                <p className="mb-2 truncate text-[10px] text-white/40">{anime.japaneseTitle}</p>
+              )}
+
               {/* Play button + Action buttons row */}
               <div className="flex items-center gap-2 mb-2.5">
                 {/* Play button */}
@@ -354,8 +430,17 @@ function DiscoverAnimeTile({ anime, currentLocale, badge, progressPercent, remai
                 </a>
               </div>
 
-              {/* Metadata line - age, season info, episodes */}
+              {/* Metadata line - rating, year, age, season info, episodes */}
               <div className="flex items-center gap-1.5 mb-1.5">
+                {anime.rating > 0 && (
+                  <span className="flex items-center gap-0.5 text-[10px] font-semibold text-white/90">
+                    <Star className="size-3 fill-[#e50914] text-[#e50914]" aria-hidden="true" />
+                    {t('ratingValue', { value: anime.rating.toFixed(1) })}
+                  </span>
+                )}
+                {anime.year > 0 && (
+                  <span className="text-[10px] text-white/60">{anime.year}</span>
+                )}
                 {anime.ageRating && (
                   <span className="rounded border border-white/40 px-1 py-px text-[9px] font-bold text-white/80 leading-none">
                     {anime.ageRating}
@@ -378,10 +463,25 @@ function DiscoverAnimeTile({ anime, currentLocale, badge, progressPercent, remai
                 )}
               </div>
 
+              {/* Studio */}
+              {anime.studio && anime.studio.name && (
+                <p className="mb-1.5 truncate text-[10px] text-white/50">
+                  <span className="text-white/40">{t('studioLabel')} :</span>{' '}
+                  <span className="text-white/70">{anime.studio.name}</span>
+                </p>
+              )}
+
+              {/* Synopsis - clamp to 3 lines so the card stays compact */}
+              {anime.synopsis && (
+                <p className="mb-1.5 line-clamp-3 text-[10px] leading-relaxed text-white/50">
+                  {anime.synopsis}
+                </p>
+              )}
+
               {/* Genre tags */}
               {anime.genres && anime.genres.length > 0 && (
                 <p className="text-[10px] text-white/50 mb-1.5 truncate">
-                  {anime.genres.slice(0, 3).map(g => g.name).join(' • ')}
+                  {anime.genres.map(g => g.name).join(' • ')}
                 </p>
               )}
 
@@ -561,6 +661,37 @@ function mapWatchProgressToContinueWatching(
   }
 }
 
+/**
+ * Interleaves the auto rails from the discover algorithm with the curated
+ * collections (alternating sources) so BOTH stay visible on the page, capped
+ * at `max`. When one source runs out, the remaining slots go to the other.
+ * Returns RAW seeds (unfilled) so the caller can then fill every rail
+ * sequentially with a shared used-ids set — see fillSectionItems.
+ */
+function interleaveSections(
+  apiSections: DiscoverSectionSeed[],
+  manualSections: DiscoverSectionSeed[],
+  max: number,
+): DiscoverSectionSeed[] {
+  const out: DiscoverSectionSeed[] = []
+  const takeApi = apiSections.length > 0
+  const takeManual = manualSections.length > 0
+  let i = 0
+  let j = 0
+  // Round-robin: API first, then manual, alternating until one source is
+  // exhausted; the winner then fills the remaining slots. Stops at `max`.
+  while (out.length < max && (i < apiSections.length || j < manualSections.length)) {
+    if (takeApi && i < apiSections.length) {
+      out.push(apiSections[i++])
+    }
+    if (out.length >= max) break
+    if (takeManual && j < manualSections.length) {
+      out.push(manualSections[j++])
+    }
+  }
+  return out
+}
+
 export default function DiscoverPage({
   params,
 }: {
@@ -597,17 +728,28 @@ export default function DiscoverPage({
 
   const heroItems = apiHero.length > 0 ? apiHero.slice(0, 5) : getEditorialPicks().slice(0, 5)
 
-  /* ── Real auto-rails from the discover algorithm (published catalog). */
-  const realSections: DiscoverSectionConfig[] = React.useMemo(() => {
+  /* ── Real auto-rails from the discover algorithm (published catalog):
+     RAW seeds (unfilled), carrying the API's thematic selection + a derived
+     genre predicate so the top-up keeps each rail's theme. The page fills
+     them sequentially later with a shared used-ids set (variety). */
+  const realSeeds: DiscoverSectionSeed[] = React.useMemo(() => {
     return (catalogData?.sections ?? [])
-      .map((section) => ({
-        id: section.id,
-        title: section.title,
-        href: section.ctaHref || '/catalog',
-        subtitle: section.subtitle,
-        ctaLabel: section.ctaLabel,
-        animes: section.items.map(mapApiItemToAnime).map(enrichMissingMetadata),
-      }))
+      .map((section) => {
+        const genreId = section.id.replace(/^genre-/, '').toLowerCase().replace(/\s+/g, '-')
+        const compatible =
+          section.id.startsWith('genre-') && KNOWN_GENRE_IDS.includes(genreId)
+            ? (a: Anime) => a.genres.some((g) => g.id === genreId)
+            : undefined
+        return {
+          id: section.id,
+          title: section.title,
+          href: section.ctaHref || '/catalog',
+          subtitle: section.subtitle,
+          ctaLabel: section.ctaLabel,
+          animes: section.items.map(mapApiItemToAnime).map(enrichMissingMetadata),
+          compatible,
+        }
+      })
       .filter((section) => section.animes.length > 0)
   }, [catalogData])
 
@@ -617,16 +759,16 @@ export default function DiscoverPage({
      as a fallback when the API is unavailable. */
   const catalogPool: Anime[] = React.useMemo(() => {
     const seen = new Map<string, Anime>()
-    for (const anime of [...apiHero, ...realSections.flatMap((s) => s.animes)]) {
+    for (const anime of [...apiHero, ...realSeeds.flatMap((s) => s.animes)]) {
       if (!seen.has(anime.id)) seen.set(anime.id, anime)
     }
     const pool = [...seen.values()]
     return pool.length > 0 ? pool : getAllAnime()
-  }, [apiHero, realSections])
+  }, [apiHero, realSeeds])
 
   /** Whether real catalog data is available (API responded). Personal rails
    *  (continue watching / revoir / watchlist) only render with real data. */
-  const hasRealCatalog = apiHero.length > 0 || realSections.length > 0
+  const hasRealCatalog = apiHero.length > 0 || realSeeds.length > 0
 
   /* ── Continue watching : real watch progress from the authenticated
      /watch/continue endpoint. No mock fallback — the rail stays hidden
@@ -659,17 +801,21 @@ export default function DiscoverPage({
 
   /* ── Revoir : best rated titles worth revisiting, from the real catalog
      pool only. No mock library fallback — the rail stays hidden when the
-     API has not delivered data. Filled to the 10-item minimum. ─────── */
-  const rewatchAnimes = React.useMemo(() => {
-    if (!hasRealCatalog) return []
-    return fillSectionItems(
-      catalogPool,
-      catalogPool
+     API has not delivered data. Kept as a RAW seed: it joins the sequential
+     fill so it avoids titles the content rails already show. ──────── */
+  const rewatchSeed: DiscoverSectionSeed | null = React.useMemo(() => {
+    if (!hasRealCatalog) return null
+    return {
+      id: 'rewatch',
+      title: t('sectionRewatch'),
+      href: '/library',
+      subtitle: t('sectionRewatchSub'),
+      ctaLabel: t('ctaViewAll'),
+      animes: catalogPool
         .filter((a) => a.rating >= 8.5)
         .sort((a, b) => b.rating - a.rating),
-      'rewatch',
-    )
-  }, [hasRealCatalog, catalogPool])
+    }
+  }, [hasRealCatalog, catalogPool, t])
 
   /* ── Watchlist : real bookmarks from the pool only. No fallback to
      upcoming/mock titles — the rail stays hidden when the user has not
@@ -682,74 +828,76 @@ export default function DiscoverPage({
       .filter((a): a is Anime => Boolean(a))
   }, [hasRealCatalog, bookmarkedIds, catalogPool])
 
-  /* ── Every content rail is filled to at least MIN_SECTION_ITEMS distinct
-     items (thematic selection first, then topped up with the best remaining
-     compatible pool titles, rotated per section for variety). Server genre
-     rails (`genre-*`) keep their theme via a derived predicate. ────────── */
-  const KNOWN_GENRE_IDS = [
-    'fantasy',
-    'action',
-    'adventure',
-    'slice-of-life',
-    'sci-fi',
-    'supernatural',
-    'sports',
-    'romance',
-    'drama',
-    'mystery',
-  ]
-  const filledRealSections: DiscoverSectionConfig[] = React.useMemo(() => {
-    return realSections.map((section) => {
-      const genreId = section.id.replace(/^genre-/, '').toLowerCase().replace(/\s+/g, '-')
-      const compatible =
-        section.id.startsWith('genre-') && KNOWN_GENRE_IDS.includes(genreId)
-          ? (a: Anime) => a.genres.some((g) => g.id === genreId)
-          : undefined
-      return {
-        ...section,
-        animes: fillSectionItems(
-          catalogPool,
-          section.animes,
-          section.id,
-          undefined,
-          compatible,
-        ),
-      }
-    })
-  }, [realSections, catalogPool])
-
   /* ── Manual curated collections : every discover section from the
      translation keys gets its own data-driven logic (see discover-sections),
-     selecting from the real catalog pool, filled to a minimum of 10 items
-     (the filler keeps each rail's theme via `def.compatible`). */
-  const manualCollections: DiscoverSectionConfig[] = React.useMemo(() => {
+     selecting from the real catalog pool. RAW seeds (unfilled) — they join
+     the sequential fill below. */
+  const manualSeeds: DiscoverSectionSeed[] = React.useMemo(() => {
     return DISCOVER_SECTION_DEFS.map((def) => ({
       id: def.id,
       title: def.titleParams ? t(def.titleKey, def.titleParams) : t(def.titleKey),
       subtitle: def.subtitleKey ? t(def.subtitleKey) : undefined,
       href: def.href || '/catalog',
       ctaLabel: t('ctaViewAll'),
-      animes: fillSectionItems(
-        catalogPool,
-        def.select(catalogPool),
-        def.id,
-        undefined,
-        def.compatible,
-      ),
+      animes: def.select(catalogPool),
+      compatible: def.compatible,
     })).filter((section) => section.animes.length > 0)
   }, [t, catalogPool])
 
-  /* ── Layout : the page is limited to 10 content sections (real API data
-     first, then curated collections), grouped 2 / 3 / 2 / rest, with the
-     three default personal rails interleaved. */
-  const mappedSections = [...filledRealSections, ...manualCollections].slice(0, 10)
-  const groupA = mappedSections.slice(0, 2)
-  const groupB = mappedSections.slice(2, 5)
-  const groupC = mappedSections.slice(5, 7)
-  const rest = mappedSections.slice(7)
+  /* ── Layout + variety : the page is limited to 12 content sections. The
+     auto rails and the curated collections are INTERLEAVED (first API, then
+     manual, then API…) so both sources always get airtime. The interleaved
+     seeds are then filled SEQUENTIALLY with a shared used-ids set: each rail
+     prefers titles no other rail shows yet, so the same top-rated titles are
+     not repeated in every section (see fillSectionItems). The "revoir" rail
+     joins the same pass in its display position. Personal rails (continue
+     watching / watchlist) are inserted after, untouched. Grouped
+     2 / 3 / 2 / rest, with the personal rails interleaved. */
+  const builtSections: {
+    groupA: DiscoverSectionConfig[]
+    groupB: DiscoverSectionConfig[]
+    groupC: DiscoverSectionConfig[]
+    rewatch: DiscoverSectionConfig | null
+    rest: DiscoverSectionConfig[]
+  } = React.useMemo(() => {
+    const orderedSeeds = interleaveSections(realSeeds, manualSeeds, 12)
+    const usedIds = new Set<string>()
+    // Fills one seed and records every retained id so the next rails avoid
+    // repeating the same titles. A seed is dropped when the pool cannot
+    // satisfy it (should not happen with real data — the filler always
+    // reaches MIN_SECTION_ITEMS when enough compatible titles exist).
+    const fill = (seed: DiscoverSectionSeed): DiscoverSectionConfig | null => {
+      const animes = fillSectionItems(
+        catalogPool,
+        seed.animes,
+        seed.id,
+        undefined,
+        seed.compatible,
+        undefined,
+        usedIds,
+      )
+      for (const a of animes) usedIds.add(a.id)
+      if (animes.length === 0) return null
+      return {
+        id: seed.id,
+        title: seed.title,
+        href: seed.href,
+        subtitle: seed.subtitle,
+        ctaLabel: seed.ctaLabel,
+        animes,
+      }
+    }
+
+    const groupA = orderedSeeds.slice(0, 2).map(fill).filter((s): s is DiscoverSectionConfig => s !== null)
+    const groupB = orderedSeeds.slice(2, 5).map(fill).filter((s): s is DiscoverSectionConfig => s !== null)
+    const groupC = orderedSeeds.slice(5, 7).map(fill).filter((s): s is DiscoverSectionConfig => s !== null)
+    const rest = orderedSeeds.slice(7).map(fill).filter((s): s is DiscoverSectionConfig => s !== null)
+    const rewatch = rewatchSeed ? fill(rewatchSeed) : null
+    return { groupA, groupB, groupC, rewatch, rest }
+  }, [realSeeds, manualSeeds, rewatchSeed, catalogPool])
 
   const sections: DiscoverSectionConfig[] = [
-    ...groupA,
+    ...builtSections.groupA,
     ...(isAuthenticated && username && continueWatching.length > 0
       ? [{
           id: 'continue-watching',
@@ -760,17 +908,10 @@ export default function DiscoverPage({
           isResume: true,
         }]
       : []),
-    ...groupB,
-    ...groupC,
-    ...(isAuthenticated && rewatchAnimes.length > 0
-      ? [{
-          id: 'rewatch',
-          title: t('sectionRewatch'),
-          href: '/library',
-          subtitle: t('sectionRewatchSub'),
-          ctaLabel: t('ctaViewAll'),
-          animes: rewatchAnimes,
-        }]
+    ...builtSections.groupB,
+    ...builtSections.groupC,
+    ...(isAuthenticated && builtSections.rewatch
+      ? [builtSections.rewatch]
       : []),
     ...(isAuthenticated && watchlistAnimes.length > 0
       ? [{
@@ -782,7 +923,7 @@ export default function DiscoverPage({
           animes: watchlistAnimes,
         }]
       : []),
-    ...rest,
+    ...builtSections.rest,
   ]
 
   return (

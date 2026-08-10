@@ -13,7 +13,7 @@ interface MovieDetailPageProps {
 }
 
 export default function MovieDetailPage({ params }: MovieDetailPageProps) {
-  const { slug } = use(params)
+  const { slug, locale } = use(params)
 
   const [detail, setDetail] = useState<ApiContentDetailResponse | null>(null)
   const [loading, setLoading] = useState(true)
@@ -94,7 +94,7 @@ export default function MovieDetailPage({ params }: MovieDetailPageProps) {
     <DetailHero
       anime={mapApiItemToAnime(detail.item)}
       playLabel="LECTURE"
-      playHref={`/watch/${detail.item.slug}`}
+      playHref={`/${locale}/watch/${detail.item.slug}`}
     />
   )
 }

@@ -175,6 +175,14 @@ func (s *DatabaseService) migrateDuplicateGuardrails() error {
 		 ON anime ((COALESCE(metadata->>'mal_id', metadata->'external_ids'->>'mal')))
 		 WHERE deleted_at IS NULL
 		   AND COALESCE(metadata->>'mal_id', metadata->'external_ids'->>'mal') IS NOT NULL`,
+		// One row per provider item: the Plex/Jellyfin syncs already upsert by
+		// (source, metadata->>'sourceId'), this index makes the guard atomic so
+		// two racing syncs can never insert the same remote item twice.
+		`CREATE UNIQUE INDEX IF NOT EXISTS uq_anime_provider_source
+		 ON anime (source, (metadata->>'sourceId'))
+		 WHERE deleted_at IS NULL
+		   AND metadata->>'sourceId' IS NOT NULL
+		   AND metadata->>'sourceId' != ''`,
 	}
 	for _, stmt := range statements {
 		if err := s.db.Exec(stmt).Error; err != nil {

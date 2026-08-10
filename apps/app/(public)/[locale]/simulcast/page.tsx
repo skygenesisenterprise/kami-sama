@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { use, useMemo, useState } from 'react'
 import Image from 'next/image'
 import Link from 'next/link'
 import { ChevronDown } from 'lucide-react'
@@ -29,7 +29,12 @@ function getSimulcastData(): SimulcastAnime[] {
   }))
 }
 
-export default function SimulcastPage() {
+export default function SimulcastPage({
+  params,
+}: {
+  params: Promise<{ locale: string }>
+}) {
+  const { locale } = use(params)
   const t = useTranslations('Public.simulcast')
   const [selectedSeason, setSelectedSeason] = useState('ete-2026')
   const [isDropdownOpen, setIsDropdownOpen] = useState(false)
@@ -112,7 +117,7 @@ export default function SimulcastPage() {
           {simulcasts.map((item) => (
             <Link
               key={item.anime.id}
-              href={`/watch/${item.anime.slug}`}
+              href={`/${locale}/watch/${item.anime.slug}`}
               className="group"
             >
               <div className="relative aspect-3/4 overflow-hidden rounded-md bg-paper-dim">

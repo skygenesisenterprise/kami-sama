@@ -13,6 +13,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/skygenesisenterprise/kami-sama/server/src/models"
+	"github.com/skygenesisenterprise/kami-sama/server/src/utils"
 )
 
 // PlexMediaSource is a thin provider wrapper that adapts PlexMediaServer
@@ -201,6 +202,7 @@ func (s *PlexMediaSource) SyncLibrary(ctx context.Context, libraryID string) (ma
 
 	pageSize := 100
 	created, updated := 0, 0
+	episodesImported := 0
 	offset := 0
 	for {
 		items, total, err := s.client.ListLibraryItems(ctx, libraryID, "", pageSize, offset)
@@ -249,6 +251,15 @@ func (s *PlexMediaSource) SyncLibrary(ctx context.Context, libraryID string) (ma
 					updated++
 				}
 			}
+			// Series carry their episodes only on the provider — import the
+			// season/episode grid so series have a playable episode list in
+			// the catalog (watch page, season rails). Best-effort: a failure
+			// on one show must not abort the whole library sync.
+			if getStringFromMap(mapped, "type") == "Series" {
+				if n, err := importPlexShowEpisodes(ctx, s.db, s.client, sourceID, sourceID); err == nil {
+					episodesImported += n
+				}
+			}
 		}
 		offset += pageSize
 		if total > 0 && offset >= total {
@@ -271,13 +282,14 @@ func (s *PlexMediaSource) SyncLibrary(ctx context.Context, libraryID string) (ma
 	_ = s.client.RefreshLibrary(ctx, libraryID)
 
 	return map[string]interface{}{
-		"libraryId":    libraryID,
-		"source":       "plex",
-		"itemsCreated": created,
-		"itemsUpdated": updated,
-		"itemsRemoved": 0,
-		"startedAt":    now,
-		"completedAt":  completedAt,
+		"libraryId":         libraryID,
+		"source":            "plex",
+		"itemsCreated":      created,
+		"itemsUpdated":      updated,
+		"itemsRemoved":      0,
+		"episodesImported":  episodesImported,
+		"startedAt":         now,
+		"completedAt":       completedAt,
 	}, nil
 }
 
@@ -404,6 +416,18 @@ func ResolvePlexEpisodeKey(ctx context.Context, client *PlexClient, showKey stri
 	return "", fmt.Errorf("episode %d of season %d not found on provider", episodeNumber, seasonNumber)
 }
 
+// ImportPlexShowEpisodes refreshes the season/episode grid of an existing
+// catalog row from its Plex show key (metadata.sourceId). Idempotent — rows
+// are upserted by (anime_id, number) / episode id — and returns the number of
+// episodes written. Exported for the admin per-item sync so series imported
+// before the episode importer existed get their episodes backfilled on demand.
+func ImportPlexShowEpisodes(ctx context.Context, db *gorm.DB, client *PlexClient, animeID, showKey string) (int, error) {
+	if db == nil || client == nil || !client.Enabled() || animeID == "" || showKey == "" {
+		return 0, nil
+	}
+	return importPlexShowEpisodes(ctx, db, client, animeID, showKey)
+}
+
 // ImportPlexItem fetches a single Plex item by ratingKey and upserts it into
 // the local anime index (deduplicated by source + metadata->>'sourceId').
 // It returns the canonical MediaSourceItem shape plus import metadata so the
@@ -450,6 +474,12 @@ func ImportPlexItem(ctx context.Context, db *gorm.DB, client *PlexClient, rating
 		if err := db.Create(&row).Error; err != nil {
 			return nil, err
 		}
+		// Series carry their episodes only on the provider — import the
+		// season/episode grid so the detail/watch pages have a playable
+		// episode list instead of an empty seasons array.
+		if getStringFromMap(mapped, "type") == "Series" {
+			_, _ = importPlexShowEpisodes(ctx, db, client, row.ID, sourceID)
+		}
 		return map[string]interface{}{
 			"item":     mapped,
 			"animeId":  row.ID,
@@ -478,6 +508,12 @@ func ImportPlexItem(ctx context.Context, db *gorm.DB, client *PlexClient, rating
 	if err := db.Save(&existing).Error; err != nil {
 		return nil, err
 	}
+	// Series carry their episodes only on the provider — import the
+	// season/episode grid so the detail/watch pages have a playable
+	// episode list instead of an empty seasons array.
+	if getStringFromMap(mapped, "type") == "Series" {
+		_, _ = importPlexShowEpisodes(ctx, db, client, existing.ID, sourceID)
+	}
 	return map[string]interface{}{
 		"item":     mapped,
 		"animeId":  existing.ID,
@@ -486,6 +522,125 @@ func ImportPlexItem(ctx context.Context, db *gorm.DB, client *PlexClient, rating
 		"sourceId": sourceID,
 		"title":    existing.Title,
 	}, nil
+}
+
+// importPlexShowEpisodes fetches the real season + episode grid of a Plex
+// show (via /allLeaves) and upserts it under the local anime row. Without
+// this, series imported from Plex have an empty season list and the watch
+// page shows "épisode introuvable" even though the provider serves the
+// episodes. Idempotent: existing season/episode rows are matched by
+// (anime_id, number) and updated in place. Returns the number of episodes
+// written.
+func importPlexShowEpisodes(ctx context.Context, db *gorm.DB, client *PlexClient, animeID, showKey string) (int, error) {
+	if db == nil || client == nil || !client.Enabled() || animeID == "" || showKey == "" {
+		return 0, nil
+	}
+	rawEps, err := client.GetShowEpisodes(ctx, showKey)
+	if err != nil {
+		return 0, err
+	}
+	if len(rawEps) == 0 {
+		return 0, nil
+	}
+
+	now := time.Now().UTC()
+	// Group the flat leaf list by season number (parentIndex).
+	bySeason := make(map[int][]map[string]interface{})
+	for _, raw := range rawEps {
+		seasonNum := toInt(raw["parentIndex"])
+		if seasonNum <= 0 {
+			seasonNum = 1
+		}
+		bySeason[seasonNum] = append(bySeason[seasonNum], raw)
+	}
+
+	imported := 0
+	for seasonNum, eps := range bySeason {
+		// Upsert the season row.
+		season := models.AnimeSeason{}
+		err := db.WithContext(ctx).Where("anime_id = ? AND number = ?", animeID, seasonNum).First(&season).Error
+		if err == gorm.ErrRecordNotFound {
+			season = models.AnimeSeason{
+				Common:       models.Common{ID: utils.NewID(), CreatedAt: now, UpdatedAt: now},
+				AnimeID:      animeID,
+				Number:       seasonNum,
+				Title:        fmt.Sprintf("Season %d", seasonNum),
+				EpisodeCount: len(eps),
+			}
+			if err := db.WithContext(ctx).Create(&season).Error; err != nil {
+				continue
+			}
+		} else if err != nil {
+			continue
+		} else {
+			season.EpisodeCount = len(eps)
+			season.UpdatedAt = now
+			if err := db.WithContext(ctx).Save(&season).Error; err != nil {
+				continue
+			}
+		}
+
+		for _, raw := range eps {
+			epNum := toInt(raw["index"])
+			if epNum <= 0 {
+				continue
+			}
+			mapped := mapPlexItem(raw)
+			epID := getStringFromMap(mapped, "sourceId")
+			if epID == "" {
+				epID = fmt.Sprintf("%s-s%de%d", animeID, seasonNum, epNum)
+			}
+			title := getStringFromMap(mapped, "name")
+			if title == "" {
+				title = fmt.Sprintf("Episode %d", epNum)
+			}
+			thumb := getStringFromMap(mapped, "imageUrl")
+			if thumb == "" {
+				thumb = getStringFromMap(mapped, "artUrl")
+			}
+			ep := models.Episode{
+				Common:       models.Common{ID: epID, CreatedAt: now, UpdatedAt: now},
+				AnimeID:      animeID,
+				SeasonID:     &season.ID,
+				Number:       epNum,
+				Title:        title,
+				Synopsis:     getStringFromMap(mapped, "overview"),
+				ThumbnailUrl: thumb,
+				Duration:     getFloat64FromMap(mapped, "duration"),
+				IsSubbed:     true,
+			}
+			// Upsert by stable provider key.
+			var existing models.Episode
+			terr := db.WithContext(ctx).Where("id = ?", epID).First(&existing).Error
+			if terr == gorm.ErrRecordNotFound {
+				if err := db.WithContext(ctx).Create(&ep).Error; err == nil {
+					imported++
+				}
+			} else if terr == nil {
+				ep.UpdatedAt = now
+				if err := db.WithContext(ctx).Model(&existing).Updates(map[string]interface{}{
+					"anime_id":      ep.AnimeID,
+					"season_id":     ep.SeasonID,
+					"number":        ep.Number,
+					"title":         ep.Title,
+					"synopsis":      ep.Synopsis,
+					"thumbnail_url": ep.ThumbnailUrl,
+					"duration":      ep.Duration,
+					"is_subbed":     true,
+					"updated_at":    now,
+				}).Error; err == nil {
+					imported++
+				}
+			}
+		}
+	}
+
+	// Keep the show's total episode count in sync with the imported grid.
+	if imported > 0 {
+		_ = db.WithContext(ctx).Model(&models.Anime{}).Where("id = ?", animeID).
+			Update("total_episodes", imported).Error
+	}
+	return imported, nil
 }
 
 // ---- Helpers --------------------------------------------------------------

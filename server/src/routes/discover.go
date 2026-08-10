@@ -104,6 +104,11 @@ type DiscoverHandler struct {
 	// /stream metadata endpoint and the same-origin proxy don't each pay the
 	// cost of a media-server title search on every episode switch.
 	keys *streamKeyCache
+	// bridgeMu guards bridgeInflight: the set of in-flight Plex→Jellyfin
+	// bridges keyed by stream key so concurrent callers share ONE bridge
+	// instead of racing over the same .strm file (see bridgeStreamKey).
+	bridgeMu       sync.Mutex
+	bridgeInflight map[string]*bridgeCall
 }
 
 func NewDiscoverHandler(deps Dependencies) *DiscoverHandler {
@@ -244,6 +249,18 @@ func (sc *streamKeyCache) markBridgeFailed(cacheKey string) {
 	}
 }
 
+// del removes a stream-key entry (key, provider, mediaSourceId, negotiated
+// master and session query) so the next request re-resolves from scratch.
+// Used to heal poisoned entries — a MediaSourceId or negotiated master that
+// went stale because a concurrent bridge re-created the .strm item, or a
+// transcode session that died — instead of replaying the dead resolution for
+// the whole cache TTL (the master request would keep answering HTTP 400).
+func (sc *streamKeyCache) del(cacheKey string) {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	delete(sc.entries, cacheKey)
+}
+
 // GetDiscover returns the full discover page with all sections.
 func (h *DiscoverHandler) GetDiscover(c *gin.Context) {
 	ctx := c.Request.Context()
@@ -355,33 +372,85 @@ func (h *DiscoverHandler) GetDiscoverSections(c *gin.Context) {
 	utils.Success(c, http.StatusOK, gin.H{"sections": sections})
 }
 
-// GetPublishedCatalog is the discover algorithm: it builds the public page
-// automatically from whatever is published in the admin catalog (status =
-// 'published'), so no manual collection curation is required.
+// ──────────────────────────────────────────────────────────────
+// Discover catalog algorithm
+//
+// GetPublishedCatalog builds the public page automatically from whatever is
+// published in the admin catalog (status = 'published'), so no manual
+// collection curation is required. The algorithm is deliberately generous:
+// it fetches the WHOLE published pool (paginated, not a fixed first page),
+// never truncates a rail, and returns one genre rail per genre with enough
+// content — so as much of the available catalog as possible is proposed.
 //
 // It returns:
 //   - hero:    up to 5 slides selected automatically (rating + featured +
 //     having a backdrop, most recent as tie-breaker)
 //   - sections: auto-generated rails — À la une (featured), popular, latest,
 //     genre rails — all excluding the hero titles to avoid redundancy.
+//
+// ──────────────────────────────────────────────────────────────
+
+// discoverPoolPageSize is the page size used to load the full published
+// catalog that backs the discover algorithm.
+const discoverPoolPageSize = 100
+
+// discoverPoolMaxItems is a safety ceiling for the pool. The algorithm loads
+// the whole catalog (5× the old 100-item first page) so every rail — auto and
+// frontend manual collections — can draw from the full published catalog.
+// The repository List() preloads all relationships per item (N+1), and every
+// pool item becomes a DOM tile + hover card, so an unbounded pool would
+// degrade both the response and the page.
+const discoverPoolMaxItems = 500
+
+// maxGenreSections caps how many auto genre rails the page returns. Genres
+// are a themed re-grouping of the pool (which already carries every item),
+// so only the biggest genres get their own rail — frontend personal + manual
+// collections still get room.
+const maxGenreSections = 8
+
+// loadPublishedPool fetches every published catalog item (top-rated), walking
+// pages until the catalog is exhausted. Returns the full pool so every rail
+// (auto + frontend manual collections) can draw from the complete catalog.
+func (h *DiscoverHandler) loadPublishedPool(ctx context.Context) ([]models.Anime, error) {
+	pool := make([]models.Anime, 0, discoverPoolPageSize)
+	for page := 1; ; page++ {
+		items, _, err := h.deps.AnimeService.List(ctx, interfaces.ListAnimeOpts{
+			Page:   page,
+			Limit:  discoverPoolPageSize,
+			Status: "published",
+			Sort:   "rating",
+		})
+		if err != nil {
+			return nil, err
+		}
+		pool = append(pool, items...)
+		if len(items) < discoverPoolPageSize || len(pool) >= discoverPoolMaxItems {
+			break
+		}
+	}
+	return pool, nil
+}
+
 func (h *DiscoverHandler) GetPublishedCatalog(c *gin.Context) {
 	ctx := c.Request.Context()
 
 	// Raw material: the whole published catalog (top-rated pool) + latest.
-	pool, _, err := h.deps.AnimeService.List(ctx, interfaces.ListAnimeOpts{Page: 1, Limit: 100, Status: "published", Sort: "rating"})
+	// The pool is no longer capped at a fixed first page — the algorithm
+	// proposes as much of the catalog as available.
+	pool, err := h.loadPublishedPool(ctx)
 	if err != nil {
 		h.deps.Logger.Error("failed to load published catalog (pool)", "error", err)
 		utils.Error(c, err)
 		return
 	}
-	latest, _, err := h.deps.AnimeService.List(ctx, interfaces.ListAnimeOpts{Page: 1, Limit: 20, Status: "published", Sort: "created_at"})
+	latest, _, err := h.deps.AnimeService.List(ctx, interfaces.ListAnimeOpts{Page: 1, Limit: discoverPoolPageSize, Status: "published", Sort: "created_at"})
 	if err != nil {
 		h.deps.Logger.Error("failed to load published catalog (latest)", "error", err)
 		utils.Error(c, err)
 		return
 	}
 	featuredFlag := true
-	featured, _, _ := h.deps.AnimeService.List(ctx, interfaces.ListAnimeOpts{Page: 1, Limit: 20, Status: "published", Featured: &featuredFlag})
+	featured, _, _ := h.deps.AnimeService.List(ctx, interfaces.ListAnimeOpts{Page: 1, Limit: discoverPoolPageSize, Status: "published", Featured: &featuredFlag})
 
 	// Hero: up to 5 automatically selected slides, no manual curation.
 	hero := selectHeroItems(pool, 5)
@@ -404,10 +473,9 @@ func (h *DiscoverHandler) GetPublishedCatalog(c *gin.Context) {
 		})
 	}
 
+	// Full pool — no truncation: the rail shows every published title so as
+	// much content as possible is proposed.
 	topItems := contentItemsExcluding(pool, exclude)
-	if len(topItems) > 24 {
-		topItems = topItems[:24]
-	}
 	sections = append(sections, ApiSection{
 		ID:       "catalog-top",
 		Title:    "Les plus populaires",
@@ -419,9 +487,6 @@ func (h *DiscoverHandler) GetPublishedCatalog(c *gin.Context) {
 	})
 
 	latestItems := contentItemsExcluding(latest, exclude)
-	if len(latestItems) > 24 {
-		latestItems = latestItems[:24]
-	}
 	sections = append(sections, ApiSection{
 		ID:       "catalog-latest",
 		Title:    "Nouveautés du catalogue",
@@ -541,25 +606,31 @@ func (h *DiscoverHandler) publishedItemBySlug(ctx context.Context, slug string) 
 	return item, nil
 }
 
-// plexClient resolves the configured Plex client, mirroring the admin
-// integration's resolution order: persisted source config, active media
-// source, then environment config.
+// plexClient resolves the configured Plex client (see plexClientFromDeps).
 func (h *DiscoverHandler) plexClient(ctx context.Context) (*services.PlexClient, error) {
-	if h.deps.LibraryService != nil {
-		if cfg, err := h.deps.LibraryService.GetBySourceType(ctx, "plex"); err == nil && cfg != nil && cfg.Enabled {
+	return plexClientFromDeps(ctx, h.deps)
+}
+
+// plexClientFromDeps resolves the configured Plex client, mirroring the admin
+// integration's resolution order: persisted source config, active media
+// source, then environment config. Shared by the stream resolver and the
+// admin per-item sync so both use the exact same client.
+func plexClientFromDeps(ctx context.Context, deps Dependencies) (*services.PlexClient, error) {
+	if deps.LibraryService != nil {
+		if cfg, err := deps.LibraryService.GetBySourceType(ctx, "plex"); err == nil && cfg != nil && cfg.Enabled {
 			if client, cerr := services.PlexClientFromSourceConfig(cfg); cerr == nil && client.Enabled() {
 				return client, nil
 			}
 		}
 	}
-	if h.deps.MediaSourceService != nil {
-		if plex := h.deps.MediaSourceService.Plex(); plex != nil {
+	if deps.MediaSourceService != nil {
+		if plex := deps.MediaSourceService.Plex(); plex != nil {
 			if client := plex.GetClient(); client != nil && client.Enabled() {
 				return client, nil
 			}
 		}
 	}
-	cfg := h.deps.Config.MediaSource.Plex
+	cfg := deps.Config.MediaSource.Plex
 	if cfg.URL != "" && cfg.Token != "" {
 		return services.NewPlexClient(services.PlexConfig{
 			URL:              cfg.URL,
@@ -831,6 +902,58 @@ func isTransientBridgeError(err error) bool {
 	return false
 }
 
+// bridgeCall captures the result of a single in-flight Plex→Jellyfin bridge
+// so concurrent callers can share it.
+type bridgeCall struct {
+	done          chan struct{}
+	jfItemID      string
+	mediaSourceID string
+	err           error
+}
+
+// bridgeStreamKey serializes the Plex→Jellyfin bridge per stream key so
+// concurrent callers (the /stream pre-warm racing a fast client's first
+// proxy fetch, or two browser tabs on the same title) share ONE bridge
+// result. Two parallel bridges on the same .strm file can both enter the
+// ensureStrmItemRemote recovery (delete + rewrite + full library scan),
+// re-creating the item mid-resolution and leaving one caller with a dead
+// item ID — the master playlist request then answers HTTP 400 "The specified
+// media source could not be found" for the whole cache TTL.
+//
+// The bridge runs on a context detached from the first caller (bounded to
+// 90s) so the first caller navigating away mid-bridge cannot cancel the
+// shared work the waiters depend on.
+func (h *DiscoverHandler) bridgeStreamKey(ctx context.Context, cacheKey string, plexClient *services.PlexClient, jf *services.JellyfinClient, item *models.Anime, plexKey string) (string, string, error) {
+	h.bridgeMu.Lock()
+	if call, ok := h.bridgeInflight[cacheKey]; ok {
+		h.bridgeMu.Unlock()
+		select {
+		case <-call.done:
+			return call.jfItemID, call.mediaSourceID, call.err
+		case <-ctx.Done():
+			return "", "", ctx.Err()
+		}
+	}
+	call := &bridgeCall{done: make(chan struct{})}
+	if h.bridgeInflight == nil {
+		h.bridgeInflight = make(map[string]*bridgeCall)
+	}
+	h.bridgeInflight[cacheKey] = call
+	h.bridgeMu.Unlock()
+
+	bctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 90*time.Second)
+	call.jfItemID, call.mediaSourceID, call.err = bridgePlexToJellyfin(bctx, plexClient, jf, item, plexKey)
+	cancel()
+	close(call.done)
+
+	h.bridgeMu.Lock()
+	if h.bridgeInflight[cacheKey] == call {
+		delete(h.bridgeInflight, cacheKey)
+	}
+	h.bridgeMu.Unlock()
+	return call.jfItemID, call.mediaSourceID, call.err
+}
+
 // bridgePlexToJellyfin takes a Plex stream key and sets up Jellyfin as the
 // transcoding engine: it fetches the direct file URL from Plex and hands it
 // to Jellyfin's library scanner via a .strm file (see
@@ -977,7 +1100,7 @@ func (h *DiscoverHandler) GetStreamURL(c *gin.Context) {
 				return
 			}
 		} else {
-			jfItemID, msID, berr := bridgePlexToJellyfin(ctx, resolver.plex, resolver.jf, item, key)
+			jfItemID, msID, berr := h.bridgeStreamKey(ctx, cacheKey, resolver.plex, resolver.jf, item, key)
 			if berr != nil {
 				h.deps.Logger.Warn("plex→jellyfin bridge failed, falling back to Plex HLS", "error", berr)
 				// A canceled request (client navigated away / timed out) and
@@ -1170,7 +1293,7 @@ func (h *DiscoverHandler) ProxyStream(c *gin.Context) {
 				}
 			}
 		} else {
-			jfItemID, msID, berr := bridgePlexToJellyfin(ctx, resolver.plex, resolver.jf, item, key)
+			jfItemID, msID, berr := h.bridgeStreamKey(ctx, cacheKey, resolver.plex, resolver.jf, item, key)
 			if berr != nil {
 				h.deps.Logger.Warn("plex→jellyfin bridge failed, falling back to Plex proxy", "error", berr)
 				// See GetStreamURL: transient transport failures (DNS hiccups
@@ -1338,6 +1461,13 @@ func (h *DiscoverHandler) ProxyStream(c *gin.Context) {
 	)
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		// The upstream refused the session we pinned — most often a stale
+		// MediaSourceId / negotiated master (a concurrent bridge re-created
+		// the .strm item, or the transcode session died). Drop the cached
+		// resolution so the player's next manifest retry re-resolves (and
+		// re-bridges if needed) instead of replaying a dead session for the
+		// whole cache TTL — that is what makes the manifest 400 forever.
+		h.keys.del(item.Slug + "\x00" + episodeID)
 		// Surface the upstream's error verbatim so the user understands it's
 		// a source issue (server unreachable, transcode refused) and not
 		// something the proxy introduced.
@@ -2073,7 +2203,13 @@ func animeModelToContentItem(a *models.Anime) ApiContentItem {
 			Synopsis:      a.Synopsis,
 		},
 		Availability: ApiContentAvailability{
-			Watchable: a.Status == "published",
+			// A published item is watchable only when a media provider actually
+			// backs it (metadata.sourceId written by the library sync). Rows
+			// imported without media — e.g. AniList/MAL metadata-only entries —
+			// must not be presented as playable: the stream resolver would only
+			// fail ("No Series matching … found on the media server") after a
+			// slow provider search.
+			Watchable: a.Status == "published" && providerSourceIDFromMetadata(a) != "",
 			Episodes:  episodes,
 			Seasons:   seasonCount,
 		},
@@ -2216,9 +2352,11 @@ func buildGenreSections(trending, popular []services.AnilistMedia) []ApiSection 
 	return sections
 }
 
-// buildAnimeGenreSections groups published catalog items by genre into a few
-// rails (max 5, genres with at least 3 items), mirroring the AniList rails.
-// Items whose id is in exclude (e.g. hero slides) are skipped.
+// buildAnimeGenreSections groups published catalog items by genre into rails
+// (genres with at least 3 items, biggest first, capped at maxGenreSections),
+// mirroring the AniList rails. Items whose id is in exclude (e.g. hero slides)
+// are skipped. Sorting by size guarantees the fullest genre rails — the ones
+// that propose the most content — surface first.
 func buildAnimeGenreSections(items []models.Anime, exclude map[string]bool) []ApiSection {
 	genreMap := make(map[string][]ApiContentItem)
 	seen := make(map[string]bool)
@@ -2243,8 +2381,16 @@ func buildAnimeGenreSections(items []models.Anime, exclude map[string]bool) []Ap
 			entries = append(entries, genreEntry{name: name, items: items})
 		}
 	}
-	if len(entries) > 5 {
-		entries = entries[:5]
+	// Biggest rails first so the algorithm surfaces the genres with the most
+	// content (deterministic — map iteration order is not stable in Go).
+	sort.Slice(entries, func(i, j int) bool {
+		if len(entries[i].items) != len(entries[j].items) {
+			return len(entries[i].items) > len(entries[j].items)
+		}
+		return entries[i].name < entries[j].name
+	})
+	if len(entries) > maxGenreSections {
+		entries = entries[:maxGenreSections]
 	}
 
 	sections := make([]ApiSection, 0, len(entries))

@@ -99,7 +99,10 @@ import { ApiError } from '@/lib/api/errors'
 import { joinApiPath } from '@/lib/api/config'
 import {
   animeApi,
+  animeContentKind,
+  apiAnimeToMovieItem,
   apiAnimeToSeriesItem,
+  apiAnimeToTvShowItem,
   seriesItemToAnimeCreatePayload,
   type ApiAnime,
 } from '@/lib/api/anime'
@@ -484,7 +487,23 @@ export default function ContentCatalogPage() {
         total = res.total
         page += 1
       } while (all.length < total && page <= 1000)
-      setSeriesItems(all.map(apiAnimeToSeriesItem))
+      allAnimeRef.current = all
+      // Classify persisted rows by their real content kind: Plex rows carry
+      // metadata.type ("Movie" / "Series"), AniList rows carry
+      // metadata.format ("MOVIE", "TV", …). Without this every row lands in
+      // the "Series" tab and movies are never treated as movies.
+      const series: ApiAnime[] = []
+      const movies: ApiAnime[] = []
+      const tvShows: ApiAnime[] = []
+      for (const item of all) {
+        const kind = animeContentKind(item)
+        if (kind === 'movie') movies.push(item)
+        else if (kind === 'tv-show') tvShows.push(item)
+        else series.push(item)
+      }
+      setSeriesItems(series.map(apiAnimeToSeriesItem))
+      setMovies(movies.map(apiAnimeToMovieItem))
+      setTvShows(tvShows.map(apiAnimeToTvShowItem))
       setLoadError(null)
     } catch (err) {
       setLoadError(formatApiError(err))
@@ -496,23 +515,33 @@ export default function ContentCatalogPage() {
   /** IDs + external IDs already persisted in the backend catalog (anime
    *  table), used to avoid showing a source title both as an ephemeral row
    *  (Plex / AniList) and as a persisted series row. */
+  /** Raw persisted catalog rows (every content kind) backing the dedup refs
+   *  below — computed from the raw API payload so movies / tv-shows are
+   *  matched exactly like series regardless of their mapped item type. */
+  const allAnimeRef = React.useRef<ApiAnime[]>([])
   const persistedIdsRef = React.useRef<Set<string>>(new Set())
-  persistedIdsRef.current = new Set(seriesItems.map((s) => s.id))
   const persistedExternalRef = React.useRef<{
     plex: Set<string>
     anilist: Set<string>
   }>({ plex: new Set(), anilist: new Set() })
-  persistedExternalRef.current = {
-    plex: new Set(
-      seriesItems
-        .map((s) => s.externalIds.plex)
-        .filter((v): v is string => Boolean(v)),
-    ),
-    anilist: new Set(
-      seriesItems
-        .map((s) => s.externalIds.anilist)
-        .filter((v): v is string => Boolean(v)),
-    ),
+  // Source-row dedup (fetchPlexCatalog / fetchAnilistCatalog) must recognize
+  // EVERY persisted row — series, movies and tv-shows alike — otherwise a
+  // persisted movie would reappear as an ephemeral Plex/AniList row.
+  persistedIdsRef.current = new Set(allAnimeRef.current.map((a) => a.id))
+  {
+    const plex = new Set<string>()
+    const anilist = new Set<string>()
+    for (const a of allAnimeRef.current) {
+      const meta = a.metadata ?? {}
+      const ext = (meta.external_ids ?? {}) as Record<string, unknown>
+      if (typeof meta.sourceId === 'string' && meta.sourceId) plex.add(meta.sourceId)
+      else if (typeof ext.plex === 'string' && ext.plex) plex.add(ext.plex)
+      const al = meta.anilist_id
+      if (typeof al === 'string' && al) anilist.add(al)
+      else if (typeof al === 'number' && al > 0) anilist.add(String(al))
+      else if (typeof ext.anilist === 'string' && ext.anilist) anilist.add(ext.anilist)
+    }
+    persistedExternalRef.current = { plex, anilist }
   }
 
   /** Ephemeral source rows the user deleted: keep them dismissed for the
@@ -560,13 +589,23 @@ export default function ContentCatalogPage() {
         .map((item) => plexItemToContentRow(item, libraries[i]))
         .filter((row): row is ContentRow => row !== null),
     )
-    if (plexRows.length === 0) return
+    // Deduplicate within this run too: the same rating key can surface from
+    // several libraries (or a refresh collides with an in-flight one) and
+    // `existing` below only knows about rows from previous runs.
+    const seenKeys = new Set<string>()
+    const uniquePlexRows = plexRows.filter((r) => {
+      if (seenKeys.has(r.key)) return false
+      seenKeys.add(r.key)
+      return true
+    })
+    if (uniquePlexRows.length === 0) return
     setLocalRows((prev) => {
       const existing = new Set(prev.map((r) => r.key))
-      // A Plex row whose rating key matches a persisted series is already in
-      // the catalog — skip it to avoid duplicates.
+      // A Plex row whose rating key matches a persisted catalog row (series,
+      // movie or tv-show) is already in the catalog — skip it to avoid
+      // duplicates.
       return [
-        ...plexRows.filter(
+        ...uniquePlexRows.filter(
           (r) =>
             !existing.has(r.key) &&
             !dismissedKeysRef.current.has(r.key) &&
@@ -805,8 +844,17 @@ export default function ContentCatalogPage() {
       applyStatusLocal(keys, action === 'Publish' ? 'Published' : 'Archived')
     }
 
-    const seriesKeys = [...keys].filter((k) => k.startsWith('series-'))
-    const seriesIds = seriesKeys.map((k) => k.replace(/^series-/, ''))
+    // Persisted catalog rows (series, movie, tv-show) all live in the anime
+    // table — route every kind through the backend.
+    const catalogKeys = [...keys].filter(
+      (k) =>
+        k.startsWith('series-') ||
+        k.startsWith('movie-') ||
+        k.startsWith('tv-show-'),
+    )
+    const catalogIds = catalogKeys.map((k) =>
+      k.replace(/^(series|movie|tv-show)-/, ''),
+    )
     // Ephemeral source rows (Plex / AniList): persisted on demand so the
     // requested action is reflected server-side.
     const sourceKeys = [...keys].filter(
@@ -815,9 +863,9 @@ export default function ContentCatalogPage() {
     const nextStatus = action === 'Publish' ? 'published' : 'archived'
     let failed = 0
 
-    if (seriesIds.length > 0 || sourceKeys.length > 0) {
+    if (catalogIds.length > 0 || sourceKeys.length > 0) {
       const jobs: Promise<unknown>[] = [
-        ...seriesIds.map((id) =>
+        ...catalogIds.map((id) =>
           action === 'Delete' ? animeApi.remove(id) : animeApi.update(id, { status: nextStatus }),
         ),
         ...sourceKeys.map(async (key) => {
@@ -853,12 +901,19 @@ export default function ContentCatalogPage() {
   }
 
   const removeRow = async (row: ContentRow) => {
-    if (row.key.startsWith('series-')) {
+    const catalogMatch = row.key.match(/^(series|movie|tv-show)-(.+)$/)
+    if (catalogMatch) {
       try {
-        await animeApi.remove(row.key.replace(/^series-/, ''))
-        setSeriesItems((prev) =>
-          prev.filter((s) => `series-${s.id}` !== row.key)
-        )
+        await animeApi.remove(catalogMatch[2])
+        if (row.kind === 'movie') {
+          setMovies((prev) => prev.filter((m) => `movie-${m.id}` !== row.key))
+        } else if (row.kind === 'tv-show') {
+          setTvShows((prev) => prev.filter((t) => `tv-show-${t.id}` !== row.key))
+        } else {
+          setSeriesItems((prev) =>
+            prev.filter((s) => `series-${s.id}` !== row.key)
+          )
+        }
       } catch (err) {
         toast.error(formatApiError(err))
         return
@@ -892,16 +947,33 @@ export default function ContentCatalogPage() {
   }
 
   const archiveRow = async (row: ContentRow) => {
-    if (row.key.startsWith('series-')) {
+    const catalogMatch = row.key.match(/^(series|movie|tv-show)-(.+)$/)
+    if (catalogMatch) {
       try {
-        await animeApi.update(row.key.replace(/^series-/, ''), {
-          status: 'archived',
-        })
-        setSeriesItems((prev) =>
-          prev.map((s) =>
-            `series-${s.id}` === row.key ? { ...s, status: 'Archived' } : s,
-          ),
-        )
+        await animeApi.update(catalogMatch[2], { status: 'archived' })
+        if (row.kind === 'movie') {
+          setMovies((prev) =>
+            prev.map((m) =>
+              `movie-${m.id}` === row.key
+                ? { ...m, status: 'Archived' as MoviePublicationState }
+                : m,
+            ),
+          )
+        } else if (row.kind === 'tv-show') {
+          setTvShows((prev) =>
+            prev.map((t) =>
+              `tv-show-${t.id}` === row.key
+                ? { ...t, status: 'Archived' as TvShowPublicationState }
+                : t,
+            ),
+          )
+        } else {
+          setSeriesItems((prev) =>
+            prev.map((s) =>
+              `series-${s.id}` === row.key ? { ...s, status: 'Archived' } : s,
+            ),
+          )
+        }
         toast.success(`"${row.title}" archived`)
       } catch (err) {
         toast.error(formatApiError(err))
@@ -1153,7 +1225,7 @@ export default function ContentCatalogPage() {
   }
 
   return (
-    <main className="flex flex-col gap-6">
+    <main className="flex flex-col gap-6 select-none">
       <PageHeader
         title="Content"
         description="Manage all media content in Kami-Sama. Edit metadata, sync sources, and control publication state."

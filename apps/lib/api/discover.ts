@@ -149,4 +149,27 @@ export const discoverApi = {
       { method: "GET" }
     );
   },
+
+  /**
+   * Persist the authenticated user's watch progress for one episode (PUT
+   * /watch/progress/:episodeId). The watch page calls this periodically
+   * while playing so the discover "Reprendre" rail and /watch resume can
+   * pick up exactly where the user stopped. Silently ignored when not
+   * authenticated (the backend answers 401).
+   */
+  async updateProgress(
+    episodeId: string,
+    body: {
+      animeId: string
+      progress: number
+      duration: number
+      percentage: number
+      completed: boolean
+    }
+  ): Promise<ApiWatchProgress> {
+    return apiRequest<ApiWatchProgress>(
+      `/watch/progress/${encodeURIComponent(episodeId)}`,
+      { method: "PUT", body }
+    );
+  },
 };
