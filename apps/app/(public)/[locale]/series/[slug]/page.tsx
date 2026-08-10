@@ -51,6 +51,28 @@ export default function SeriesDetailPage({ params }: SeriesDetailPageProps) {
     }
   }, [slug])
 
+  // Pre-warm the default (first) episode's stream while the user browses.
+  // The first play of an episode pays a one-time Plex→Jellyfin bridge (up
+  // to 30-90s on a cold cache); warming it here in the background means
+  // /watch starts in ~2s instead of showing a long "Chargement du flux"
+  // spinner. Other episodes still bridge on demand if clicked directly.
+  useEffect(() => {
+    if (!detail || detail.item.type === 'movie' || detail.item.format === 'movie') return
+    const firstEpisode = detail.seasons.find((s) => s.episodes.length > 0)?.episodes[0]
+    if (!firstEpisode) return
+    const controller = new AbortController()
+    discoverApi
+      .streamUrl(detail.item.slug, {
+        episodeId: firstEpisode.id,
+        signal: controller.signal,
+        timeoutMs: 90_000,
+      })
+      .catch(() => {
+        /* Background warm-up only — /watch re-resolves on failure. */
+      })
+    return () => controller.abort()
+  }, [detail])
+
   if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center">
@@ -84,12 +106,13 @@ export default function SeriesDetailPage({ params }: SeriesDetailPageProps) {
   // (e.g. seasons starting at 0 or non-contiguous numbering).
   const currentSeason = seasons.find((s) => s.number === selectedSeason) ?? seasons[0]
   const seasonEpisodes = currentSeason?.episodes ?? []
-  const firstEpisodeNumber = seasons.find((s) => s.episodes.length > 0)?.episodes[0]?.number
-  const playLabel = firstEpisodeNumber !== undefined ? `LECTURE E${firstEpisodeNumber}` : 'LECTURE'
+  const firstEpisode = seasons.find((s) => s.episodes.length > 0)?.episodes[0]
+  const playLabel = firstEpisode ? `LECTURE E${firstEpisode.number}` : 'LECTURE'
+  const playHref = firstEpisode ? `/watch/${anime.slug}?ep=${firstEpisode.id}` : undefined
 
   return (
     <div className="min-h-screen bg-background">
-      <DetailHero anime={anime} playLabel={playLabel} />
+      <DetailHero anime={anime} playLabel={playLabel} playHref={playHref} />
 
       {/* Episodes Section */}
       {seasons.length > 0 && (

@@ -3,13 +3,16 @@ package routes
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -97,10 +100,148 @@ type ContinueWatchingItem struct {
 
 type DiscoverHandler struct {
 	deps Dependencies
+	// keys caches provider stream-key resolutions (slug + episodeId) so the
+	// /stream metadata endpoint and the same-origin proxy don't each pay the
+	// cost of a media-server title search on every episode switch.
+	keys *streamKeyCache
 }
 
 func NewDiscoverHandler(deps Dependencies) *DiscoverHandler {
-	return &DiscoverHandler{deps: deps}
+	return &DiscoverHandler{
+		deps: deps,
+		keys: newStreamKeyCache(deps.Config.MediaSource.Jellyfin.CacheTTL),
+	}
+}
+
+// streamKeyCache memoises stream-key resolutions in-process. Resolving a key
+// against the media-server can require a title search (findJellyfinItem) which
+// is far too slow to run twice per episode — once for the /stream metadata
+// check, once for the first proxy/manifest fetch. Entries expire after
+// MEDIA_SOURCE_CACHE_TTL (default 5m) and the map is bounded: when full, it is
+// simply reset so a misbehaving caller can't grow memory unbounded.
+type streamKeyCacheEntry struct {
+	key           string
+	isMovie       bool
+	provider      string // "jellyfin" or "plex"
+	mediaSourceId string // Jellyfin MediaSourceId when bridging Plex→Jellyfin
+	bridgeFailed  bool   // Plex→Jellyfin bridge was attempted and failed
+	// sessionQuery is the upstream master URL's query params (DeviceId,
+	// MediaSourceId, forced VideoCodec/AudioCodec, …). The proxy re-injects
+	// them into every variant/segment upstream request so the whole playback
+	// binds to ONE transcode session with the browser-decodable codecs — see
+	// setSessionQuery / mergeSessionParams.
+	sessionQuery url.Values
+	// masterURL is the PlaybackInfo-negotiated HLS master URL when negotiation
+	// succeeded, so /stream and the proxy share one PlaybackInfo probe instead
+	// of each paying its (slow, remote-probing) cost. Empty = not negotiated.
+	masterURL string
+	err       error
+	expires   time.Time
+}
+
+type streamKeyCache struct {
+	mu      sync.Mutex
+	ttl     time.Duration
+	max     int
+	entries map[string]streamKeyCacheEntry
+}
+
+func newStreamKeyCache(ttl time.Duration) *streamKeyCache {
+	if ttl <= 0 {
+		ttl = 5 * time.Minute
+	}
+	return &streamKeyCache{
+		ttl:     ttl,
+		max:     512,
+		entries: make(map[string]streamKeyCacheEntry, 64),
+	}
+}
+
+func (sc *streamKeyCache) get(cacheKey string) (streamKeyCacheEntry, bool) {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	ent, ok := sc.entries[cacheKey]
+	if !ok {
+		return streamKeyCacheEntry{}, false
+	}
+	if time.Now().After(ent.expires) {
+		delete(sc.entries, cacheKey)
+		return streamKeyCacheEntry{}, false
+	}
+	return ent, true
+}
+
+func (sc *streamKeyCache) set(cacheKey, key, provider string, isMovie bool, err error) {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	if len(sc.entries) >= sc.max {
+		sc.entries = make(map[string]streamKeyCacheEntry, 64)
+	}
+	sc.entries[cacheKey] = streamKeyCacheEntry{
+		key:      key,
+		isMovie:  isMovie,
+		provider: provider,
+		err:      err,
+		expires:  time.Now().Add(sc.ttl),
+	}
+}
+
+func (sc *streamKeyCache) setMediaSourceId(cacheKey, mediaSourceId string) {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	if ent, ok := sc.entries[cacheKey]; ok {
+		ent.mediaSourceId = mediaSourceId
+		sc.entries[cacheKey] = ent
+	}
+}
+
+// setSessionQuery records the upstream master URL's query params so the
+// proxy can re-inject them into every variant/segment request. Jellyfin's
+// media playlists are not guaranteed to echo the full session query on every
+// URL line; without the injection each request would start its OWN session
+// with DEFAULT codecs (typically an HEVC remux for a bridged Plex source),
+// which Chromium's MSE cannot decode — the player dies with hls.js
+// bufferAppendingError.
+func (sc *streamKeyCache) setSessionQuery(cacheKey string, q url.Values) {
+	if len(q) == 0 {
+		return
+	}
+	copy := make(url.Values, len(q))
+	for k, vs := range q {
+		copy[k] = append([]string(nil), vs...)
+	}
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	if ent, ok := sc.entries[cacheKey]; ok {
+		ent.sessionQuery = copy
+		sc.entries[cacheKey] = ent
+	}
+}
+
+// setMasterURL caches a PlaybackInfo-negotiated master URL for a stream key
+// (see DiscoverHandler.jellyfinMasterURL).
+func (sc *streamKeyCache) setMasterURL(cacheKey, masterURL string) {
+	if masterURL == "" {
+		return
+	}
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	if ent, ok := sc.entries[cacheKey]; ok {
+		ent.masterURL = masterURL
+		sc.entries[cacheKey] = ent
+	}
+}
+
+// markBridgeFailed records that the Plex→Jellyfin bridge was attempted for
+// this item and failed, so callers skip it and fall straight back to Plex
+// HLS instead of repeating the (slow) failed bridge on every request.
+func (sc *streamKeyCache) markBridgeFailed(cacheKey string) {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	if ent, ok := sc.entries[cacheKey]; ok {
+		ent.bridgeFailed = true
+		sc.entries[cacheKey] = ent
+	}
 }
 
 // GetDiscover returns the full discover page with all sections.
@@ -433,10 +574,318 @@ func (h *DiscoverHandler) plexClient(ctx context.Context) (*services.PlexClient,
 	return nil, utils.NewError(http.StatusServiceUnavailable, "PLEX_DISABLED", "Plex integration is not enabled or not configured.", nil)
 }
 
-// plexSourceIDFromMetadata reads the Plex rating key persisted on a catalog
-// row (metadata.sourceId), which is the show key for series and the item key
-// for movies.
-func plexSourceIDFromMetadata(a *models.Anime) string {
+// jellyfinClient resolves the configured media-server (Jellyfin) client,
+// mirroring plexClient's resolution order: active media source first, then
+// environment config. Playback is delegated to this client whenever it is
+// configured — Plex (and the other dashboard sources) only feed the catalog.
+func (h *DiscoverHandler) jellyfinClient(ctx context.Context) (*services.JellyfinClient, error) {
+	if h.deps.MediaSourceService != nil {
+		if jf := h.deps.MediaSourceService.Jellyfin(); jf != nil && jf.Enabled() {
+			return jf, nil
+		}
+	}
+	cfg := h.deps.Config.MediaSource.Jellyfin
+	if cfg.URL != "" && cfg.APIKey != "" && cfg.UserID != "" {
+		return services.NewJellyfinClient(services.JellyfinConfig{
+			URL:             cfg.URL,
+			APIKey:          cfg.APIKey,
+			UserID:          cfg.UserID,
+			StrmDir:         cfg.StrmDir,
+			StrmLibraryName: cfg.StrmLibraryName,
+			StrmLibraryPath: cfg.StrmLibraryPath,
+		}), nil
+	}
+	return nil, utils.NewError(http.StatusServiceUnavailable, "MEDIA_SERVER_DISABLED", "The media server (Jellyfin) is not configured.", nil)
+}
+
+// streamResolver holds the provider client that will back the /watch page
+// playback. Jellyfin (media-server) is preferred when configured; Plex is
+// kept as a fallback so legacy setups keep working.
+type streamResolver struct {
+	jf   *services.JellyfinClient
+	plex *services.PlexClient
+}
+
+func (h *DiscoverHandler) streamClient(ctx context.Context) (*streamResolver, error) {
+	var resolver streamResolver
+	jfErr := error(nil)
+	plexErr := error(nil)
+
+	if jf, err := h.jellyfinClient(ctx); err == nil {
+		resolver.jf = jf
+	} else {
+		jfErr = err
+	}
+	if client, err := h.plexClient(ctx); err == nil {
+		resolver.plex = client
+	} else {
+		plexErr = err
+	}
+
+	if resolver.jf == nil && resolver.plex == nil {
+		return nil, utils.NewError(http.StatusNotFound, "STREAM_UNAVAILABLE", "This title has no streamable source yet.", nil)
+	}
+	_ = jfErr
+	_ = plexErr
+	return &resolver, nil
+}
+
+// findLocalEpisode locates a catalog episode row by ID and returns its
+// season number and row. Returns nil when the episode is not under the item.
+func findLocalEpisode(item *models.Anime, episodeID string) (int, *models.Episode) {
+	for i := range item.Seasons {
+		season := &item.Seasons[i]
+		for j := range season.Episodes {
+			if season.Episodes[j].ID == episodeID {
+				return season.Number, &season.Episodes[j]
+			}
+		}
+	}
+	return 0, nil
+}
+
+// resolveStreamKey maps a published item (+ optional episode) to the provider
+// item key that backs the HLS stream. Tries Jellyfin first (streaming engine),
+// then falls back to Plex (content provider) when the item isn't found.
+func resolveStreamKey(ctx context.Context, r *streamResolver, item *models.Anime, episodeID string) (key string, isMovie bool, provider string, err error) {
+	if r.jf != nil {
+		key, isMovie, jfErr := resolveJellyfinStreamKey(ctx, r.jf, item, episodeID)
+		if jfErr == nil {
+			return key, isMovie, "jellyfin", nil
+		}
+		// Jellyfin didn't find it — fall back to Plex if available.
+		if r.plex != nil {
+			key, isMovie, plexErr := resolvePlexStreamKey(ctx, r.plex, item, episodeID)
+			if plexErr == nil {
+				return key, isMovie, "plex", nil
+			}
+			return "", false, "", jfErr
+		}
+		return "", false, "", jfErr
+	}
+	if r.plex != nil {
+		key, isMovie, plexErr := resolvePlexStreamKey(ctx, r.plex, item, episodeID)
+		if plexErr == nil {
+			return key, isMovie, "plex", nil
+		}
+		return "", false, "", plexErr
+	}
+	return "", false, "", utils.NewError(http.StatusNotFound, "STREAM_UNAVAILABLE", "No stream provider is configured.", nil)
+}
+
+// resolveStreamKeyCached resolves the provider stream key for an item +
+// episode, memoising the result in-process. The /stream metadata endpoint and
+// the same-origin proxy both call this; without the cache, title-matching
+// items would hit the media server's search API twice per episode switch.
+func (h *DiscoverHandler) resolveStreamKeyCached(ctx context.Context, resolver *streamResolver, item *models.Anime, episodeID string) (string, bool, string, string, error) {
+	cacheKey := item.Slug + "\x00" + episodeID
+	if ent, ok := h.keys.get(cacheKey); ok {
+		return ent.key, ent.isMovie, ent.provider, ent.mediaSourceId, ent.err
+	}
+	key, isMovie, provider, err := resolveStreamKey(ctx, resolver, item, episodeID)
+	h.keys.set(cacheKey, key, provider, isMovie, err)
+	return key, isMovie, provider, "", err
+}
+
+// resolveJellyfinStreamKey resolves the Jellyfin item ID for a movie or an
+// episode of a series. Catalog rows imported from Jellyfin already carry
+// their Jellyfin ID in metadata.sourceId; rows imported from content-only
+// providers (Plex, AniList, …) are matched by title (+year) on the media
+// server, then episodes are resolved via the Jellyfin API.
+func resolveJellyfinStreamKey(ctx context.Context, jf *services.JellyfinClient, item *models.Anime, episodeID string) (string, bool, error) {
+	if episodeID == "" {
+		// Movie / standalone item.
+		if item.Source == "jellyfin" {
+			if sid := providerSourceIDFromMetadata(item); sid != "" {
+				return sid, true, nil
+			}
+		}
+		key, err := findJellyfinItem(ctx, jf, item.Title, item.ReleaseYear, "Movie")
+		if err != nil {
+			return "", false, err
+		}
+		return key, true, nil
+	}
+
+	seasonNumber, episode := findLocalEpisode(item, episodeID)
+	if episode == nil {
+		return "", false, utils.ErrEpisodeNotFound
+	}
+	seriesKey := ""
+	if item.Source == "jellyfin" {
+		seriesKey = providerSourceIDFromMetadata(item)
+	}
+	if seriesKey == "" {
+		key, err := findJellyfinItem(ctx, jf, item.Title, item.ReleaseYear, "Series")
+		if err != nil {
+			return "", false, err
+		}
+		seriesKey = key
+	}
+	episodeKey, err := jf.ResolveEpisodeKey(ctx, seriesKey, seasonNumber, episode.Number)
+	if err != nil {
+		return "", false, utils.NewError(http.StatusNotFound, "STREAM_UNAVAILABLE", err.Error(), nil)
+	}
+	return episodeKey, false, nil
+}
+
+// findJellyfinItem locates a Jellyfin item matching a catalog title on the
+// media server. It prefers an exact case-insensitive title match (year as a
+// tie-breaker) of the wanted type, then falls back to any item of that type.
+func findJellyfinItem(ctx context.Context, jf *services.JellyfinClient, title string, year int, wantType string) (string, error) {
+	if title == "" {
+		return "", utils.NewError(http.StatusNotFound, "STREAM_UNAVAILABLE", "This title has no streamable source yet.", nil)
+	}
+	items, err := jf.SearchItems(ctx, title, 10)
+	if err != nil {
+		return "", utils.NewError(http.StatusBadGateway, "STREAM_UNAVAILABLE", "Could not reach the media server: "+err.Error(), nil)
+	}
+	needle := strings.ToLower(strings.TrimSpace(title))
+	var fallback string
+	for _, it := range items {
+		if !strings.EqualFold(discoverStr(it, "type"), wantType) {
+			continue
+		}
+		id := discoverStr(it, "id")
+		if id == "" {
+			continue
+		}
+		if strings.EqualFold(strings.TrimSpace(discoverStr(it, "name")), needle) {
+			if year > 0 && discoverInt(it, "year") == year {
+				return id, nil
+			}
+			if fallback == "" {
+				fallback = id
+			}
+		}
+	}
+	if fallback != "" {
+		return fallback, nil
+	}
+	for _, it := range items {
+		if strings.EqualFold(discoverStr(it, "type"), wantType) {
+			if id := discoverStr(it, "id"); id != "" {
+				return id, nil
+			}
+		}
+	}
+	return "", utils.NewError(http.StatusNotFound, "STREAM_UNAVAILABLE", fmt.Sprintf("No %s matching %q found on the media server.", wantType, title), nil)
+}
+
+// resolvePlexStreamKey is the legacy Plex stream-key resolution, kept intact
+// as the fallback path when no media-server is configured.
+func resolvePlexStreamKey(ctx context.Context, client *services.PlexClient, item *models.Anime, episodeID string) (string, bool, error) {
+	if client == nil || !client.Enabled() {
+		return "", false, utils.NewError(http.StatusServiceUnavailable, "STREAM_UNAVAILABLE", "No stream provider is configured.", nil)
+	}
+	if item.Source != "plex" {
+		return "", false, utils.NewError(http.StatusNotFound, "STREAM_UNAVAILABLE", "This title has no streamable source yet.", nil)
+	}
+	if episodeID == "" {
+		key := providerSourceIDFromMetadata(item)
+		if key == "" {
+			return "", false, utils.NewError(http.StatusNotFound, "STREAM_UNAVAILABLE", "This title has no streamable source yet.", nil)
+		}
+		return key, true, nil
+	}
+	seasonNumber, episode := findLocalEpisode(item, episodeID)
+	if episode == nil {
+		return "", false, utils.ErrEpisodeNotFound
+	}
+	showKey := providerSourceIDFromMetadata(item)
+	if showKey == "" {
+		return "", false, utils.NewError(http.StatusNotFound, "STREAM_UNAVAILABLE", "This title has no streamable source yet.", nil)
+	}
+	key, err := services.ResolvePlexEpisodeKey(ctx, client, showKey, seasonNumber, episode.Number)
+	if err != nil {
+		return "", false, err
+	}
+	return key, false, nil
+}
+
+// isTransientBridgeError reports whether a Plex→Jellyfin bridge failure is
+// worth retrying instead of poisoning the stream-key cache. Client-side
+// cancellations (the user navigated away / the 90s budget expired) and
+// transport-level failures (DNS lookup errors — e.g. Docker's resolver
+// returning SERVFAIL for *.plex.direct — connection refused, connect
+// timeouts, anything surfaced as a *net.OpError) are transient: the bridge
+// is idempotent and typically succeeds on the next request once the network
+// recovers. Anything else (a Jellyfin API 4xx/5xx, a .strm item that never
+// resolves even after the recovery re-scan) is definitive and must latch so
+// we don't re-run a slow failing bridge on every request.
+func isTransientBridgeError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) {
+		return true
+	}
+	var opErr *net.OpError
+	if errors.As(err, &opErr) {
+		return true
+	}
+	return false
+}
+
+// bridgePlexToJellyfin takes a Plex stream key and sets up Jellyfin as the
+// transcoding engine: it fetches the direct file URL from Plex and hands it
+// to Jellyfin's library scanner via a .strm file (see
+// JellyfinClient.BridgeRemoteMedia), so Jellyfin transcodes the remote media
+// into HLS.
+//
+// Returns the Jellyfin item ID and its real MediaSourceId to pass to
+// HLSManifestURLWithSource. The media source id is resolved from the item
+// itself: Jellyfin gives .strm items a distinct MediaSourceInfo.Id (NOT the
+// item id), so assuming equality makes the master playlist request answer
+// HTTP 400 "The specified media source could not be found". When the id
+// cannot be resolved, an empty string is returned so callers fall back to
+// an unpinned master (a single-source .strm item plays without it).
+func bridgePlexToJellyfin(ctx context.Context, plexClient *services.PlexClient, jf *services.JellyfinClient, item *models.Anime, plexKey string) (jfItemID string, mediaSourceID string, err error) {
+	directURL, _, derr := plexClient.GetDirectFileURL(ctx, plexKey)
+	if derr != nil {
+		return "", "", fmt.Errorf("could not get Plex direct URL: %w", derr)
+	}
+
+	jfItemID, merr := jf.BridgeRemoteMedia(ctx, item.Title, directURL)
+	if merr != nil {
+		return "", "", fmt.Errorf("could not bridge Plex media to Jellyfin: %w", merr)
+	}
+	mediaSourceID, serr := jf.ResolveMediaSourceID(ctx, jfItemID)
+	if serr != nil {
+		mediaSourceID = ""
+	}
+	return jfItemID, mediaSourceID, nil
+}
+
+func discoverStr(m map[string]interface{}, key string) string {
+	if v, ok := m[key].(string); ok {
+		return v
+	}
+	return ""
+}
+
+func discoverInt(m map[string]interface{}, key string) int {
+	switch v := m[key].(type) {
+	case float64:
+		return int(v)
+	case int:
+		return v
+	case string:
+		i, _ := strconv.Atoi(v)
+		return i
+	}
+	return 0
+}
+
+// providerSourceIDFromMetadata reads the provider item key persisted on a
+// catalog row (metadata.sourceId). For series it is the show key; for movies
+// the item key. Works for any provider (plex, jellyfin, …) — the same JSON
+// shape is written by every library sync.
+func providerSourceIDFromMetadata(a *models.Anime) string {
 	if len(a.Metadata) == 0 {
 		return ""
 	}
@@ -450,11 +899,42 @@ func plexSourceIDFromMetadata(a *models.Anime) string {
 	return ""
 }
 
+// jellyfinMasterURL returns the HLS master URL backing a Jellyfin item,
+// preferring a PlaybackInfo-negotiated transcode URL. Hand-building the
+// master (HLSManifestURLWithSource) lets Jellyfin launch ffmpeg with DEFAULT
+// encoders for bridged remote (.strm) items whose scan-time probe failed —
+// the output AAC then has no timestamps/channel config and Chromium's MSE
+// rejects every append (bufferAppendingError). PlaybackInfo forces Jellyfin
+// to probe the source live and emit a proper -map/-c transcode command
+// (verified: h264 High + aac LC 2ch). The negotiated URL is cached per stream
+// key so the /stream endpoint and the proxy pay the PlaybackInfo cost once.
+func (h *DiscoverHandler) jellyfinMasterURL(ctx context.Context, cacheKey string, jf *services.JellyfinClient, key, msID string) string {
+	if ent, ok := h.keys.get(cacheKey); ok && ent.masterURL != "" {
+		return ent.masterURL
+	}
+	if jf != nil {
+		nctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+		negotiated := jf.TranscodeMasterURL(nctx, key, msID)
+		cancel()
+		if negotiated != "" {
+			h.keys.setMasterURL(cacheKey, negotiated)
+			return negotiated
+		}
+	}
+	if msID != "" {
+		return jf.HLSManifestURLWithSource(key, msID)
+	}
+	return jf.HLSManifestURL(key)
+}
+
 // GetStreamURL returns a playable stream URL for a published item — a movie
 // streams directly from the item's provider key, a series resolves the
-// requested episode against the provider. Titles without a provider source
-// (e.g. AniList-only catalog entries) get a STREAM_UNAVAILABLE error so the
-// player can show a friendly state.
+// requested episode against the provider. Stream resolution is delegated to
+// the media-server (Jellyfin) container whenever it is configured; Plex (and
+// the other dashboard sources) only feed the catalog, they never back
+// playback. The legacy Plex path is kept as a fallback. Titles without a
+// provider source get a STREAM_UNAVAILABLE error so the player can show a
+// friendly state.
 func (h *DiscoverHandler) GetStreamURL(c *gin.Context) {
 	ctx := c.Request.Context()
 	slug := strings.TrimSpace(c.Param("slug"))
@@ -468,64 +948,81 @@ func (h *DiscoverHandler) GetStreamURL(c *gin.Context) {
 		utils.Error(c, err)
 		return
 	}
-	if item.Source != "plex" {
-		utils.Error(c, utils.NewError(http.StatusNotFound, "STREAM_UNAVAILABLE", "This title has no streamable source yet.", nil))
+
+	resolver, err := h.streamClient(ctx)
+	if err != nil {
+		utils.Error(c, err)
 		return
 	}
-	client, err := h.plexClient(ctx)
+	key, isMovie, provider, cachedMsID, err := h.resolveStreamKeyCached(ctx, resolver, item, episodeID)
 	if err != nil {
 		utils.Error(c, err)
 		return
 	}
 
-	ratingKey := ""
-	isMovie := false
-	if episodeID == "" {
-		// Movie (or standalone item): the catalog row itself carries the key.
-		isMovie = true
-		ratingKey = plexSourceIDFromMetadata(item)
-		if ratingKey == "" {
-			utils.Error(c, utils.NewError(http.StatusNotFound, "STREAM_UNAVAILABLE", "This title has no streamable source yet.", nil))
-			return
+	var streamURL string
+	if provider == "jellyfin" && resolver.jf != nil {
+		streamURL = h.jellyfinMasterURL(ctx, item.Slug+"\x00"+episodeID, resolver.jf, key, cachedMsID)
+	} else if provider == "plex" && resolver.jf != nil && resolver.plex != nil {
+		cacheKey := item.Slug + "\x00" + episodeID
+		cached, _ := h.keys.get(cacheKey)
+		if cachedMsID != "" {
+			// Bridge already succeeded — key is the Jellyfin item ID.
+			streamURL = h.jellyfinMasterURL(ctx, cacheKey, resolver.jf, key, cachedMsID)
+		} else if cached.bridgeFailed {
+			// Bridge previously failed — fall straight back to Plex HLS.
+			streamURL, err = services.BuildPlexStreamURL(ctx, resolver.plex, key, "native")
+			if err != nil {
+				utils.Error(c, err)
+				return
+			}
+		} else {
+			jfItemID, msID, berr := bridgePlexToJellyfin(ctx, resolver.plex, resolver.jf, item, key)
+			if berr != nil {
+				h.deps.Logger.Warn("plex→jellyfin bridge failed, falling back to Plex HLS", "error", berr)
+				// A canceled request (client navigated away / timed out) and
+				// TRANSIENT transport errors (a DNS hiccup, connect timeout —
+				// Docker's resolver can SERVFAIL on *.plex.direct) must NOT
+				// latch the failure: the bridge may still have completed
+				// server-side or succeed on the very next request. Poisoning
+				// on those forced every subsequent play down the legacy Plex
+				// HLS path for the whole TTL — and that endpoint answers HTTP
+				// 400 to every request on this Plex server. Only definitive
+				// failures (Jellyfin API 4xx/5xx, item never resolves) poison.
+				if !isTransientBridgeError(berr) {
+					h.keys.markBridgeFailed(cacheKey)
+				}
+				streamURL, err = services.BuildPlexStreamURL(ctx, resolver.plex, key, "native")
+				if err != nil {
+					utils.Error(c, err)
+					return
+				}
+			} else {
+				h.keys.set(cacheKey, jfItemID, "jellyfin", isMovie, nil)
+				h.keys.setMediaSourceId(cacheKey, msID)
+				streamURL = h.jellyfinMasterURL(ctx, cacheKey, resolver.jf, jfItemID, msID)
+			}
 		}
 	} else {
-		// Series: locate the episode row (with its season number) and resolve
-		// the matching provider key on demand.
-		var episode *models.Episode
-		seasonNumber := 0
-		for i := range item.Seasons {
-			season := &item.Seasons[i]
-			for j := range season.Episodes {
-				if season.Episodes[j].ID == episodeID {
-					episode = &season.Episodes[j]
-					seasonNumber = season.Number
-					break
-				}
-			}
-			if episode != nil {
-				break
-			}
-		}
-		if episode == nil {
-			utils.Error(c, utils.ErrEpisodeNotFound)
-			return
-		}
-		showKey := plexSourceIDFromMetadata(item)
-		if showKey == "" {
-			utils.Error(c, utils.NewError(http.StatusNotFound, "STREAM_UNAVAILABLE", "This title has no streamable source yet.", nil))
-			return
-		}
-		ratingKey, err = services.ResolvePlexEpisodeKey(ctx, client, showKey, seasonNumber, episode.Number)
+		streamURL, err = services.BuildPlexStreamURL(ctx, resolver.plex, key, "native")
 		if err != nil {
 			utils.Error(c, err)
 			return
 		}
 	}
 
-	streamURL, err := services.BuildPlexStreamURL(ctx, client, ratingKey, "native")
-	if err != nil {
-		utils.Error(c, err)
-		return
+	// Start the media-server transcode NOW (fire-and-forget) so the browser's
+	// first variant request hits a warm session. The master playlist is served
+	// instantly but the variant is what launches ffmpeg — on a cold session it
+	// must probe the remote source first, adding several seconds of asset-only
+	// (poster) time to the first play. Warming it here means the player starts
+	// the moment hls.js pulls the variant, instead of after the ffmpeg startup.
+	if resolver.jf != nil && strings.Contains(streamURL, "/master.m3u8") {
+		go func() {
+			wctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+			defer cancel()
+			resolver.jf.PreWarmTranscode(wctx, streamURL)
+		}()
 	}
 	utils.Success(c, http.StatusOK, gin.H{
 		"streamUrl": streamURL,
@@ -535,28 +1032,28 @@ func (h *DiscoverHandler) GetStreamURL(c *gin.Context) {
 }
 
 // ProxyStream serves the playable HLS manifest (and every segment / variant
-// it references) as a *same-origin* asset. Plex's universal transcode
-// endpoint only sends CORS headers inconsistently, so handing its URL
-// directly to hls.js yields NETWORK_ERROR on every browser except the user's
-// Plex host. This proxy resolves the slug + optional episodeId server-side,
-// fetches the upstream URL with the X-Plex-Token attached as a HEADER
-// (Plex accepts both header and query token auth), and writes the response
-// back to the browser untouched.
+// it references) as a *same-origin* asset. Neither Jellyfin (media-server)
+// nor Plex sends CORS headers reliably, so handing their URLs directly to
+// hls.js yields NETWORK_ERROR on every browser. This proxy resolves the slug
+// + optional episodeId server-side, fetches the upstream URL with the auth
+// credential attached as a HEADER (X-Emby-Token for the media-server,
+// X-Plex-Token for the legacy Plex fallback), and writes the response back
+// to the browser untouched.
 //
 // Two routes feed into this handler:
 //
 //   - GET /api/v1/discover/item/:slug/stream/proxy/manifest
 //                                       -> master playlist (rewritten)
 //   - GET /api/v1/discover/item/:slug/stream/proxy/segment/*origin
-//                                       -> segment / variant proxied from Plex
+//                                       -> segment / variant proxied upstream
 //
 // We don't rely on relative URL resolution against the manifest URL because
-// Plex's variants carry ABSOLUTE URLs (browser would CORS-fail) and segments
-// resolve to a directory we don't control. Instead the manifest rewriter
-// turns every URL line in the playlist into an absolute URL pointing at our
-// own `/segment/<origin>` endpoint with the upstream path URL-encoded in
-// the trailing segment. hls.js then issues fully-absolute same-origin
-// requests that always land back in this same handler.
+// upstream variants carry ABSOLUTE URLs (browser would CORS-fail) and
+// segments resolve to directories we don't control. Instead the manifest
+// rewriter turns every URL line in the playlist into an absolute URL
+// pointing at our own `/segment/<origin>` endpoint with the upstream path
+// URL-encoded in the trailing segment. hls.js then issues fully-absolute
+// same-origin requests that always land back in this same handler.
 func (h *DiscoverHandler) ProxyStream(c *gin.Context) {
 	ctx := c.Request.Context()
 	slug := strings.TrimSpace(c.Param("slug"))
@@ -564,6 +1061,8 @@ func (h *DiscoverHandler) ProxyStream(c *gin.Context) {
 	// gin returns the wildcard without a leading slash for paths like
 	// /proxy/segment/foo.ts and as "/" for the bare /proxy route. Normalise.
 	subpath := strings.TrimLeft(strings.TrimPrefix(c.Param("subpath"), "/"), "/")
+
+	h.deps.Logger.Info("stream proxy request", "slug", slug, "subpath", subpath, "full_path", c.Request.URL.Path, "query", c.Request.URL.RawQuery)
 
 	if slug == "" {
 		utils.Error(c, utils.ErrValidationFailed)
@@ -575,58 +1074,13 @@ func (h *DiscoverHandler) ProxyStream(c *gin.Context) {
 		utils.Error(c, err)
 		return
 	}
-	if item.Source != "plex" {
-		utils.Error(c, utils.NewError(http.StatusNotFound, "STREAM_UNAVAILABLE", "This title has no streamable source yet.", nil))
-		return
-	}
 
-	client, err := h.plexClient(ctx)
+	resolver, err := h.streamClient(ctx)
 	if err != nil {
 		utils.Error(c, err)
 		return
 	}
-
-	ratingKey := ""
-	if episodeID == "" {
-		// Movie (or standalone item): the catalog row itself carries the key.
-		ratingKey = plexSourceIDFromMetadata(item)
-		if ratingKey == "" {
-			utils.Error(c, utils.NewError(http.StatusNotFound, "STREAM_UNAVAILABLE", "This title has no streamable source yet.", nil))
-			return
-		}
-	} else {
-		// Series: locate the episode row (with its season number) and resolve
-		// the matching provider key on demand.
-		var episode *models.Episode
-		seasonNumber := 0
-	findEpisode:
-		for i := range item.Seasons {
-			season := &item.Seasons[i]
-			for j := range season.Episodes {
-				if season.Episodes[j].ID == episodeID {
-					episode = &season.Episodes[j]
-					seasonNumber = season.Number
-					break findEpisode
-				}
-			}
-		}
-		if episode == nil {
-			utils.Error(c, utils.ErrEpisodeNotFound)
-			return
-		}
-		showKey := plexSourceIDFromMetadata(item)
-		if showKey == "" {
-			utils.Error(c, utils.NewError(http.StatusNotFound, "STREAM_UNAVAILABLE", "This title has no streamable source yet.", nil))
-			return
-		}
-		ratingKey, err = services.ResolvePlexEpisodeKey(ctx, client, showKey, seasonNumber, episode.Number)
-		if err != nil {
-			utils.Error(c, err)
-			return
-		}
-	}
-
-	manifestURL, err := services.BuildPlexStreamURL(ctx, client, ratingKey, "native")
+	key, _, provider, cachedMsID, err := h.resolveStreamKeyCached(ctx, resolver, item, episodeID)
 	if err != nil {
 		utils.Error(c, err)
 		return
@@ -635,29 +1089,33 @@ func (h *DiscoverHandler) ProxyStream(c *gin.Context) {
 	// `subpath` is either:
 	//   - ""          -> root /stream/proxy route, serve the master playlist
 	//   - "manifest"  -> explicit /stream/proxy/manifest route, ditto
-	//   - "segment/<origin>" -> /stream/proxy/segment/* route: serve that sub-resource
+	//   - "<origin>"  -> /stream/proxy/segment/* route: serve that sub-resource
+	//                    (the "/segment/" prefix is consumed by the route pattern)
 	//
-	// Anything else ("manifest/<something>", no prefix, etc.) we treat as a
+	// Anything else ("manifest/<something>", etc.) we treat as a
 	// malformed request and 404.
 	serveManifest := subpath == "" || subpath == "manifest"
 	var segmentRelativeRef string
 	if !serveManifest {
-		if !strings.HasPrefix(subpath, "segment/") {
-			utils.Error(c, utils.NewError(http.StatusNotFound, "STREAM_PROXY_PATH", "Unknown proxy subpath: "+subpath, nil))
-			return
+		// The route /segment/*subpath captures everything after /segment/ as
+		// subpath. subpath IS the upstream reference (e.g. `/Videos/…/0.ts`).
+		// decodeSegmentRef normalises it and re-attaches any query a
+		// path-normalising proxy (Next.js dev rewrites) split out of the
+		// path — without that re-attachment the upstream variant/segment
+		// request would start a FRESH Jellyfin transcode session with default
+		// codecs, which hls.js sees as levelLoadTimeOut + bufferAppendingError.
+		segmentRelativeRef = decodeSegmentRef(subpath, c.Request.URL.RawQuery)
+		// Session-pin: Jellyfin's media playlists are not guaranteed to echo
+		// the master's query (DeviceId / MediaSourceId / forced codecs) on
+		// every URL line. A variant/segment request that misses them creates
+		// its OWN session — for a bridged HEVC source that is a REMUX, and
+		// the browser MSE can't decode the resulting HEVC segments
+		// (bufferAppendingError). Re-inject the master's params so playback
+		// stays on the one h264/aac transcode session.
+		if ent, ok := h.keys.get(item.Slug + "\x00" + episodeID); ok {
+			segmentRelativeRef = mergeSessionParams(segmentRelativeRef, ent.sessionQuery)
 		}
-		// Strip the wildcard path so we hold only the URL-encoded upstream
-		// reference (e.g. `%2Fvideo%2F%3A%2F%3A%2Ftranscode%2Funiversal%2F0.ts`).
-		raw := strings.TrimPrefix(subpath, "segment/")
-		// Decode percent-escapes — the manifest rewriter encodes everything
-		// (slashes, colons, query params) so the path can ride inside our
-		// proxy URL without breaking gin routing. Without this we'd ask Plex
-		// for `/start%2Fvideo%2F...` which never resolves.
-		if decoded, derr := url.PathUnescape(raw); derr == nil {
-			segmentRelativeRef = decoded
-		} else {
-			segmentRelativeRef = raw
-		}
+		h.deps.Logger.Info("stream proxy segment", "raw", subpath, "decoded", segmentRelativeRef)
 	}
 
 	scheme := "http"
@@ -667,47 +1125,195 @@ func (h *DiscoverHandler) ProxyStream(c *gin.Context) {
 	proxyBaseURL := scheme + "://" + c.Request.Host
 
 	var targetURL string
-	if serveManifest {
-		targetURL = manifestURL
-	} else {
-		targetURL, err = buildPlexSegmentURL(manifestURL, segmentRelativeRef)
-		if err != nil {
-			utils.Error(c, utils.NewError(http.StatusBadGateway, "STREAM_PROXY_FAILED", "Could not build segment URL: "+err.Error(), nil))
+	bridged := false
+	if provider == "jellyfin" && resolver.jf != nil {
+		// Jellyfin owns this stream.
+		if serveManifest {
+			targetURL = h.jellyfinMasterURL(ctx, item.Slug+"\x00"+episodeID, resolver.jf, key, cachedMsID)
+		} else {
+			targetURL, err = resolver.jf.BuildSegmentURL(key, segmentRelativeRef)
+			if err != nil {
+				utils.Error(c, utils.NewError(http.StatusBadGateway, "STREAM_PROXY_FAILED", "Could not build segment URL: "+err.Error(), nil))
+				return
+			}
+		}
+	} else if provider == "plex" && resolver.jf != nil && resolver.plex != nil {
+		// Plex provides the file, bridge through Jellyfin for HLS transcoding.
+		cacheKey := item.Slug + "\x00" + episodeID
+		cached, _ := h.keys.get(cacheKey)
+		if cachedMsID != "" {
+			// Already bridged from GetStreamURL — key is already the JF item ID.
+			bridged = true
+			if serveManifest {
+				targetURL = h.jellyfinMasterURL(ctx, cacheKey, resolver.jf, key, cachedMsID)
+			} else {
+				targetURL, err = resolver.jf.BuildSegmentURL(key, segmentRelativeRef)
+				if err != nil {
+					utils.Error(c, utils.NewError(http.StatusBadGateway, "STREAM_PROXY_FAILED", "Could not build segment URL: "+err.Error(), nil))
+					return
+				}
+			}
+		} else if cached.bridgeFailed {
+			// Bridge previously failed — use Plex HLS directly.
+			manifestURL, merr := services.BuildPlexStreamURL(ctx, resolver.plex, key, "native")
+			if merr != nil {
+				utils.Error(c, merr)
+				return
+			}
+			if serveManifest {
+				targetURL = manifestURL
+			} else {
+				targetURL, err = buildPlexSegmentURL(manifestURL, segmentRelativeRef)
+				if err != nil {
+					utils.Error(c, utils.NewError(http.StatusBadGateway, "STREAM_PROXY_FAILED", "Could not build segment URL: "+err.Error(), nil))
+					return
+				}
+			}
+		} else {
+			jfItemID, msID, berr := bridgePlexToJellyfin(ctx, resolver.plex, resolver.jf, item, key)
+			if berr != nil {
+				h.deps.Logger.Warn("plex→jellyfin bridge failed, falling back to Plex proxy", "error", berr)
+				// See GetStreamURL: transient transport failures (DNS hiccups
+				// on *.plex.direct, connect timeouts) and client cancellations
+				// must not poison the cache — the bridge is retried on the next
+				// request, where it usually succeeds. Only definitive failures
+				// latch so we don't re-run a slow broken bridge every time.
+				if !isTransientBridgeError(berr) {
+					h.keys.markBridgeFailed(cacheKey)
+				}
+				manifestURL, merr := services.BuildPlexStreamURL(ctx, resolver.plex, key, "native")
+				if merr != nil {
+					utils.Error(c, merr)
+					return
+				}
+				if serveManifest {
+					targetURL = manifestURL
+				} else {
+					targetURL, err = buildPlexSegmentURL(manifestURL, segmentRelativeRef)
+					if err != nil {
+						utils.Error(c, utils.NewError(http.StatusBadGateway, "STREAM_PROXY_FAILED", "Could not build segment URL: "+err.Error(), nil))
+						return
+					}
+				}
+			} else {
+				h.keys.set(cacheKey, jfItemID, "jellyfin", true, nil)
+				h.keys.setMediaSourceId(cacheKey, msID)
+				bridged = true
+				if serveManifest {
+					targetURL = h.jellyfinMasterURL(ctx, cacheKey, resolver.jf, jfItemID, msID)
+				} else {
+					targetURL, err = resolver.jf.BuildSegmentURL(jfItemID, segmentRelativeRef)
+					if err != nil {
+						utils.Error(c, utils.NewError(http.StatusBadGateway, "STREAM_PROXY_FAILED", "Could not build segment URL: "+err.Error(), nil))
+						return
+					}
+				}
+			}
+		}
+	} else if resolver.plex != nil {
+		// Plex owns this stream (no Jellyfin available).
+		manifestURL, merr := services.BuildPlexStreamURL(ctx, resolver.plex, key, "native")
+		if merr != nil {
+			utils.Error(c, merr)
 			return
 		}
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, targetURL, nil)
-	if err != nil {
-		utils.Error(c, utils.NewError(http.StatusBadGateway, "STREAM_PROXY_FAILED", "Could not build upstream request: "+err.Error(), nil))
+		if serveManifest {
+			targetURL = manifestURL
+		} else {
+			targetURL, err = buildPlexSegmentURL(manifestURL, segmentRelativeRef)
+			if err != nil {
+				utils.Error(c, utils.NewError(http.StatusBadGateway, "STREAM_PROXY_FAILED", "Could not build segment URL: "+err.Error(), nil))
+				return
+			}
+		}
+	} else {
+		utils.Error(c, utils.NewError(http.StatusServiceUnavailable, "STREAM_UNAVAILABLE", "No provider available for this stream.", nil))
 		return
 	}
-	req.Header.Set("Accept", "*/*")
-	// Send the Plex token via header (not query) so it never leaves the
-	// backend's request boundary. The identity headers (Client-Identifier,
-	// Product, Version, Device) are mandatory for the universal transcode
-	// endpoint — Plex refuses with HTTP 400 when they're missing.
-	req.Header.Set("X-Plex-Token", client.Token())
-	for k, v := range client.PlexIdentity() {
-		if v != "" {
-			req.Header.Set(k, v)
+
+	// Track whether the upstream is actually Jellyfin — true when the stream
+	// was natively Jellyfin or when we bridged Plex→Jellyfin.
+	targetIsJellyfin := resolver.jf != nil && (provider == "jellyfin" || bridged)
+	// Remember the master's session query so later variant/segment requests
+	// can be pinned to the same transcode session + forced codecs (see
+	// mergeSessionParams).
+	if serveManifest && targetIsJellyfin {
+		if mu, merr := url.Parse(targetURL); merr == nil {
+			h.keys.setSessionQuery(item.Slug+"\x00"+episodeID, mu.Query())
 		}
 	}
-	req.Header.Set("X-Plex-Platform", "Go")
 
-	httpClient := &http.Client{Timeout: 90 * time.Second}
-	resp, err := httpClient.Do(req)
+	var resp *http.Response
+	if targetIsJellyfin {
+		h.deps.Logger.Info("stream proxy requesting jellyfin", "url", targetURL)
+		resp, err = resolver.jf.DoWithAuth(ctx, targetURL)
+	} else {
+		// Strip the token from the query string — it travels in the
+		// header for upstream requests. Keeping it in both places causes
+		// some Plex servers to return 400.
+		cleanURL := targetURL
+		if pu, puerr := url.Parse(targetURL); puerr == nil {
+			pq := pu.Query()
+			pq.Del("X-Plex-Token")
+			// Ensure a session ID is present — Plex transcode
+			// endpoints return 400 without one.
+			if pq.Get("session") == "" {
+				pq.Set("session", "kamisama-"+key)
+			}
+			pu.RawQuery = pq.Encode()
+			cleanURL = pu.String()
+		}
+		req, rerr := http.NewRequestWithContext(ctx, http.MethodGet, cleanURL, nil)
+		if rerr != nil {
+			utils.Error(c, utils.NewError(http.StatusBadGateway, "STREAM_PROXY_FAILED", "Could not build upstream request: "+rerr.Error(), nil))
+			return
+		}
+		req.Header.Set("Accept", "*/*")
+		req.Header.Set("X-Plex-Token", resolver.plex.Token())
+		for k, v := range resolver.plex.PlexIdentity() {
+			if v != "" {
+				req.Header.Set(k, v)
+			}
+		}
+		req.Header.Set("X-Plex-Platform", "Go")
+		h.deps.Logger.Info("stream proxy requesting plex", "url", cleanURL, "token_len", len(resolver.plex.Token()))
+		httpClient := &http.Client{Timeout: 90 * time.Second}
+		resp, err = httpClient.Do(req)
+	}
 	if err != nil {
-		utils.Error(c, utils.NewError(http.StatusBadGateway, "STREAM_UNAVAILABLE", "Could not reach Plex stream endpoint: "+err.Error(), nil))
+		utils.Error(c, utils.NewError(http.StatusBadGateway, "STREAM_UNAVAILABLE", "Could not reach the media stream endpoint: "+err.Error(), nil))
 		return
 	}
 	defer resp.Body.Close()
 
-	// Forward the cacheability / content headers as Plex sent them.
-	for _, k := range []string{"Content-Type", "Content-Length", "Cache-Control", "Last-Modified", "ETag"} {
+	// Whether the upstream response is an HLS playlist that must be rewritten
+	// before being handed to the browser. The MASTER is always one; so is any
+	// VARIANT / media playlist (same content-type) — its segment URL lines
+	// must become explicit same-origin /segment/ references too, otherwise
+	// hls.js resolves them against the proxy URL and either 404s, trips CORS
+	// or receives non-segment data, which surfaces as bufferAppendingError.
+	servePlaylist := serveManifest || isPlaylistContentType(resp.Header.Get("Content-Type"))
+	// Forward the cacheability / content headers as the upstream sent them.
+// Skip Content-Length when rewriting a playlist since body size changes.
+	copyHeaders := []string{"Content-Type", "Cache-Control", "Last-Modified", "ETag"}
+	if !servePlaylist {
+		copyHeaders = append(copyHeaders, "Content-Length")
+	}
+	for _, k := range copyHeaders {
 		if v := resp.Header.Get(k); v != "" {
 			c.Header(k, v)
 		}
+	}
+
+	// Every rewritten playlist URL is CONSTANT (…/stream/proxy/manifest or
+	// …/segment/<encoded-origin>), but the transcode session it points at
+	// changes on every resolution. If the browser heuristically caches one
+	// (or the Jellyfin upstream allows it), the next play fetches a STALE
+	// variant/segment list whose session is dead — the player stalls forever
+	// on the item poster. Force no-store so hls.js always pulls fresh
+	// playlists bound to a live session.
+	if servePlaylist {
+		c.Header("Cache-Control", "no-store")
 	}
 
 	// Write the upstream status BEFORE piping the body. Letting Gin default
@@ -718,12 +1324,13 @@ func (h *DiscoverHandler) ProxyStream(c *gin.Context) {
 	// like a successful HLS manifest.
 	c.Writer.WriteHeader(resp.StatusCode)
 
-	// Always log Plex upstream's status, even on 2xx. Catches conflict cases
-	// where Plex transit / relay servers (e.g. `*.plex.direct`) reject media
-	// endpoints with 400/500 while metadata/library stay reachable — without
-	// this trace, the operator can't tell "code bug" from "Plex unreachable".
+	// Always log upstream's status, even on 2xx. Catches conflict cases
+	// where transit / relay servers reject media endpoints with 400/500
+	// while metadata/library stay reachable — without this trace, the
+	// operator can't tell "code bug" from "media server unreachable".
 	h.deps.Logger.Info(
-		"plex stream proxy upstream response",
+		"stream proxy upstream response",
+		"provider", provider,
 		"slug", slug,
 		"serve_manifest", serveManifest,
 		"upstream_status", resp.StatusCode,
@@ -731,13 +1338,13 @@ func (h *DiscoverHandler) ProxyStream(c *gin.Context) {
 	)
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		// Surface Plex's error verbatim so the user understands it's a source
-		// issue (server unreachable, relay blocked, transcode refused) and not
-		// something the proxy introduced. Logged above so the operator can
-		// correlate with the request ID from the http_request middleware.
+		// Surface the upstream's error verbatim so the user understands it's
+		// a source issue (server unreachable, transcode refused) and not
+		// something the proxy introduced.
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<10))
 		h.deps.Logger.Warn(
-			"plex stream proxy upstream non-2xx",
+			"stream proxy upstream non-2xx",
+			"provider", provider,
 			"slug", slug,
 			"status", resp.StatusCode,
 			"body", strings.TrimSpace(string(body)),
@@ -746,12 +1353,16 @@ func (h *DiscoverHandler) ProxyStream(c *gin.Context) {
 		return
 	}
 
-	if serveManifest && resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		// Read & rewrite the manifest so every URL line points at our proxy's
-		// segment endpoint instead of Plex's CORS-blocked URL.
+	if servePlaylist && resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		// Read & rewrite the playlist so every URL line points at our proxy's
+		// segment endpoint instead of the upstream's CORS-blocked URL. This
+		// covers the master AND every variant/media playlist — leaving a
+		// media playlist untouched makes hls.js resolve its segment lines
+		// against the proxy URL, which 404s, trips CORS or yields
+		// non-segment data (bufferAppendingError).
 		body, err := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
 		if err == nil {
-			rewritten := rewriteStreamManifest(string(body), proxyBaseURL, slug)
+			rewritten := rewriteStreamManifest(string(body), proxyBaseURL, slug, episodeID, targetIsJellyfin)
 			c.Header("Content-Type", "application/vnd.apple.mpegurl")
 			_, _ = c.Writer.WriteString(rewritten)
 			return
@@ -782,67 +1393,324 @@ func buildPlexSegmentURL(manifestURL, origin string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if strings.HasPrefix(origin, "/") {
-		// Origin is already an absolute path on the Plex host.
-		u.Path = origin
-	} else {
+	// Plex appends the transcode session (and often X-Plex-Token) to EVERY
+	// URL line in its playlists (e.g. `/video/:/transcode/universal/0.m3u8?
+	// session=…&X-Plex-Platform=…`). That query string must ride as real
+	// query params: baking it into the Path field makes url.URL percent-
+	// escape the `?` into `%3F`, so the upstream Plex receives a mangled URL
+	// and answers 500 — which the player sees as the very first
+	// levelLoadError after the (rewritten) master parsed fine.
+	ref := origin
+	if !strings.HasPrefix(ref, "/") {
 		// Bare filename — append under the transcode universal prefix,
 		// replacing the `start` leaf that kick-started the session.
-		base := strings.TrimSuffix(u.Path, "/start")
-		u.Path = base + "/" + origin
+		ref = strings.TrimSuffix(u.Path, "/start") + "/" + ref
 	}
-	// The token travels in the header, not the URL — strip any query
-	// string from the manifest URL when forwarding as a segment URL.
-	q := u.Query()
+	refPath, refQuery, hasQuery := strings.Cut(ref, "?")
+	u.Path = refPath
+	q := url.Values{}
+	if hasQuery {
+		// The reference carries its own session params — those are what Plex
+		// needs to bind this sub-resource to the on-going transcode session.
+		if parsed, perr := url.ParseQuery(refQuery); perr == nil {
+			q = parsed
+		}
+	} else {
+		// No query on the reference — inherit the manifest's transcode
+		// params (session, path, …) instead so the session still binds.
+		q = u.Query()
+	}
+	// The token travels in the header, not the URL — never forward an
+	// X-Plex-Token that the manifest rewriter kept inside the origin.
 	q.Del("X-Plex-Token")
 	u.RawQuery = q.Encode()
 	return u.String(), nil
 }
 
-// rewriteStreamManifest converts every URL line in an HLS manifest (whether
-// absolute, like `http://plex/...`, or relative, like `0.ts`) into an
-// absolute URL pointing at our same-origin proxy. This sidesteps three
-// issues with raw Plex URLs in the browser:
+// rewriteStreamManifest converts every URL reference in an HLS manifest into
+// an absolute URL pointing at our same-origin proxy. Two kinds of references
+// are rewritten:
 //
-//  1. Plex rarely sends `Access-Control-Allow-Origin` headers.
-//  2. Variant playlists in master playlists are typically absolute, so
-//     relative URL resolution against the manifest URL doesn't reach them
-//     (hls.js would otherwise fetch them directly from Plex => CORS fail).
-//  3. The transcode session ID is opaque: the only safe way to traverse
-//     it is to proxy every related fetch and let the backend's same
-//     request reach Plex.
+//  1. Bare URL lines (variant playlists, media segments, init segments) —
+//     whether absolute (`http://media-server:8096/...`), root-relative
+//     (`/Videos/...`) or bare (`0.ts`).
+//  2. `URI="..."` attributes inside HLS tag lines — `#EXT-X-MEDIA` audio /
+//     subtitle groups, `#EXT-X-MAP` init segments, `#EXT-X-KEY` keys and
+//     `#EXT-X-I-FRAME-STREAM-INF` thumbnails. Jellyfin emits audio-group URIs
+//     as root-relative `/Videos/...` references; leaving them untouched makes
+//     the browser fetch them straight from the media server and trip CORS —
+//     exactly the failure this proxy exists to prevent (silent no-audio or a
+//     hard NETWORK_ERROR).
 //
-// Lines starting with `#` (HLS tags) are left untouched.
-func rewriteStreamManifest(manifest, proxyBaseURL, slug string) string {
+// Non-stream lines and non-stream tag attributes (data URIs, etc.) are copied
+// verbatim. The rewritten reference carries the upstream path URL-encoded in a
+// single trailing segment (`/segment/<origin>`); the proxy receives it already
+// percent-decoded (net/http decodes URL.Path before gin matches), so no
+// server-side unescape is needed and nothing can be double-decoded.
+//
+// When the master was requested for a specific episode, `episodeId` is
+// appended to every rewritten URL: segment / variant requests would otherwise
+// reach the proxy without it and re-resolve the stream key as a MOVIE (the
+// episode lookup falls back to the series title), breaking series playback.
+//
+// `declareCodecs` controls whether variants missing a CODECS attribute get the
+// h264 High + AAC declaration (see streamCodecsAttr). Only Jellyfin sessions
+// are eligible — they always force VideoCodec=h264&AudioCodec=aac upstream and
+// the transcode output is h264 High. The legacy Plex fallback path must NOT
+// get the declaration: its output profile is not under our control.
+func rewriteStreamManifest(manifest, proxyBaseURL, slug, episodeID string, declareCodecs bool) string {
+	qs := ""
+	if episodeID != "" {
+		qs = "?episodeId=" + url.QueryEscape(episodeID)
+	}
 	var out strings.Builder
 	lines := strings.Split(manifest, "\n")
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
-		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+		if trimmed == "" {
 			out.WriteString(line)
 			out.WriteString("\n")
 			continue
 		}
-		if !looksLikeStreamURL(trimmed) {
-			out.WriteString(line)
+		if strings.HasPrefix(trimmed, "#") {
+			// #EXT-X-STREAM-INF describes the playlist on its NEXT line, so it is
+			// not a URI-bearing tag — but its attribute list may be missing the
+			// CODECS declaration that hls.js needs to size the MSE SourceBuffer.
+			// Jellyfin never emits CODECS (its web client learns codecs from the
+			// PlaybackInfo API); without it hls.js falls back to its own guess
+			// (often H.264 Baseline) and Chromium's MSE rejects the High-profile
+			// segments the transcode actually produces — bufferAppendingError on
+			// every append. Declare the codecs we forced upstream instead.
+			if strings.HasPrefix(trimmed, "#EXT-X-STREAM-INF:") {
+				if declareCodecs {
+					out.WriteString(injectStreamCodecs(line))
+				} else {
+					out.WriteString(line)
+				}
+			} else if isURIBearingTag(trimmed) {
+				out.WriteString(rewriteTagURIs(line, proxyBaseURL, slug, qs))
+			} else {
+				out.WriteString(line)
+			}
 			out.WriteString("\n")
 			continue
 		}
-		origin := trimmed
-		if u, err := url.Parse(trimmed); err == nil && u.Scheme != "" && u.Host != "" {
-			origin = strings.TrimPrefix(u.Path, "/")
-		}
-		// Encode the upstream path so every troublesome character (slashes,
-		// colons, dots) rides inside one URL segment. url.PathEscape leaves
-		// slashes unescaped which would break gin's catch-all routing — use
-		// url.QueryEscape instead, which escapes the full RFC 3986 reserved
-		// set, then have the proxy decode it before forwarding to Plex.
-		rewritten := fmt.Sprintf(
-			"%s%s/api/v1/discover/item/%s/stream/proxy/segment/%s",
-			proxyBaseURL, basePathFromRequest(proxyBaseURL), slug, url.QueryEscape(origin),
-		)
-		out.WriteString(rewritten)
+		out.WriteString(rewriteStreamReference(line, proxyBaseURL, slug, qs))
 		out.WriteString("\n")
+	}
+	return out.String()
+}
+
+// streamCodecsAttr is the CODECS value we declare on variants whose
+// #EXT-X-STREAM-INF line omits it. The proxy forces VideoCodec=h264&
+// AudioCodec=aac on every Jellyfin master (see services.hlsCodecParams) and
+// the transcoded output is H.264 High + AAC-LC (libx264's default profile;
+// verified with ffprobe on the live segments). High up to level 5.1
+// (avc1.640033) covers every resolution the transcode can emit — declaring a
+// level higher than the actual stream is always valid for MSE, while the
+// default hls.js guess (Baseline avc1.42e01e) rejects High-profile data.
+const streamCodecsAttr = `CODECS="avc1.640033,mp4a.40.2"`
+
+// injectStreamCodecs appends a CODECS attribute to an #EXT-X-STREAM-INF line
+// that does not already declare one. HLS attribute lists are unordered
+// key=value pairs, so appending at the end is spec-valid; a trailing \r (CRLF
+// playlists) is preserved.
+func injectStreamCodecs(line string) string {
+	if strings.Contains(line, "CODECS=") {
+		return line
+	}
+	trimmed := strings.TrimSuffix(line, "\r")
+	if trimmed == line {
+		return line + "," + streamCodecsAttr
+	}
+	return trimmed + "," + streamCodecsAttr + "\r"
+}
+
+// isURIBearingTag reports whether an HLS tag carries a URI="..." attribute
+// whose value must be proxied alongside the bare URL lines. Tags that only
+// describe playlists on their *next* line (#EXT-X-STREAM-INF) are not listed:
+// their URI rides on the following plain line, which the main loop rewrites.
+func isURIBearingTag(tag string) bool {
+	for _, prefix := range []string{
+		"#EXT-X-MEDIA:",
+		"#EXT-X-MAP:",
+		"#EXT-X-KEY:",
+		"#EXT-X-I-FRAME-STREAM-INF:",
+	} {
+		if strings.HasPrefix(tag, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// rewriteStreamReference maps one stream URL reference to our same-origin
+// proxy segment endpoint. Absolute URLs lose their origin (the request is
+// always forwarded to the configured media server), but keep any query string
+// so provider-specific parameters (MediaSourceId, VideoCodec, …) survive the
+// trip. Non-stream references pass through unchanged.
+//
+// The origin is encoded with escapeOriginSegment: EVERY byte outside the RFC
+// 3986 unreserved set (`A-Za-z0-9-_.~`) is percent-escaped — including the
+// sub-delims (`&`, `=`, `+`, `:`, `;`, …) that url.PathEscape leaves raw.
+// A raw `&` inside a path makes the URL ambiguous to any intermediate that
+// parses query separators (Next.js dev rewrites, CDNs), and raw `=`/`+` can
+// be re-interpreted by parsers; full escaping makes the origin a single
+// opaque path segment that a single decode — which net/http already performed
+// before gin matched the route — restores byte-for-byte. `qs` (the proxy's
+// own query string, e.g. `?episodeId=…`) rides as a real query on the
+// rewritten URL, never inside the encoded origin.
+func rewriteStreamReference(ref, proxyBaseURL, slug, qs string) string {
+	trimmed := strings.TrimSpace(ref)
+	if trimmed == "" || !looksLikeStreamURL(trimmed) {
+		return ref
+	}
+	origin := trimmed
+	if u, err := url.Parse(trimmed); err == nil && u.Scheme != "" && u.Host != "" {
+		origin = strings.TrimPrefix(u.Path, "/")
+		if u.RawQuery != "" {
+			origin += "?" + u.RawQuery
+		}
+	}
+	return fmt.Sprintf(
+		"%s%s/api/v1/discover/item/%s/stream/proxy/segment/%s%s",
+		proxyBaseURL, basePathFromRequest(proxyBaseURL), slug, escapeOriginSegment(origin), qs,
+	)
+}
+
+// escapeOriginSegment percent-escapes every byte of a stream reference except
+// RFC 3986 unreserved characters, so the result is one opaque, unambiguous
+// URL path segment. Unlike url.PathEscape it does NOT leave `&`, `=`, `+`,
+// `:` or `;` raw (those would be misparsed by URL/query-aware intermediaries),
+// and unlike url.QueryEscape it never uses `+` for spaces (a literal `+` in
+// the origin must survive the round trip). A single path decode on the
+// receiving side restores the origin exactly.
+func escapeOriginSegment(s string) string {
+	const hex = "0123456789ABCDEF"
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+			c == '-' || c == '_' || c == '.' || c == '~' {
+			b.WriteByte(c)
+			continue
+		}
+		b.WriteByte('%')
+		b.WriteByte(hex[c>>4])
+		b.WriteByte(hex[c&0x0F])
+	}
+	return b.String()
+}
+
+// decodeSegmentRef turns the gin subpath of a /segment/* request into the
+// upstream reference handed to the provider's BuildSegmentURL. gin/net-http
+// already percent-decoded the request path, so the reference is used
+// verbatim — a second unescape would corrupt origins that legitimately
+// contain `%XX` sequences (Plex `path=%2F…` params double-decode into raw
+// slashes) and mangle literal `+`/`%` bytes. Some proxies (Next.js dev
+// rewrites) additionally split the origin's query out of the path into the
+// request's real query string; mergeSegmentQuery re-attaches it.
+func decodeSegmentRef(subpath, rawQuery string) string {
+	return mergeSegmentQuery(strings.TrimLeft(subpath, "/"), rawQuery)
+}
+
+// mergeSessionParams injects the master's transcode session + forced codec
+// params (DeviceId, MediaSourceId, VideoCodec, AudioCodec, …) into a
+// variant/segment reference that omitted them. Jellyfin's media playlists are
+// not guaranteed to echo the full query on every URL line; without the
+// injection each upstream request would start its own session with DEFAULT
+// codecs (an HEVC remux for bridged sources), which Chromium's MSE cannot
+// decode — the player dies with bufferAppendingError. Params already present
+// on the reference win (they are authoritative); api_key is skipped
+// (BuildSegmentURL injects our own).
+func mergeSessionParams(ref string, q url.Values) string {
+	if len(q) == 0 || ref == "" {
+		return ref
+	}
+	pathPart, rawQuery, _ := strings.Cut(ref, "?")
+	merged, err := url.ParseQuery(rawQuery)
+	if err != nil {
+		merged = url.Values{}
+	}
+	changed := false
+	for k, vs := range q {
+		if k == "api_key" {
+			continue
+		}
+		if _, ok := merged[k]; !ok {
+			merged[k] = vs
+			changed = true
+		}
+	}
+	if !changed {
+		return ref
+	}
+	return pathPart + "?" + merged.Encode()
+}
+
+// mergeSegmentQuery re-attaches a proxy-decoded query string to a segment
+// reference. Proxies that normalize request paths (Next.js dev rewrites)
+// split the origin's encoded query out of the path and hand it to us as a
+// real query string; without merging it back, the upstream variant / segment
+// request loses its transcode session and codec params (DeviceId,
+// MediaSourceId, VideoCodec, …) and Jellyfin starts a fresh session with
+// default codecs. The proxy's own episodeId param is never part of the
+// origin and is excluded. If the reference already carries its query (the
+// path survived intact), the request query is ignored.
+func mergeSegmentQuery(segmentRelativeRef, rawQuery string) string {
+	if rawQuery == "" || strings.Contains(segmentRelativeRef, "?") {
+		return segmentRelativeRef
+	}
+	q, err := url.ParseQuery(rawQuery)
+	if err != nil {
+		return segmentRelativeRef
+	}
+	q.Del("episodeId")
+	if len(q) == 0 {
+		return segmentRelativeRef
+	}
+	return segmentRelativeRef + "?" + q.Encode()
+}
+
+// rewriteTagURIs rewrites every URI="..." attribute inside an HLS tag line in
+// place, delegating each value to rewriteStreamReference (so non-stream URIs
+// stay untouched). Handles one or several URI attributes per line.
+func rewriteTagURIs(line, proxyBaseURL, slug, qs string) string {
+	var out strings.Builder
+	out.Grow(len(line) + 96)
+	rest := line
+	for {
+		idx := strings.Index(rest, "URI=")
+		if idx < 0 {
+			out.WriteString(rest)
+			break
+		}
+		out.WriteString(rest[:idx+len("URI=")])
+		rest = rest[idx+len("URI="):]
+		// Skip whitespace before the opening quote (the HLS spec allows none,
+		// but stay tolerant of sloppy generators).
+		skip := 0
+		for skip < len(rest) && (rest[skip] == ' ' || rest[skip] == '\t') {
+			skip++
+		}
+		out.WriteString(rest[:skip])
+		rest = rest[skip:]
+		if len(rest) == 0 || rest[0] != '"' {
+			// Unterminated / unquoted attribute — copy the remainder verbatim.
+			out.WriteString(rest)
+			break
+		}
+		out.WriteString(`"`)
+		rest = rest[1:]
+		closeIdx := strings.IndexByte(rest, '"')
+		if closeIdx < 0 {
+			out.WriteString(rest)
+			break
+		}
+		out.WriteString(rewriteStreamReference(rest[:closeIdx], proxyBaseURL, slug, qs))
+		out.WriteString(`"`)
+		rest = rest[closeIdx+1:]
 	}
 	return out.String()
 }
@@ -860,6 +1728,15 @@ func basePathFromRequest(baseURL string) string {
 	return ""
 }
 
+// isPlaylistContentType reports whether an upstream Content-Type identifies
+// an HLS playlist (master or media). Segment responses (video/mp2t,
+// video/mp4, application/octet-stream) are NOT playlists and must stream
+// untouched.
+func isPlaylistContentType(ct string) bool {
+	lower := strings.ToLower(ct)
+	return strings.Contains(lower, "mpegurl") || strings.Contains(lower, "x-mpegurl")
+}
+
 func looksLikeStreamURL(s string) bool {
 	// Some Plex manifests append a `?session=…` query to each URL line; strip
 	// it before checking the suffix so we still recognise the file extension.
@@ -867,7 +1744,7 @@ func looksLikeStreamURL(s string) bool {
 	if i := strings.Index(check, "?"); i >= 0 {
 		check = check[:i]
 	}
-	for _, suffix := range []string{".m3u8", ".ts", ".aac", ".mp4", ".webm", ".vtt", ".m4s", ".mpd"} {
+	for _, suffix := range []string{".m3u8", ".ts", ".aac", ".mp4", ".webm", ".vtt", ".m4s", ".mpd", ".key", ".hls"} {
 		if strings.HasSuffix(check, suffix) {
 			return true
 		}

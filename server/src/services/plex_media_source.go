@@ -351,8 +351,8 @@ func BuildPlexStreamURL(ctx context.Context, client *PlexClient, ratingKey strin
 // URL for a media part path. The universal transcode endpoint is the only one
 // that honors the path/mediaIndex/partIndex/protocol query parameters — hitting
 // the server root with these params returns the Plex web app HTML instead of a
-// stream. protocol is derived from the base URL scheme so the stream link works
-// over both plain http (LAN) and https (plex.direct) servers.
+// stream. protocol is pinned to "hls" so Plex emits an HLS master playlist that
+// the same-origin proxy can re-write for the browser.
 func buildPlexUniversalStreamURL(baseURL, partPath, token, profile string) (string, error) {
 	u, err := url.Parse(baseURL)
 	if err != nil {
@@ -363,14 +363,17 @@ func buildPlexUniversalStreamURL(baseURL, partPath, token, profile string) (stri
 	q.Set("path", partPath)
 	q.Set("mediaIndex", "0")
 	q.Set("partIndex", "0")
-	protocol := "http"
-	if u.Scheme == "https" {
-		protocol = "https"
-	}
-	q.Set("protocol", protocol)
+	// protocol must be one of hls/dash/http — Plex returns HTTP 400 for any
+	// other value. "hls" is what the player needs; it is NOT derived from the
+	// URL scheme (http/https), that was the bug that 400'd every request.
+	q.Set("protocol", "hls")
+	// Force remux/transcode into browser-compatible MPEG-TS segments —
+	// browsers cannot direct-play MKV containers.
+	q.Set("directPlay", "0")
 	if profile == "" {
 		profile = "native"
 	}
+	q.Set("session", "kamisama-"+fmt.Sprintf("%x", len(partPath)))
 	q.Set("X-Plex-Token", token)
 	u.RawQuery = q.Encode()
 	return u.String(), nil

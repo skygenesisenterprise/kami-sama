@@ -153,40 +153,36 @@ func TestBuildPlexStreamURL_ProducesUniversalStartURL(t *testing.T) {
 	if q.Get("X-Plex-Token") != "fake-token" {
 		t.Fatalf("expected token to be embedded, got %q", q.Get("X-Plex-Token"))
 	}
-	if q.Get("protocol") != "http" {
-		t.Fatalf("expected http protocol for a plain http server, got %q", q.Get("protocol"))
+	// protocol is pinned to hls (the only value the universal transcode
+	// endpoint accepts that yields an HLS master playlist) — it is NOT
+	// derived from the base URL scheme (that derivation was the bug that
+	// 400'd every request on non-http servers).
+	if q.Get("protocol") != "hls" {
+		t.Fatalf("expected hls protocol, got %q", q.Get("protocol"))
 	}
 }
 
-// TestBuildPlexUniversalStreamURL_ProtocolDerivation locks the protocol query
-// param to the base URL scheme, so https (plex.direct) servers don't get an
-// http stream link.
-func TestBuildPlexUniversalStreamURL_ProtocolDerivation(t *testing.T) {
-	cases := []struct {
-		name     string
-		baseURL  string
-		protocol string
-	}{
-		{"http", "http://192.168.1.50:32400", "http"},
-		{"https", "https://abc-123.plex.direct:32400", "https"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got, err := buildPlexUniversalStreamURL(tc.baseURL, "/library/parts/1/file.mkv", "tok", "")
-			if err != nil {
-				t.Fatalf("buildPlexUniversalStreamURL: %v", err)
-			}
-			u, err := url.Parse(got)
-			if err != nil {
-				t.Fatalf("parsing produced URL: %v", err)
-			}
-			if u.Path != "/video/:/transcode/universal/start" {
-				t.Fatalf("expected universal start path, got %q", u.Path)
-			}
-			if q := u.Query(); q.Get("protocol") != tc.protocol {
-				t.Fatalf("expected protocol=%s, got %q", tc.protocol, q.Get("protocol"))
-			}
-		})
+// TestBuildPlexUniversalStreamURL_PinsHlsProtocol locks the protocol query
+// param to "hls" regardless of the base URL scheme. Plex's universal
+// transcode endpoint accepts only hls/dash/http here and returns HTTP 400
+// for anything else; deriving it from the URL scheme was the bug that 400'd
+// every request on plex.direct (https) servers.
+func TestBuildPlexUniversalStreamURL_PinsHlsProtocol(t *testing.T) {
+	for _, baseURL := range []string{"http://192.168.1.50:32400", "https://abc-123.plex.direct:32400"} {
+		got, err := buildPlexUniversalStreamURL(baseURL, "/library/parts/1/file.mkv", "tok", "")
+		if err != nil {
+			t.Fatalf("buildPlexUniversalStreamURL(%s): %v", baseURL, err)
+		}
+		u, err := url.Parse(got)
+		if err != nil {
+			t.Fatalf("parsing produced URL: %v", err)
+		}
+		if u.Path != "/video/:/transcode/universal/start" {
+			t.Fatalf("expected universal start path, got %q", u.Path)
+		}
+		if q := u.Query(); q.Get("protocol") != "hls" {
+			t.Fatalf("expected protocol=hls for %s, got %q", baseURL, q.Get("protocol"))
+		}
 	}
 }
 

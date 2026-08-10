@@ -1537,7 +1537,7 @@ function registerMediaCommands(program2) {
 import { input as input4 } from "@inquirer/prompts";
 import ora4 from "ora";
 function registerSourceCommands(program2) {
-  const source = program2.command("source").description("Manage media sources (Jellyfin, Plex, etc.)");
+  const source = program2.command("source").description("Manage the content media source (Plex, local); streaming is delegated to the media-server");
   const libraries = source.command("libraries").description("Manage source libraries");
   libraries.command("list").description("List all source libraries").action(async () => {
     requireAuth();

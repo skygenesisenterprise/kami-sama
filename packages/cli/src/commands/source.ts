@@ -7,7 +7,7 @@ import { requireAuth } from '../config/index.js';
 import { success, error, heading, output, printTable, printKeyValueTable, statusColor } from '../ui/format.js';
 
 export function registerSourceCommands(program: Command): void {
-  const source = program.command('source').description('Manage media sources (Jellyfin, Plex, etc.)');
+  const source = program.command('source').description('Manage the content media source (Plex, local); streaming is delegated to the media-server');
 
   // --- Libraries ---
   const libraries = source.command('libraries').description('Manage source libraries');

@@ -26,6 +26,12 @@ export interface VideoPlayerHandle {
   play: () => Promise<void>
   /** Pause playback (used to back out of the Netflix overlay quickly). */
   pause: () => void
+  /**
+   * Unmute the element. Must be called from a user-gesture handler when the
+   * player was started muted (see `startMuted`) so the browser allows the
+   * audio to come up — mirroring how Netflix reveals a muted preview.
+   */
+  unmute: () => void
 }
 
 interface VideoPlayerProps {
@@ -71,24 +77,35 @@ interface VideoPlayerProps {
    * this back to false so the internal button can take over for pause/resume.
    */
   hideBuiltInPlayOverlay?: boolean
+  /**
+   * Start playback muted (Netflix-style preview). Muted autoplay is exempt
+   * from browser gesture policies, so the stream genuinely starts behind the
+   * parent's overlay — the user sees the video replace the poster instead of
+   * a dead still. The parent reveals the audio by calling `unmute()` from its
+   * click handler. Defaults to false (unmuted, current behaviour).
+   */
+  startMuted?: boolean
 }
 
 /**
- * The Plex stream URL (universal transcode endpoint) can resolve to an HLS
- * manifest (`.m3u8`) when the server transcodes. Chrome/Edge/Firefox cannot
- * play HLS natively, so we attach hls.js for those browsers and fall back to
- * the native <video> playback everywhere else (Safari supports HLS natively,
+ * The media-server stream URL (Jellyfin HLS master playlist, or the legacy
+ * Plex universal transcode endpoint) can resolve to an HLS manifest
+ * (`.m3u8`) when the server transcodes. Chrome/Edge/Firefox cannot play HLS
+ * natively, so we attach hls.js for those browsers and fall back to the
+ * native <video> playback everywhere else (Safari supports HLS natively,
  * and plain mp4 streams play without any shim).
  */
 function isHlsUrl(url: string): boolean {
-  return url.toLowerCase().includes('.m3u8')
+  const lower = url.toLowerCase()
+  return lower.includes('.m3u8') || lower.includes('/proxy/manifest')
 }
 
 /**
  * Translates a `<video>.error.code` into a human readable string the watch
- * page can show in its error banner. Plex transcode endpoints usually hit
- * MEDIA_ERR_NETWORK behind CORS or auth issues; MEDIA_ERR_DECODE when the
- * manifest variant list and the requested codec don't agree.
+ * page can show in its error banner. Media-server transcode endpoints
+ * usually hit MEDIA_ERR_NETWORK behind CORS or auth issues;
+ * MEDIA_ERR_DECODE when the manifest variant list and the requested codec
+ * don't agree.
  */
 function describeMediaError(code: number): string {
   switch (code) {
@@ -114,6 +131,7 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(function Vid
     onPlaybackError,
     onPlaybackReady,
     hideBuiltInPlayOverlay = false,
+    startMuted = false,
   },
   ref
 ) {
@@ -121,6 +139,22 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(function Vid
   const containerRef = useRef<HTMLDivElement>(null)
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const hlsRef = useRef<Hls | null>(null)
+  // Set to true the first time a persistent MEDIA_ERROR forces a full stream
+  // restart (destroy + re-attach) — only ONE automatic restart per source is
+  // allowed, so a genuinely undecodable stream surfaces an error banner
+  // instead of remounting the player in a loop.
+  const restartedRef = useRef(false)
+
+  // ── HLS resilience budget ─────────────────────────────────────────────────
+  // A media-server (Jellyfin) transcode session is not ready the instant the
+  // player mounts: the first manifest / segment requests routinely fail while
+  // ffmpeg spins up, and hls.js's stock retry counts (1 for the manifest, 2
+  // for fragments) are exhausted in a couple of seconds. Instead of raising a
+  // blocking "Lecture impossible" banner on the very first hiccup, we retry
+  // silently with backoff and only surface onPlaybackError once the stream
+  // has burned through the whole budget (≈ several seconds of genuine outage).
+  const fatalRetryCount = useRef(0)
+  const MAX_FATAL_RETRIES = 4
 
   /**
    * Becomes `false` synchronously on unmount. Any deferred callback that
@@ -133,7 +167,9 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(function Vid
   const mountedRef = useRef(true)
 
   const [playing, setPlaying] = useState(false)
-  const [muted, setMuted] = useState(false)
+  // Initialised from `startMuted` so a muted preview starts with the correct
+  // icon/slider state without a second render.
+  const [muted, setMuted] = useState(startMuted)
   const [volume, setVolume] = useState(1)
   const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState(0)
@@ -176,6 +212,17 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(function Vid
       mountedRef.current = false
     }
   }, [])
+
+  // Muted-preview mode: enforce muted on the live element. Declared before
+  // the hls.js attach effect so the browser already considers the element
+  // muted by the time MANIFEST_PARSED fires `play()` — that is what makes
+  // autoplay legal without a user gesture.
+  useEffect(() => {
+    const v = videoRef.current
+    if (v && startMuted) {
+      v.muted = true
+    }
+  }, [startMuted])
 
   // Toggle helpers — pure side-effects on the current `<video>` ref. Defined
   // before the keyboard listener so its closure can reference them. The
@@ -267,51 +314,196 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(function Vid
     const url = episode.videoUrl
     if (!videoEl || !url) return
 
+    console.log('[VideoPlayer] Mounting | url:', url, '| HLS supported:', Hls.isSupported(), '| native:', isHlsUrl(url) ? 'hls.js' : 'native')
+
     if (isHlsUrl(url) && Hls.isSupported()) {
-      const hls = new Hls({ enableWorker: true })
-      hls.loadSource(url)
-      hls.attachMedia(videoEl)
-      hlsRef.current = hls
-      hls.on(Hls.Events.MANIFEST_PARSED, () => {
-        setDuration(hls.media?.duration ?? 0)
-        // Strong signal the stream URL is valid and hls.js has the manifest
-        // parsed. Lets the parent dismiss any stale playback banner \u2014 useful
-        // when the prior attempt 404'd but `startLoad()` quietly recovered.
-        if (mountedRef.current) onPlaybackReady?.()
-        // Kick off playback as soon as the manifest is parsed. The `autoPlay`
-        // attribute on the <video> element can't trigger this on its own
-        // because hls.js owns the source — the manifest is never pointed at
-        // by <video>.src, so the browser has no signal to call play().
-        if (autoPlay) {
-          videoEl.play().catch(() => undefined)
-        }
-      })
-      hls.on(Hls.Events.ERROR, (_event, data) => {
-        if (!data.fatal) return
-        if (!mountedRef.current) return
-        switch (data.type) {
-          case Hls.ErrorTypes.NETWORK_ERROR:
-            // Manifest unreachable — bubble up so the user sees a real cause
-            // instead of a frozen spinner.
-            onPlaybackError?.(
-              "Le serveur vidéo est injoignable (CORS ou réseau)."
+            console.log('[VideoPlayer] Initializing hls.js for:', url)
+      // Only ONE full stream restart per source is allowed after repeated
+      // media errors; beyond that it is a real decode failure that must be
+      // surfaced instead of looping recoverMediaError() forever (which only
+      // re-detaches the MediaSource and re-triggers the NotSupportedError /
+      // bufferAppendingError storm seen in the field).
+      restartedRef.current = false
+
+      const makeHls = () => {
+        const hls = new Hls({
+          enableWorker: true,
+          manifestLoadingMaxRetry: 5,
+          manifestLoadingRetryDelay: 1000,
+          manifestLoadingMaxRetryTimeout: 30000,
+          levelLoadingMaxRetry: 5,
+          levelLoadingRetryDelay: 1000,
+          // hls.js defaults to an 8s level timeout — too tight for a cold
+          // media-server transcode, which can take 10-30s to probe a remote
+          // (bridged Plex .strm) source before answering the first variant
+          // request. Without a longer budget the player burns its whole retry
+          // allowance on the cold session and surfaces a fake 'Lecture
+          // impossible' banner.
+          levelLoadingTimeOut: 30000,
+          fragLoadingMaxRetry: 8,
+          fragLoadingRetryDelay: 1000,
+          fragLoadingMaxRetryTimeout: 60000,
+          fragLoadingTimeOut: 45000,
+          maxBufferLength: 30,
+          // hls.js 1.6 defaults to a 0.1s hole tolerance — too tight for a
+          // transcoded remux, where audio/video PTS alignment routinely leaves
+          // sub-second gaps between appended fragments. With the default, the
+          // gap-controller reports a stall (and, previously, the player tore
+          // down the MediaSource) instead of quietly jumping the micro-hole.
+          // 2s lets playback flow over those gaps without ever stalling.
+          maxBufferHole: 2,
+        })
+        fatalRetryCount.current = 0
+        hls.loadSource(url)
+        hls.attachMedia(videoEl)
+        hlsRef.current = hls
+        // Consecutive MEDIA_ERRORs on THIS instance. A single append hiccup
+        // is transient; a persistent one means the browser's MSE rejects the
+        // data (codec mismatch) and recovery must escalate, not loop.
+        let mediaErrors = 0
+
+        hls.on(Hls.Events.MANIFEST_PARSED, (_ev, data) => {
+          console.log('[VideoPlayer] MANIFEST_PARSED | levels:', data.levels?.length, '| duration:', hls.media?.duration)
+          fatalRetryCount.current = 0
+          setDuration(hls.media?.duration ?? 0)
+          // Strong signal the stream URL is valid and hls.js has the manifest
+          // parsed. Lets the parent dismiss any stale playback banner — useful
+          // when the prior attempt 404'd but `startLoad()` quietly recovered.
+          if (mountedRef.current) onPlaybackReady?.()
+          // Kick off playback as soon as the manifest is parsed. The `autoPlay`
+          // attribute on the <video> element can't trigger this on its own
+          // because hls.js owns the source — the manifest is never pointed at
+          // by <video>.src, so the browser has no signal to call play().
+          if (autoPlay) {
+            console.log('[VideoPlayer] Calling video.play()...')
+            const attemptPlay = (canRetry: boolean) => {
+              videoEl.play().catch((e: unknown) => {
+                // React StrictMode's double-mount aborts the first play() with
+                // an AbortError ("interrupted by a call to pause()"). Retry
+                // once, after the remount settles, so the muted autoplay still
+                // takes hold instead of silently never starting.
+                const err = e as DOMException | undefined
+                if (
+                  canRetry &&
+                  err?.name === 'AbortError' &&
+                  mountedRef.current &&
+                  hlsRef.current === hls
+                ) {
+                  setTimeout(() => attemptPlay(false), 500)
+                  return
+                }
+                console.warn('[VideoPlayer] play() rejected:', err?.name, err?.message)
+              })
+            }
+            attemptPlay(true)
+          }
+        })
+        hls.on(Hls.Events.BUFFER_CREATED, (_ev, bufferData) => {
+          // Diagnostic: the exact SourceBuffer types hls.js created. If the
+          // codec declared here does not match the segment data, the browser
+          // rejects every append (bufferAppendingError). Expect something
+          // like `video:video/mp4;codecs=avc1.640028 | audio:audio/mp4;
+          // codecs=mp4a.40.2` for the h264/aac transcode this proxy forces.
+          const desc = (
+            Object.entries(bufferData.tracks) as [
+              string,
+              { container?: string; codec?: string; levelCodec?: string }
+            ][]
+          )
+            .map(
+              ([name, t]) =>
+                `${name}:${t.container};codecs=${t.codec}` +
+                (t.levelCodec ? `(level:${t.levelCodec})` : '')
             )
-            hls.startLoad()
-            break
-          case Hls.ErrorTypes.MEDIA_ERROR:
-            // Codec error in a segment — hls.js can usually recover by
-            // skipping the bad segment; don't surface in that case.
-            hls.recoverMediaError()
-            break
-          default:
-            hls.destroy()
-            hlsRef.current = null
-            onPlaybackError?.(
-              "Le flux n'a pas pu être lu (erreur codec ou playlist invalide)."
-            )
-            break
-        }
-      })
+            .join(' | ')
+          console.log('[VideoPlayer] BUFFER_CREATED |', desc)
+        })
+        hls.on(Hls.Events.ERROR, (_event, data) => {
+          console.error('[VideoPlayer] hls.js ERROR | type:', data.type, '| fatal:', data.fatal, '| details:', data.details, '| response:', data.response?.code)
+          if (!mountedRef.current) return
+          // hls.js's gap-controller handles buffer stalls / holes on its own by
+          // nudging the playhead (BUFFER_STALLED_ERROR, BUFFER_SEEK_OVER_HOLE,
+          // BUFFER_NUDGE_ON_STALL). These arrive with `fatal: false` and hls.js
+          // itself registers them as "do nothing". Escalating here would call
+          // recoverMediaError(), which detaches and re-attaches the whole
+          // MediaSource and flushes the buffer — the video freezes, restarts,
+          // re-buffers and stutters (the exact "not smooth like Netflix"
+          // symptom). Only FATAL media errors need our recovery ladder below.
+          if (data.type === Hls.ErrorTypes.MEDIA_ERROR && !data.fatal) {
+            return
+          }
+          switch (data.type) {
+            case Hls.ErrorTypes.NETWORK_ERROR:
+              // Manifest or segment unreachable. Most often transient — the
+              // transcode session was still warming up — so reload the stream
+              // silently with a short backoff. Only after the whole budget is
+              // spent (genuine outage: media-server down, CORS misconfig, …) do
+              // we bubble the failure up to the parent's error banner.
+              if (fatalRetryCount.current < MAX_FATAL_RETRIES) {
+                fatalRetryCount.current++
+                const attempt = fatalRetryCount.current
+                console.log('[VideoPlayer] NETWORK_ERROR retry', attempt, '/', MAX_FATAL_RETRIES)
+                setTimeout(() => {
+                  // Only restart if this is still the live session — the
+                  // effect cleanup tears hls down on episode switches / unmount
+                  // and must not be re-awakened by a stale timer.
+                  if (mountedRef.current && hlsRef.current === hls) {
+                    hls.startLoad()
+                  }
+                }, 1000 * attempt)
+                return
+              }
+              onPlaybackError?.(
+                "Le serveur vidéo est injoignable (CORS ou réseau)."
+              )
+              break
+            case Hls.ErrorTypes.MEDIA_ERROR:
+              // A single append/codec hiccup is transient — hls.js can skip
+              // the bad fragment. But when the SAME append keeps failing (the
+              // browser MSE rejects the data), recoverMediaError() only
+              // detaches/re-attaches the MediaSource in a loop and re-triggers
+              // NotSupportedError. Recover twice, restart the whole stream
+              // once (a fresh session behind the same proxy URL), then surface
+              // a real error message instead of spinning forever.
+              mediaErrors += 1
+              if (mediaErrors <= 2) {
+                hls.recoverMediaError()
+              } else if (mediaErrors <= 4 && !restartedRef.current) {
+                restartedRef.current = true
+                console.log('[VideoPlayer] MEDIA_ERROR persistent — restarting stream once')
+                const doomed = hlsRef.current
+                hlsRef.current = null
+                try {
+                  doomed?.destroy()
+                } catch {
+                  /* ignore */
+                }
+                setTimeout(() => {
+                  // Only re-attach if the component is still mounted and no
+                  // newer instance (episode switch / unmount) took over.
+                  if (mountedRef.current && hlsRef.current === null) {
+                    makeHls()
+                  }
+                }, 400)
+              } else {
+                onPlaybackError?.(
+                  "Erreur de lecture : le flux renvoyé par le serveur est illisible (erreur de décodage audio ou vidéo)."
+                )
+              }
+              break
+            default:
+              hls.destroy()
+              hlsRef.current = null
+              onPlaybackError?.(
+                "Le flux n'a pas pu être lu (erreur codec ou playlist invalide)."
+              )
+              break
+          }
+        })
+        return hls
+      }
+
+      const hls = makeHls()
       return () => {
         // Pause first so any in-flight `play()` Promise settles cleanly
         // (with an AbortError, which is filtered above) before we tear
@@ -328,7 +520,7 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(function Vid
       }
     }
 
-    // Non-HLS (mp4 / direct play) or native HLS (Safari): let the browser
+// Non-HLS (mp4 / direct play) or native HLS (Safari): let the browser
     // drive playback through the <source> element below.
     return () => {
       hlsRef.current = null
@@ -402,6 +594,12 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(function Vid
       },
       pause: () => {
         videoRef.current?.pause()
+      },
+      unmute: () => {
+        const videoEl = videoRef.current
+        if (!videoEl) return
+        videoEl.muted = false
+        setMuted(false)
       },
     }),
     [onPlaybackError]
@@ -535,7 +733,14 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(function Vid
       {/* Video element */}
       <video
         ref={videoRef}
-        className="aspect-24/9 w-full bg-black object-contain"
+        // In-page: wide cinematic 24:9 frame, the video fills the full width
+        // and is cropped top/bottom (object-cover) so there are no pillarbox
+        // bars. In fullscreen: drop the aspect frame and let the video fill
+        // the ENTIRE screen edge-to-edge, same treatment as in-page — the
+        // video is always full-bleed, never letterboxed on any monitor ratio.
+        className={`w-full bg-black object-cover ${
+          isFullscreen ? 'h-full' : 'aspect-24/9'
+        }`}
         // Prefer the landscape backdrop over the portrait poster so the
         // pre-play frame isn't the item's portrait artwork.
         poster={episode.cover || episode.thumbnail}
@@ -544,8 +749,17 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(function Vid
         // The `autoPlay` attribute kicks off native playback on mount
         // (mp4 / Safari HLS). hls.js sessions rely on the useEffect above
         // after MANIFEST_PARSED since the <video> src never points at the
-        // .m3u8 itself in that path.
-        autoPlay={autoPlay}
+        // .m3u8 itself in that path — keeping the native attribute there makes
+        // the browser issue a SECOND, redundant play() on the src-less
+        // element, which the effect cleanup's pause() then interrupts,
+        // surfacing an unhandled "AbortError: The play() request was
+        // interrupted by a call to pause()". So the attribute is only set
+        // when the browser drives playback natively (Safari HLS / direct mp4).
+        autoPlay={autoPlay && !hlsDrivesPlayback}
+        // Bound to the component state (not `startMuted`) so toggleMute /
+        // unmute() stay in control. A muted element makes autoplay legal
+        // without a user gesture — the muted preview relies on this.
+        muted={muted}
         // crossOrigin is only required when reading captions/canvas; leaving it
         // unset lets browsers play cross-origin streams (e.g. Plex direct play)
         // without requiring the media server to send CORS headers.
@@ -571,14 +785,16 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(function Vid
         onProgress={handleProgress}
         onClick={togglePlay}
         onError={(e) => {
-          // MEDIA_ERR_ABORTED (code 1) fires every time the <video> element
-          // is detached from the document — Retry button, episode switch, HMR
-          // page reload. It's not a stream fault and must not surface as an
-          // error banner. Anything fireing after unmount is similarly noise.
           if (!mountedRef.current) return
           const target = e.currentTarget as HTMLVideoElement
           const code = target.error?.code ?? 0
+          console.error('[VideoPlayer] <video> error | code:', code, '| message:', target.error?.message)
           if (code === 1) return
+          // When hls.js owns the stream, MEDIA_ERR_NETWORK usually tags along
+          // with a transient fragment hiccup that hls.js retries on its own
+          // (see the silent startLoad() budget above). Don't stack a second
+          // blocking banner on top of that recovery path.
+          if (hlsDrivesPlayback && code === 2) return
           onPlaybackError?.(describeMediaError(code))
         }}
         onWaiting={() => {

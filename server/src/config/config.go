@@ -123,6 +123,11 @@ type MyAnimeListConfig struct {
 	SyncInterval  time.Duration
 }
 
+// MediaSourceConfig separates the two provider roles:
+//   - Type selects the CONTENT provider (plex | local) that feeds the catalog
+//     database through the /api/v1/source/* multiplexer.
+//   - Jellyfin is a STREAMING provider only: it is wired independently below
+//     (whenever its credentials are present) and never imports content.
 type MediaSourceConfig struct {
 	Enabled  bool
 	Type     string
@@ -130,6 +135,10 @@ type MediaSourceConfig struct {
 	Plex     PlexConfig
 }
 
+// JellyfinConfig configures the media-server (Jellyfin) streaming provider.
+// It backs ALL playback for the public /watch page (HLS resolution + same-
+// origin proxy in routes/discover.go) and is independent of the content
+// provider selection (MediaSourceConfig.Type).
 type JellyfinConfig struct {
 	URL           string
 	APIKey        string
@@ -137,6 +146,14 @@ type JellyfinConfig struct {
 	SyncInterval  time.Duration
 	StreamProfile string
 	CacheTTL      time.Duration
+	// StrmDir is the writable directory (shared with the media-server
+	// container) where the worker drops .strm files so Jellyfin's library
+	// scanner turns a Plex URL into a transcodeable item.
+	StrmDir string
+	// StrmLibraryName / StrmLibraryPath describe the Jellyfin virtual folder
+	// that backs .strm bridging (auto-created if missing).
+	StrmLibraryName string
+	StrmLibraryPath string
 }
 
 // PlexConfig configures the Plex Media Server integration.
@@ -259,12 +276,15 @@ func Load() (Config, error) {
 			Enabled: getEnvBool("MEDIA_SOURCE_ENABLED", false),
 			Type:    getEnv("MEDIA_SOURCE_TYPE", "local"),
 			Jellyfin: JellyfinConfig{
-				URL:           getEnv("MEDIA_SOURCE_JELLYFIN_URL", "http://localhost:8096"),
-				APIKey:        getEnv("MEDIA_SOURCE_JELLYFIN_API_KEY", ""),
-				UserID:        getEnv("MEDIA_SOURCE_JELLYFIN_USER_ID", ""),
-				SyncInterval:  getEnvDuration("MEDIA_SOURCE_SYNC_INTERVAL", time.Hour),
-				StreamProfile: getEnv("MEDIA_SOURCE_STREAM_PROFILE", "native"),
-				CacheTTL:      getEnvDuration("MEDIA_SOURCE_CACHE_TTL", 5*time.Minute),
+				URL:              getEnv("MEDIA_SOURCE_JELLYFIN_URL", "http://media-server:8096"),
+				APIKey:           getEnv("MEDIA_SOURCE_JELLYFIN_API_KEY", "795337733c3d47778b206b7f469b1467"),
+				UserID:           getEnv("MEDIA_SOURCE_JELLYFIN_USER_ID", "c8aa35777aae4664a0d4904d814a0e78"),
+				SyncInterval:     getEnvDuration("MEDIA_SOURCE_SYNC_INTERVAL", time.Hour),
+				StreamProfile:    getEnv("MEDIA_SOURCE_STREAM_PROFILE", "native"),
+				CacheTTL:         getEnvDuration("MEDIA_SOURCE_CACHE_TTL", 5*time.Minute),
+				StrmDir:          getEnv("MEDIA_SOURCE_JELLYFIN_STRM_DIR", "/remote-media"),
+				StrmLibraryName:  getEnv("MEDIA_SOURCE_JELLYFIN_STRM_LIBRARY", "Remote"),
+				StrmLibraryPath:  getEnv("MEDIA_SOURCE_JELLYFIN_STRM_LIBRARY_PATH", "/remote-media"),
 			},
 			Plex: PlexConfig{
 				URL:              getEnv("MEDIA_SOURCE_PLEX_URL", ""),

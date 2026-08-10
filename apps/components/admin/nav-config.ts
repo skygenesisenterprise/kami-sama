@@ -77,7 +77,9 @@ export const navGroups: NavGroup[] = [
       { title: 'TVDB', href: '/dash/sources/tvdb', icon: Globe },
       { title: 'FanArt', href: '/dash/sources/fanart', icon: Image },
       { title: 'Plex', href: '/dash/sources/plex', icon: MonitorPlay },
-      { title: 'Jellyfin', href: '/dash/sources/jellyfin', icon: MonitorPlay },
+      // Jellyfin is a STREAMING provider, not a content source: it never
+      // appears in the catalog/sources dashboard. Playback is delegated to
+      // the media-server container by the worker (see /watch).
     ],
   },
   {

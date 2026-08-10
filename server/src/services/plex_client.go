@@ -217,6 +217,46 @@ func (c *PlexClient) PlexIdentity() map[string]string {
 	}
 }
 
+// GetDirectFileURL returns the direct file download URL for a ratingKey —
+// the raw media file path (e.g. /library/parts/895235/1779722124/file.mkv)
+// on the Plex server, without any transcode wrapping. The token travels in
+// the query so the URL can be fetched from any context (including Jellyfin's
+// remote transcoder).
+func (c *PlexClient) GetDirectFileURL(ctx context.Context, ratingKey string) (string, string, error) {
+	item, err := c.GetItemMetadata(ctx, ratingKey)
+	if err != nil {
+		return "", "", err
+	}
+	mediaRaw, ok := item["Media"].([]interface{})
+	if !ok || len(mediaRaw) == 0 {
+		return "", "", fmt.Errorf("no media available for %s", ratingKey)
+	}
+	media, ok := mediaRaw[0].(map[string]interface{})
+	if !ok {
+		return "", "", fmt.Errorf("invalid media structure for %s", ratingKey)
+	}
+	partsRaw, ok := media["Part"].([]interface{})
+	if !ok || len(partsRaw) == 0 {
+		// Single-part fallback.
+		if single, ok := media["Part"].(map[string]interface{}); ok {
+			partsRaw = []interface{}{single}
+		} else {
+			return "", "", fmt.Errorf("no parts available for %s", ratingKey)
+		}
+	}
+	part, ok := partsRaw[0].(map[string]interface{})
+	if !ok {
+		return "", "", fmt.Errorf("invalid part structure for %s", ratingKey)
+	}
+	partPath, _ := part["key"].(string)
+	if partPath == "" {
+		return "", "", fmt.Errorf("part has no key for %s", ratingKey)
+	}
+	container, _ := media["container"].(string)
+	directURL := c.baseURL + partPath + "?X-Plex-Token=" + c.token
+	return directURL, container, nil
+}
+
 // plexResponse mirrors Plex's standard JSON envelope.
 type plexResponse struct {
 	MediaContainer *plexMediaContainer `json:"MediaContainer"`

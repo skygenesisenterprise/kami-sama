@@ -44,6 +44,25 @@ export default function MovieDetailPage({ params }: MovieDetailPageProps) {
     }
   }, [slug])
 
+  // Pre-warm the stream while the user browses the detail page. The first
+  // play of a title pays a one-time Plex→Jellyfin bridge (writes a .strm,
+  // waits for the Jellyfin scan — up to 30-90s on a cold cache). Warming it
+  // here in the background means /watch starts in ~2s instead of making the
+  // user stare at the "Chargement du flux" spinner.
+  useEffect(() => {
+    if (!detail || (detail.item.type !== 'movie' && detail.item.format !== 'movie')) return
+    const controller = new AbortController()
+    discoverApi
+      .streamUrl(detail.item.slug, {
+        signal: controller.signal,
+        timeoutMs: 90_000,
+      })
+      .catch(() => {
+        /* Background warm-up only — /watch re-resolves on failure. */
+      })
+    return () => controller.abort()
+  }, [detail])
+
   if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center">
@@ -71,5 +90,11 @@ export default function MovieDetailPage({ params }: MovieDetailPageProps) {
     )
   }
 
-  return <DetailHero anime={mapApiItemToAnime(detail.item)} playLabel="LECTURE" />
+  return (
+    <DetailHero
+      anime={mapApiItemToAnime(detail.item)}
+      playLabel="LECTURE"
+      playHref={`/watch/${detail.item.slug}`}
+    />
+  )
 }

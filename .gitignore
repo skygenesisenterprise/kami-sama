@@ -41,3 +41,7 @@ next-env.d.ts
 .codex/
 .agents/
 .pnpm-store/
+
+# media server local library (docker-compose media-server bind mount)
+/media
+/media/

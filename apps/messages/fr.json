@@ -1207,16 +1207,17 @@
     "stream": {
       "loading": "Préparation du lecteur…",
       "unavailableTitle": "Vidéo indisponible",
-      "unavailableDescription": "Ce titre n'a pas encore de source de lecture configurée (aucune source Plex reliée).",
+      "unavailableDescription": "Ce titre n'a pas encore de source de lecture configurée (aucun serveur média relié).",
       "retry": "Réessayer",
       "error": "Source de lecture indisponible.",
       "playbackErrorTitle": "Lecture impossible",
-      "sourceUnreachableTitle": "Serveur Plex injoignable",
-      "sourceUnreachableDescription": "Le serveur Plex configuré ne répond pas (HLS indisponible). Vérifiez qu'il est en ligne et joignable depuis votre serveur Kami-Sama, ou utilisez son adresse réseau locale."
+      "sourceUnreachableTitle": "Serveur média injoignable",
+      "sourceUnreachableDescription": "Le serveur média configuré (media-server) ne répond pas (HLS indisponible). Vérifiez qu'il est en ligne et joignable depuis votre serveur Kami-Sama, ou utilisez son adresse réseau locale."
     },
     "preview": {
       "kicker": "À regarder",
       "playLabel": "Lecture",
+      "unmute": "Activer le son",
       "episodeBadge": "Saison {season} · Épisode {number}"
     },
     "actions": {

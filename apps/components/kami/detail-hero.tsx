@@ -13,6 +13,13 @@ interface DetailHeroProps {
   anime: Anime
   /** Label of the primary play action, e.g. "LECTURE" or "LECTURE E1". */
   playLabel?: string
+  /**
+   * Where the primary play action navigates (e.g. `/watch/<slug>` or
+   * `/watch/<slug>?ep=<firstEpisodeId>`). When omitted the button stays
+   * inert — keep it optional so callers that don't want the action don't
+   * get one forced on them.
+   */
+  playHref?: string
 }
 
 /**
@@ -21,7 +28,7 @@ interface DetailHeroProps {
  * collapsible "VOIR PLUS" technical details. Both detail pages render the same
  * block so it lives here instead of being duplicated.
  */
-export function DetailHero({ anime, playLabel = 'LECTURE' }: DetailHeroProps) {
+export function DetailHero({ anime, playLabel = 'LECTURE', playHref }: DetailHeroProps) {
   const [showAllInfo, setShowAllInfo] = useState(false)
 
   return (
@@ -96,10 +103,19 @@ export function DetailHero({ anime, playLabel = 'LECTURE' }: DetailHeroProps) {
 
             {/* Action buttons */}
             <div className="mt-6 flex items-center gap-3">
-              <Button size="lg" className="gap-2 bg-primary text-primary-foreground hover:bg-primary/90">
-                <Play className="size-5 fill-current" />
-                {playLabel}
-              </Button>
+              {playHref ? (
+                <Link href={playHref}>
+                  <Button size="lg" className="gap-2 bg-primary text-primary-foreground hover:bg-primary/90">
+                    <Play className="size-5 fill-current" />
+                    {playLabel}
+                  </Button>
+                </Link>
+              ) : (
+                <Button size="lg" className="gap-2 bg-primary text-primary-foreground hover:bg-primary/90">
+                  <Play className="size-5 fill-current" />
+                  {playLabel}
+                </Button>
+              )}
               <Button variant="outline" size="icon" className="size-10 border-white/30 text-white hover:bg-white/10">
                 <Bookmark className="size-5" />
               </Button>

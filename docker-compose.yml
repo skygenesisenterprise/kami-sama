@@ -80,7 +80,7 @@ services:
       JWT_SECRET: ${JWT_SECRET:-dev-insecure-secret-change-me}
       JWT_ISSUER: ${JWT_ISSUER:-kami-sama}
       AUTH_COOKIE_DOMAIN: ${AUTH_COOKIE_DOMAIN:-.kami-sama.localhost}
-      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://kami-sama.localhost,http://api.kami-sama.localhost,http://sso.kami-sama.localhost,http://studios.kami-sama.localhost,http://data.kami-sama.localhost,http://rabbitmq.kami-sama.localhost,http://search.kami-sama.localhost,http://localhost:3000,http://127.0.0.1:8081}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://kami-sama.localhost,http://api.kami-sama.localhost,http://sso.kami-sama.localhost,http://studios.kami-sama.localhost,http://media.kami-sama.localhost,http://data.kami-sama.localhost,http://rabbitmq.kami-sama.localhost,http://search.kami-sama.localhost,http://localhost:3000,http://127.0.0.1:8081}
       LISTEN__TRUSTED_PROXY_CIDRS: 0.0.0.0/0,::/0
       API_PORT: "8080"
       HOST: ${DOMAIN_HOST:-kami-sama.localhost}
@@ -93,6 +93,33 @@ services:
       RABBITMQ_URL: amqp://${RABBITMQ_USER:-guest}:${RABBITMQ_PASSWORD:-guest}@rabbitmq:5672
       MEILI_HOST: http://meilisearch:7700
       MEILI_API_KEY: ${MEILI_MASTER_KEY:-dev-master-key}
+      # ── Media source (media-server / streaming engine) ──────────────────
+      # Content catalog: the dashboard sources (Plex, …) feed the DB.
+      # Jellyfin is NOT a content provider — it only backs streaming: the
+      # worker resolves stream URLs against the media-server and proxies
+      # them to the browser for the /watch page (no direct client access).
+      # MEDIA_SOURCE_CACHE_TTL also bounds the in-process stream-key
+      # resolution cache (see routes/discover.go) that stops the /stream and
+      # proxy endpoints from re-searching the media server on every episode.
+      MEDIA_SOURCE_ENABLED: ${MEDIA_SOURCE_ENABLED:-true}
+      MEDIA_SOURCE_TYPE: ${MEDIA_SOURCE_TYPE:-plex}
+      MEDIA_SOURCE_JELLYFIN_URL: ${MEDIA_SOURCE_JELLYFIN_URL:-http://media-server:8096}
+      MEDIA_SOURCE_JELLYFIN_API_KEY: ${MEDIA_SOURCE_JELLYFIN_API_KEY:-795337733c3d47778b206b7f469b1467}
+      MEDIA_SOURCE_JELLYFIN_USER_ID: ${MEDIA_SOURCE_JELLYFIN_USER_ID:-c8aa35777aae4664a0d4904d814a0e78}
+      MEDIA_SOURCE_SYNC_INTERVAL: ${MEDIA_SOURCE_SYNC_INTERVAL:-1h}
+      MEDIA_SOURCE_STREAM_PROFILE: ${MEDIA_SOURCE_STREAM_PROFILE:-native}
+      MEDIA_SOURCE_CACHE_TTL: ${MEDIA_SOURCE_CACHE_TTL:-5m}
+      # ── Plex → Jellyfin .strm bridge ─────────────────────────────────────
+      # When the catalog source is a content-only provider (Plex), the worker
+      # writes a .strm file containing the provider's direct file URL into a
+      # shared directory (MEDIA_SOURCE_JELLYFIN_STRM_DIR) that Jellyfin
+      # watches as a library. Both containers must mount the SAME volume at
+      # the same path so the worker's write is visible to the media-server's
+      # library scan. Jellyfin then acts purely as the streaming engine
+      # (transcodes the remote URL to HLS) — see routes/discover.go.
+      MEDIA_SOURCE_JELLYFIN_STRM_DIR: ${MEDIA_SOURCE_JELLYFIN_STRM_DIR:-/remote-media}
+      MEDIA_SOURCE_JELLYFIN_STRM_LIBRARY: ${MEDIA_SOURCE_JELLYFIN_STRM_LIBRARY:-Remote}
+      MEDIA_SOURCE_JELLYFIN_STRM_LIBRARY_PATH: ${MEDIA_SOURCE_JELLYFIN_STRM_LIBRARY_PATH:-/remote-media}
       ANILIST_ENABLED: ${ANILIST_ENABLED:-true}
       ANILIST_CACHE_TTL: ${ANILIST_CACHE_TTL:-5m}
     volumes:
@@ -104,6 +131,8 @@ services:
       - gopkg:/go/pkg
       - certs:/certs
       - custom-templates:/templates
+      # Shared with media-server: worker writes .strm bridge files here.
+      - remote-media:/remote-media
     depends_on:
       postgresql:
         condition: service_healthy
@@ -113,6 +142,11 @@ services:
         condition: service_healthy
       meilisearch:
         condition: service_healthy
+      # Started (not healthy) on purpose: the video part must stay decoupled —
+      # Jellyfin first boot (setup wizard) can outlast its healthcheck start
+      # period, and a media-server outage should never block the API/catalog.
+      media-server:
+        condition: service_started
     networks:
       - kami-sama
 
@@ -224,6 +258,67 @@ services:
     networks:
       - kami-sama
 
+  # ─── Media server (Jellyfin) ────────────────────────────────────────────────
+  # Self-hosted media server dedicated to the public /watch page. It is the
+  # STREAMING ENGINE of the platform: it owns the movies/series library, the
+  # artwork, transcoding and HLS delivery for the player — with no third-party
+  # account. Plex (MEDIA_SOURCE_TYPE=plex) is only a CONTENT provider: it
+  # feeds the catalog database and never backs playback.
+  #
+  # How playback works (see routes/discover.go):
+  #   1. The worker resolves the Jellyfin item for a catalog title/episode
+  #      (MEDIA_SOURCE_JELLYFIN_*), then serves it through a same-origin HLS
+  #      proxy so the browser never talks to this container and never needs
+  #      CORS or an API key.
+  #   2. This container is intentionally NOT exposed to clients through nginx
+  #      (the /watch page only reaches it via the worker proxy); port 8096 is
+  #      published only so you can set it up and administer it.
+  #
+  # First boot: open http://localhost:8096, create the admin account, add a
+  # library pointing at /media, then grab an API key (Dashboard → API Keys)
+  # and set MEDIA_SOURCE_JELLYFIN_API_KEY / _USER_ID in your .env.
+  #
+  # IMPORTANT for the .strm bridge (remote Plex URLs): Jellyfin probes the URL
+  # inside each .strm file with ffmpeg, and its defaults (FFmpeg:probesize=1G,
+  # FFmpeg:analyzeduration=200M) make it download up to 1GB from the remote
+  # server before producing the HLS manifest — the proxy request hangs and the
+  # player dies with response 0. Bound the probe budget via the config keys
+  # (see JELLYFIN_FFmpeg__probesize / _analyzeduration below); note the
+  # dashboard "probe size limit" setting also drives these same values.
+  media-server:
+    image: docker.io/jellyfin/jellyfin:latest
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8096/health"]
+      start_period: 60s
+      interval: 30s
+      retries: 5
+      timeout: 10s
+    # Jellyfin runs long-lived ffmpeg transcode sessions: give it time to
+    # terminate them cleanly instead of being SIGKILLed mid-write.
+    stop_grace_period: 60s
+    ports:
+      - ${MEDIA_SERVER_PORT:-8096}:8096
+    volumes:
+      - media-server-config:/config
+      - media-server-cache:/cache
+      # Drop your movies/series here (or point MEDIA_LIBRARY_PATH elsewhere).
+      - ${MEDIA_LIBRARY_PATH:-./media}:/media:ro
+      # Shared with worker: Jellyfin scans this dir for .strm bridge files
+      # (remote Plex URLs) which it transcodes to HLS for the /watch player.
+      - remote-media:/remote-media
+    environment:
+      # Tells Jellyfin which address it is reachable at — used by the admin
+      # UI for direct links. Playback never relies on it (the worker proxy
+      # rebuilds every URL server-side).
+      JELLYFIN_PublishedServerUrl: ${MEDIA_SERVER_PUBLIC_URL:-http://localhost:8096}
+      # Keep ffmpeg's probe budget tiny so probing a remote Plex URL inside a
+      # .strm returns quickly instead of pulling up to 1GB before transcoding.
+      JELLYFIN_FFmpeg__probesize: ${JELLYFIN_FFMPEG_PROBESIZE:-2M}
+      JELLYFIN_FFmpeg__analyzeduration: ${JELLYFIN_FFMPEG_ANALYZEDURATION:-3000000}
+    networks:
+      - kami-sama
+
   # ─── Dev-only services (enable with: docker compose --profile dev up) ────────
 
   nginx:
@@ -272,6 +367,9 @@ volumes:
   pgadmin-data:
   uptime-kuma-data:
   cdn-data:
+  media-server-config:
+  media-server-cache:
+  remote-media:
 
 networks:
   kami-sama:

@@ -92,34 +92,38 @@ export const discoverApi = {
 
   /**
    * Resolves a playable stream URL for a published item (movie) or one of
-   * its episodes (series) against the configured provider. The endpoint
-   * answers 404 with STREAM_UNAVAILABLE when the title has no source yet.
+   * its episodes (series). Stream resolution is delegated to the
+   * media-server (Jellyfin) container by the worker — Plex and the other
+   * dashboard sources only feed the catalog, they never back playback. The
+   * endpoint answers 404 with STREAM_UNAVAILABLE when the title has no
+   * source yet.
    */
   async streamUrl(
     slug: string,
-    opts: { episodeId?: string; signal?: AbortSignal } = {}
+    opts: { episodeId?: string; signal?: AbortSignal; timeoutMs?: number } = {}
   ): Promise<DiscoverStreamResponse> {
-    const { episodeId, signal } = opts;
+    const { episodeId, signal, timeoutMs } = opts;
     const params = new URLSearchParams();
     if (episodeId) params.set("episodeId", episodeId);
     const qs = params.toString();
     return apiRequest<DiscoverStreamResponse>(
       `/discover/item/${encodeURIComponent(slug)}/stream${qs ? `?${qs}` : ""}`,
-      { method: "GET", skipAuth: true, signal }
+      { method: "GET", skipAuth: true, signal, timeoutMs }
     );
   },
 
   /**
    * Build a *same-origin* stream proxy URL for hls.js. The backend route at
    * `/discover/item/:slug/stream/proxy/manifest` re-fetches the upstream
-   * Plex manifest inside Kami-Sama (carrying the X-Plex-Token as a header),
-   * streams it back to the browser, and rewrites every URL line inside
-   * the manifest to point at `/segment/<origin>` (also handled by the
-   * proxy). Two benefits:
-   *   1. Plex rarely sends `Access-Control-Allow-Origin`, so handing its
-   *      raw URL to hls.js yields a NETWORK_ERROR on every browser except
-   *      the user's Plex host. The proxy sidesteps CORS entirely.
-   *   2. The X-Plex-Token never leaves the backend — no leaking of the
+   * manifest from the media-server (Jellyfin) inside Kami-Sama (carrying
+   * the API key as a header), streams it back to the browser, and rewrites
+   * every URL line inside the manifest to point at `/segment/<origin>`
+   * (also handled by the proxy). Two benefits:
+   *   1. Neither Jellyfin nor Plex sends `Access-Control-Allow-Origin`
+   *      reliably, so handing their raw URL to hls.js yields a NETWORK_ERROR
+   *      on every browser except the media server's own host. The proxy
+   *      sidesteps CORS entirely.
+   *   2. The API key / token never leaves the backend — no leaking of the
    *      credential in the browser's network log or a referer header.
    */
   streamProxyUrl(

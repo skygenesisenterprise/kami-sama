@@ -7,7 +7,7 @@ import { useTranslations } from 'next-intl'
 import {
   CaretDown,
   List,
-  Play,
+  SpeakerSlash,
   ThumbsUp,
   ThumbsDown,
   Share,
@@ -118,27 +118,34 @@ export default function WatchPage({
   /**
    * Whether playback has actually started at least once. Driven by the
    * VideoPlayer's `onPlayingChange(true)` callback (i.e. the <video> element
-   * fired `onPlay`), NOT by the overlay click handler itself. This way, if
-   * the browser rejects `play()` with NotAllowedError, the overlay stays up
-   * and the user can click again instead of seeing a blank player with an
-   * error banner on top.
+   * fired `onPlay`) AFTER the user clicked the overlay (`userActivated`).
+   * The muted preview runs behind the overlay without a gesture, but it must
+   * NOT auto-dismiss the Netflix CTA — that would defeat the "press play"
+   * moment. If the browser rejects play(), the overlay stays up and the
+   * user can simply click again.
    */
   const [started, setStarted] = useState(false)
 
+  /** True once the user clicked the overlay (play intent given). */
+  const userActivated = useRef(false)
+  /** True once the muted preview is actually playing (first frame flowing). */
+  const previewLive = useRef(false)
+
   /**
-   * Latches `started=true` the first time the <video> actually plays and
-   * ALSO dismisses any stale playback-error banner. The dismiss step is
-   * essential for the "transient error → retry → plays" recovery path:
-   * without it, the banner stays stuck even after hls.js recovered or
-   * play() finally succeeded — the user would see an error overlay on top
-   * of a perfectly playing video.
+   * Latches `started=true` the first time the <video> actually plays AND
+   * dismisses any stale playback-error banner. `started` is gated on
+   * `userActivated` so the silent muted preview never hides the overlay by
+   * itself. The dismiss step is essential for the "transient error → retry →
+   * plays" recovery path: without it, the banner stays stuck even after
+   * hls.js recovered or play() finally succeeded.
    *
    * Wrapped in useCallback so the VideoPlayer doesn't rebuild its event
    * listener effect on every parent render.
    */
   const handlePlayingChange = useCallback((playing: boolean) => {
     if (playing) {
-      setStarted(true)
+      previewLive.current = true
+      if (userActivated.current) setStarted(true)
       setPlaybackError(null)
     }
   }, [])
@@ -153,6 +160,17 @@ export default function WatchPage({
    */
   const handlePlaybackReady = useCallback(() => {
     setPlaybackError(null)
+  }, [])
+
+  /**
+   * Playback failure (hls.js fatal / <video> MEDIA_ERR_* / autoplay gate).
+   * Besides surfacing the banner, it clears the "preview is live" latch so
+   * a subsequent overlay click can't optimistically dismiss the CTA while
+   * the stream is actually broken.
+   */
+  const handlePlaybackError = useCallback((message: string) => {
+    previewLive.current = false
+    setPlaybackError(message)
   }, [])
 
   /** Imperative handle so the overlay click lands as a real user-gesture
@@ -234,18 +252,25 @@ export default function WatchPage({
   // Resolve the playable stream URL as soon as the item + selected episode
   // are known — we pre-load the manifest so by the time the user clicks the
   // Play overlay, playback can start without an extra round-trip to the
-  // Plex/transcode backend. Depends on stable primitives (ids + retry),
-  // never on object identity.
+  // media-server / transcode backend. Depends on stable primitives (ids +
+  // retry), never on object identity.
   //
   // We hit `/discover/item/:slug/stream` purely for metadata (title +
   // isMovie availability check). The actual playback URL is the local
   // proxy route, so hls.js can fetch both the manifest and every segment
-  // same-origin and never trip Plex's flaky CORS protection.
+  // same-origin and never trip the media server's flaky CORS protection.
+  //
+  // First resolution of a title can be slow: when the content comes from a
+  // content-only provider (Plex), the worker bridges the media into Jellyfin
+  // (writes a .strm file, waits for the library scan) before it can return
+  // an HLS URL. That routinely exceeds the default 15s request budget, so we
+  // grant this call a generous timeout instead of failing the first play.
   const streamReqId = useRef(0)
   const episodeKey = playerEpisode?.id ?? null
   useEffect(() => {
     if (!detail || !playerEpisode) return
     const id = ++streamReqId.current
+    console.log('[Watch] Resolving stream for slug:', detail.item.slug, '| episode:', episodeKey, '| isMovie:', isMovie)
     setStream({ url: '', loading: true, error: null })
     const controller = new AbortController()
 
@@ -253,20 +278,19 @@ export default function WatchPage({
       .streamUrl(detail.item.slug, {
         episodeId: isMovie ? undefined : episodeKey ?? undefined,
         signal: controller.signal,
+        timeoutMs: 90_000,
       })
       .then((res) => {
         if (streamReqId.current !== id) return
-        // Title equals the catalog item title; isMovie is derived from
-        // detail.item.type/format (the catalog field, not the stream API).
-        // We use the same-origin proxy URL for playback — never the upstream
-        // Plex URL — so browsers without Plex CORS headers still work.
         const proxyUrl = discoverApi.streamProxyUrl(detail.item.slug, {
           episodeId: res.isMovie ? undefined : episodeKey ?? undefined,
         })
+        console.log('[Watch] Stream URL resolved:', { streamUrl: res.streamUrl, proxyUrl, isMovie: res.isMovie })
         setStream({ url: proxyUrl, loading: false, error: null })
       })
       .catch((err) => {
         if (streamReqId.current !== id || controller.signal.aborted) return
+        console.error('[Watch] Stream URL failed:', err)
         const message =
           err instanceof ApiError && err.code === 'STREAM_UNAVAILABLE'
             ? 'unavailable'
@@ -287,9 +311,30 @@ export default function WatchPage({
   // reappears — this matches what Crunchyroll/Netflix do when you skip
   // to an episode from the chapter rail.
   useEffect(() => {
+    userActivated.current = false
+    previewLive.current = false
     setStarted(false)
     setPlaybackError(null)
   }, [episodeKey])
+
+  // Log the resolved proxy URL once per stream instead of on every render
+  // (a render-time console.log would spam the console 4+ times per page).
+  useEffect(() => {
+    if (stream.url) {
+      console.log('[Watch] Rendering VideoPlayer with URL:', stream.url)
+    }
+  }, [stream.url])
+
+  // Shared retry logic for the two error banners: forget the click intent
+  // and the preview state, clear the per-attempt flags and re-resolve the
+  // stream so the fresh Netflix overlay comes back with a live session.
+  const retryStream = useCallback(() => {
+    userActivated.current = false
+    previewLive.current = false
+    setPlaybackError(null)
+    setStarted(false)
+    setRetryCount((c) => c + 1)
+  }, [])
 
   useEffect(() => {
     if (currentFlat && openSeason === null) {
@@ -334,10 +379,23 @@ export default function WatchPage({
       {/* ── Video Player ── */}
       <div className="relative w-full bg-black">
         <div className="relative mx-auto w-full">
+          {/* No "player preparing" message: the content IS the loading
+              frame. The item's backdrop fills the player area while the
+              stream resolves in the background; a silent progress bar is
+              the only hint. The moment it resolves, the muted video takes
+              over seamlessly. */}
           {stream.loading && (
-            <div className="flex aspect-24/9 w-full flex-col items-center justify-center gap-3">
-              <Spinner className="size-8 text-white/60" />
-              <p className="text-sm text-white/50">{t('stream.loading')}</p>
+            <div className="relative aspect-24/9 w-full overflow-hidden bg-black">
+              <img
+                src={playerEpisode.cover || playerEpisode.thumbnail}
+                alt=""
+                aria-hidden="true"
+                className="absolute inset-0 size-full object-cover"
+              />
+              <div className="absolute inset-0 bg-black/30" />
+              <div className="absolute inset-x-0 bottom-0 h-0.5 overflow-hidden bg-white/10">
+                <div className="h-full w-1/2 animate-pulse bg-[#e50914]" />
+              </div>
             </div>
           )}
 
@@ -359,14 +417,7 @@ export default function WatchPage({
                   variant="outline"
                   size="sm"
                   className="gap-2 border-white/25 text-white hover:bg-white/10"
-                  onClick={() => {
-                    // Reset every per-attempt flag so the next render
-                    // surfaces the fresh Netflix overlay + clears any
-                    // leftover playback error from a previous attempt.
-                    setPlaybackError(null)
-                    setStarted(false)
-                    setRetryCount((c) => c + 1)
-                  }}
+                  onClick={retryStream}
                 >
                   <ArrowClockwise className="size-4" />
                   {t('stream.retry')}
@@ -397,11 +448,7 @@ export default function WatchPage({
                   variant="outline"
                   size="sm"
                   className="gap-2 border-white/25 text-white hover:bg-white/10"
-                  onClick={() => {
-                    setPlaybackError(null)
-                    setStarted(false)
-                    setRetryCount((c) => c + 1)
-                  }}
+                  onClick={retryStream}
                 >
                   <ArrowClockwise className="size-4" />
                   {t('stream.retry')}
@@ -411,104 +458,60 @@ export default function WatchPage({
           )}
 
           {!stream.loading && !stream.error && stream.url && (
+            <>
             <VideoPlayer
               ref={playerRef}
               episode={{ ...playerEpisode, videoUrl: stream.url }}
               isMovie={isMovie}
-              // No automatic `autoPlay` here on purpose: the Netflix-style
-              // overlay below captures the user gesture and forwards it to
-              // `playerRef.current.play()` so Chrome/Safari/Firefox honor the
-              // request. Attempts to autoPlay silently are still surfaced
-              // via `onPlaybackError` below — the user sees a real reason.
-              autoPlay={false}
-              onPlaybackError={setPlaybackError}
+              // Auto-play: the stream engine (Jellyfin transcoding + hls.js)
+              // starts as soon as the manifest is ready. If the browser blocks
+              // autoplay (NotAllowedError), the Netflix-style overlay stays up
+              // so the user can click to start manually.
+              autoPlay={true}
+              onPlaybackError={handlePlaybackError}
               onPlayingChange={handlePlayingChange}
               onPlaybackReady={handlePlaybackReady}
+              // Muted autoplay: browsers allow it without a gesture, so the
+              // stream genuinely starts the instant the manifest is ready —
+              // the video is live behind the overlay's asset instead of a
+              // dead still. The click below reveals the audio.
+              startMuted
               // While the Netflix overlay is visible (`!started`), suppress
               // the player's intrinsic big Play button so the two CTAs don't
               // compete. Once playback starts, this flips back to false and
               // the player's button reasserts itself for pause/resume.
               hideBuiltInPlayOverlay={!started}
             />
+            </>
           )}
 
-          {/* ── Netflix-style Play overlay ──
-              Pinned over the (already-mounted, paused) VideoPlayer. The
-              click handler is the source of truth for user-gesture
-              activation: we read `playerRef.current.play()` so the
-              browser sees the click, mounts `onPlay` → `setStarted(true)`,
-              and the overlay fades out. If `play()` rejects (rare — only
-              happens if you click before the URL is ready), it stays up. */}
+          {/* ── Audio-reveal chip ──
+              The stream autoplays MUTED the moment the manifest is ready, so
+              the video is genuinely visible on the player — no full-screen
+              asset stands between the user and the content (that was the
+              "no video, only the poster" state). This small chip is the
+              only affordance: one click reveals the audio from a real user
+              gesture and dismisses it. If the muted preview is already
+              live, playback is confirmed — dismiss immediately. Otherwise
+              `started` flips via onPlayingChange once play() delivers the
+              first frame, so a still-buffering stream keeps the chip up
+              rather than hiding it before anything plays. */}
           {!stream.loading && !stream.error && stream.url && !started && !playbackError && (
             <button
               type="button"
               onClick={() => {
+                userActivated.current = true
                 setPlaybackError(null)
-                // We don't optimistically set `started=true` here — that
-                // would hide the overlay even when the browser rejects
-                // play() (NotAllowedError). Instead, `started` flips to
-                // true via `onPlayingChange` (driven by the <video> `onPlay`
-                // event), so on rejection the overlay stays visible and the
-                // user can simply click again.
-                playerRef.current?.play().catch(() => undefined)
+                const player = playerRef.current
+                player?.unmute()
+                player?.play().catch(() => undefined)
+                if (previewLive.current) setStarted(true)
               }}
-              className="group absolute inset-0 z-30 flex flex-col items-center justify-center overflow-hidden bg-black/40 text-left outline-none focus-visible:ring-2 focus-visible:ring-white/60"
-              aria-label={t('preview.playLabel')}
+              className="absolute bottom-4 right-4 z-30 flex items-center gap-2 rounded-full border border-white/20 bg-black/60 px-4 py-2 text-sm font-semibold text-white backdrop-blur-sm transition-all duration-300 hover:border-white/50 hover:bg-black/80"
+              aria-label={t('preview.unmute')}
             >
-              {/* Backdrop layer: blurred + darkened so the artwork
-                  reads as a poster, not a paused video frame. */}
-              <img
-                src={playerEpisode.cover || playerEpisode.thumbnail}
-                alt=""
-                aria-hidden="true"
-                className="absolute inset-0 size-full scale-110 object-cover blur-md brightness-50 transition-transform duration-700 ease-out group-hover:scale-[1.14]"
-              />
-              <div className="absolute inset-0 bg-linear-to-t from-black via-black/40 to-black/20" />
-
-              {/* Centered title + CTA stack so the Play button stays the
-                  primary focus even on short titles. */}
-              <div className="relative z-10 flex flex-col items-center gap-6 px-6 text-center">
-                <span className="text-xs font-semibold uppercase tracking-[0.3em] text-white/60">
-                  {t('preview.kicker')}
-                </span>
-                <h1 className="max-w-3xl text-balance font-display text-3xl font-bold uppercase tracking-tight text-white drop-shadow-lg md:text-5xl">
-                  {isMovie ? detail.item.title : currentFlat!.episode.title}
-                </h1>
-                <p className="text-sm font-medium text-white/80 md:text-base">
-                  {isMovie
-                    ? detail.item.title
-                    : t('preview.episodeBadge', {
-                        number: currentFlat!.episode.number,
-                        season: currentFlat!.season,
-                      })}
-                  {anime.year > 0 && (
-                    <>
-                      <span className="mx-2 text-white/40">&middot;</span>
-                      <span>{anime.year}</span>
-                    </>
-                  )}
-                  {currentFlat?.episode.duration ? (
-                    currentFlat.episode.duration > 0 && (
-                      <>
-                        <span className="mx-2 text-white/40">&middot;</span>
-                        <span>{formatDuration(currentFlat.episode.duration)}</span>
-                      </>
-                    )
-                  ) : null}
-                </p>
-
-                {/* Big circular Play button. On hover the ring widens and
-                    the icon nudges right, mirroring Crunchyroll/Netflix's
-                    CTA. */}
-                <span className="mt-2 flex items-center gap-3 rounded-full border-2 border-white/40 bg-white/10 px-6 py-2.5 backdrop-blur-sm transition-all duration-300 group-hover:border-white group-hover:bg-white group-hover:shadow-[0_0_40px_rgba(255,255,255,0.35)]">
-                  <span className="flex size-12 items-center justify-center rounded-full bg-white text-black shadow-2xl transition-transform duration-300 group-hover:scale-110">
-                    <Play className="size-6 fill-current" weight="fill" />
-                  </span>
-                  <span className="text-base font-bold uppercase tracking-wider text-white transition-colors duration-300 group-hover:text-black">
-                    {t('preview.playLabel')}
-                  </span>
-                </span>
-              </div>
+              <SpeakerSlash className="size-4" weight="fill" />
+              {t('preview.unmute')}
             </button>
           )}
         </div>
