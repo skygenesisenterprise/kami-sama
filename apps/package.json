@@ -152,7 +152,7 @@
     "eslint": "^10",
     "eslint-config-next": "16.2.7",
     "expo-mcp": "~0.2.1",
-    "postcss": "^8.5.15",
+    "postcss": "^8.5.26",
     "prisma": "7.6.0",
     "tailwindcss": "^4.2.2",
     "typescript": "~5.9.3"
