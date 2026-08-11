@@ -13,8 +13,39 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  detect:
+    name: Detect languages
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set.outputs.matrix }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Detect languages
+        id: set
+        run: |
+          MATRIX='[]'
+          if find . -maxdepth 4 -name 'package.json' -o -name '*.ts' -o -name '*.tsx' -o -name '*.jsx' | head -1 | grep -q .; then
+            MATRIX=$(echo "$MATRIX" | jq -c '. + [{"language":"javascript-typescript","build-mode":"none"}]')
+          fi
+          if find . -maxdepth 4 -name 'go.mod' -o -name '*.go' | head -1 | grep -q .; then
+            MATRIX=$(echo "$MATRIX" | jq -c '. + [{"language":"go","build-mode":"autobuild"}]')
+          fi
+          if find . -maxdepth 4 -name 'requirements.txt' -o -name 'pyproject.toml' -o -name '*.py' | head -1 | grep -q .; then
+            MATRIX=$(echo "$MATRIX" | jq -c '. + [{"language":"python","build-mode":"none","continue-on-error":true}]')
+          fi
+          if find . -maxdepth 4 -name 'Cargo.toml' -o -name '*.rs' | head -1 | grep -q .; then
+            MATRIX=$(echo "$MATRIX" | jq -c '. + [{"language":"rust","build-mode":"none","continue-on-error":true}]')
+          fi
+          if find . -maxdepth 4 -name 'pom.xml' -o -name 'build.gradle' -o -name '*.java' -o -name '*.kt' | head -1 | grep -q .; then
+            MATRIX=$(echo "$MATRIX" | jq -c '. + [{"language":"java-kotlin","build-mode":"autobuild","continue-on-error":true}]')
+          fi
+          echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
+
   analyze:
     name: Analyze (${{ matrix.language }})
+    needs: detect
+    if: needs.detect.outputs.matrix != '[]'
     runs-on: ubuntu-latest
     continue-on-error: ${{ matrix.continue-on-error || false }}
     permissions:
@@ -25,21 +56,7 @@ jobs:
 
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - language: javascript-typescript
-            build-mode: none
-          - language: go
-            build-mode: autobuild
-          - language: python
-            build-mode: none
-            continue-on-error: true
-          - language: rust
-            build-mode: none
-            continue-on-error: true
-          - language: java-kotlin
-            build-mode: autobuild
-            continue-on-error: true
+      matrix: ${{ fromJSON(needs.detect.outputs.matrix) }}
 
     steps:
       - name: Checkout repository
