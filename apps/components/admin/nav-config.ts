@@ -110,6 +110,7 @@ export const navGroups: NavGroup[] = [
     title: 'Community',
     icon: Users,
     items: [
+      { title: 'Discord', href: '/dash/community/discord', icon: MessageSquare },
       { title: 'Users', href: '/dash/community/users', icon: Users },
       { title: 'Roles', href: '/dash/community/role', icon: Shield },
       { title: 'Permissions', href: '/dash/community/permissions', icon: Lock },

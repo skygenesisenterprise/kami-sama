@@ -1,59 +1,46 @@
-import { readdir } from "node:fs/promises";
 import path from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { REST, Routes } from "discord.js";
 import { assertDiscordEnv, env } from "./config/env.js";
+import { logger } from "./services/logger.js";
+import { discoverCommands } from "./commands/registry.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-async function collectCommands() {
-  const commandsPath = path.join(__dirname, "commands");
-  const commandFiles = (await readdir(commandsPath)).filter((file) => file.endsWith(".js"));
-  const commands = [];
+async function deploy() {
+  assertDiscordEnv();
 
-  for (const file of commandFiles) {
-    const filePath = path.join(commandsPath, file);
-    const command = await import(pathToFileURL(filePath).href);
+  const commandsDir = path.join(__dirname, "commands");
+  const commands = await discoverCommands(commandsDir);
+  const payload = commands.map((command) => command.data.toJSON());
 
-    if (!command.data) {
-      console.warn(`[WARNING] La commande ${file} ne définit pas data.`);
-      continue;
-    }
+  const rest = new REST({ version: "10" }).setToken(env.token);
+  const scope = (env.commandScope ?? "global").trim().toLowerCase();
 
-    commands.push(command.data.toJSON());
+  if (scope === "none") {
+    logger.info("No commands deployed (DISCORD_COMMAND_SCOPE=none).");
+    return;
   }
 
-  return commands;
-}
-
-async function deployGuildCommands() {
-  try {
-    assertDiscordEnv();
-    const commands = await collectCommands();
-    const rest = new REST({ version: "10" }).setToken(env.token);
-    const scope = env.commandScope.toLowerCase();
-    const globalRoute = Routes.applicationCommands(env.clientId);
-
-    if (!["global", "none"].includes(scope)) {
-      throw new Error(
-        `DISCORD_COMMAND_SCOPE invalide: ${env.commandScope}. Valeurs attendues: global, none.`,
-      );
-    }
-
-    if (scope === "global") {
-      await rest.put(globalRoute, {
-        body: commands,
-      });
-      console.log(`${commands.length} commande(s) globale(s) déployée(s).`);
-      return;
-    }
-
-    console.log("Aucune commande déployée (scope = none).");
-  } catch (error) {
-    console.error("Erreur pendant le déploiement des commandes:", error);
-    process.exit(1);
+  if (scope === "global") {
+    await rest.put(Routes.applicationCommands(env.clientId), { body: payload });
+    logger.info(`Deployed ${payload.length} global command(s).`);
+    return;
   }
+
+  if (/^\d{17,20}$/.test(scope)) {
+    await rest.put(Routes.applicationGuildCommands(env.clientId, scope), { body: payload });
+    logger.info(`Deployed ${payload.length} command(s) to guild ${scope}.`);
+    return;
+  }
+
+  throw new Error(
+    `Invalid DISCORD_COMMAND_SCOPE: ${env.commandScope}. Expected: global, none, or a guild ID.`
+  );
 }
 
-void deployGuildCommands();
+deploy().catch((error) => {
+  logger.error("Command deployment failed", { error: error.stack });
+  process.exit(1);
+});

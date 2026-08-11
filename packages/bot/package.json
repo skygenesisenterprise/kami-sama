@@ -9,6 +9,7 @@
     "start": "node index.js",
     "predev": "node deploy-commands.js",
     "dev": "node --watch index.js",
+    "test": "node --test tests/",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:studio": "prisma studio",

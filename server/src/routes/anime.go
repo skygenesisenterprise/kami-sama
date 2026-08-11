@@ -232,11 +232,16 @@ func (h *AnimeHandler) Sync(c *gin.Context) {
 		utils.Error(c, err)
 		return
 	}
-	// Always try to enrich with seasons/episodes from AniList
+	// Always try to enrich with seasons/episodes from AniList — except for
+	// Plex-sourced rows, whose real season/episode grid lives on the provider
+	// and is imported below. AniList's title-search fallback would otherwise
+	// stamp placeholder episodes onto Plex rows.
 	if h.deps.AnilistService != nil {
 		principal, _ := middleware.GetPrincipal(c)
 		h.deps.AnilistService.RefreshFromAnilist(c.Request.Context(), item, principal.UserID)
-		h.deps.AnilistService.EnsureSeasonsAndEpisodes(c.Request.Context(), item, nil)
+		if item.Source != "plex" {
+			h.deps.AnilistService.EnsureSeasonsAndEpisodes(c.Request.Context(), item, nil)
+		}
 	}
 	// Plex-sourced rows carry their REAL episode grid only on the provider:
 	// refresh it from Plex (metadata.sourceId) so series imported before the

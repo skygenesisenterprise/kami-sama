@@ -30,7 +30,7 @@ services:
       dockerfile: Dockerfile
       args:
         NODE_ENV: ${NODE_ENV:-production}
-    image: kami-sama/discord:${APP_IMAGE_TAG:-latest}
+    image: skygenesisenterprise/kami-bot:${APP_IMAGE_TAG:-latest}
     restart: unless-stopped
     command: bot
     environment:

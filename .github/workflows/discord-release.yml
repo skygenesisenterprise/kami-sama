@@ -1,0 +1,75 @@
+name: Discord Bot Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*-discord"
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: skygenesisenterprise/kami-bot
+  # Docker Hub Registry
+  DOCKERHUB_REGISTRY: docker.io
+  DOCKERHUB_IMAGE_NAME: skygenesisenterprise/kami-bot
+  COMPOSE_FILE: packages/bot/docker-compose.yml
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_TOKEN }}
+
+      - name: Extract version from tag
+        id: version
+        run: echo "version=${GITHUB_REF_NAME%-discord}" >> "$GITHUB_OUTPUT"
+
+      - name: Build image from docker compose (production profile)
+        run: docker compose --profile production build bot
+        working-directory: packages/bot
+        env:
+          NODE_ENV: production
+          APP_IMAGE_TAG: ${{ steps.version.outputs.version }}
+
+      - name: Tag and push image to GHCR and Docker Hub
+        run: |
+          IMAGE="$REGISTRY/$IMAGE_NAME"
+          docker tag "skygenesisenterprise/kami-bot:$VERSION" "$IMAGE:$VERSION"
+          docker tag "skygenesisenterprise/kami-bot:$VERSION" "$IMAGE:latest"
+          docker push "$IMAGE:$VERSION"
+          docker push "$IMAGE:latest"
+
+          DH_IMAGE="$DOCKERHUB_REGISTRY/$DOCKERHUB_IMAGE_NAME"
+          docker tag "skygenesisenterprise/kami-bot:$VERSION" "$DH_IMAGE:$VERSION"
+          docker tag "skygenesisenterprise/kami-bot:$VERSION" "$DH_IMAGE:latest"
+          docker push "$DH_IMAGE:$VERSION"
+          docker push "$DH_IMAGE:latest"
+        env:
+          REGISTRY: ${{ env.REGISTRY }}
+          IMAGE_NAME: ${{ env.IMAGE_NAME }}
+          DOCKERHUB_REGISTRY: ${{ env.DOCKERHUB_REGISTRY }}
+          DOCKERHUB_IMAGE_NAME: ${{ env.DOCKERHUB_IMAGE_NAME }}
+          VERSION: ${{ steps.version.outputs.version }}

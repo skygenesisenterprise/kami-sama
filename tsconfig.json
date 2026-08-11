@@ -1,9 +1,7 @@
 {
   "files": [],
   "references": [
-    { "path": "./app" },
-    { "path": "./server/prisma"},
-    { "path": "./infrastructure"}
+    { "path": "./apps" }
   ],
   "compilerOptions": {
     "target": "ES2017",

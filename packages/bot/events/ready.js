@@ -1,25 +1,15 @@
-import { ActivityType } from "discord.js";
-import { env } from "../config/env.js";
+import { logger } from "../services/logger.js";
 import { announceDeployment } from "../services/deployment-service.js";
+import { applyPresence } from "../services/presence.js";
 
 export const name = "clientReady";
 export const once = true;
 
 export async function execute(client) {
-  const memberCount = client.guilds.cache.reduce((total, guild) => total + (guild.memberCount ?? 0), 0);
-  const guildCount = client.guilds.cache.size;
+  applyPresence(client);
 
-  client.user.setPresence({
-    activities: [
-      {
-        name: `${guildCount} guild - ${memberCount} users`,
-        type: ActivityType.Watching,
-      },
-    ],
-    status: "online",
-  });
+  logger.info(`Bot connecté en tant que ${client.user.tag}`);
+  logger.info("Presence applied", { customStatus: client.user.presence.activities?.[0]?.state ?? "" });
 
-  console.log(`Bot connecté en tant que ${client.user.tag}`);
-
-  await announceDeployment(client).catch((error) => console.error(error));
+  await announceDeployment(client).catch((error) => logger.error("Deployment announce failed", { error: error.message }));
 }

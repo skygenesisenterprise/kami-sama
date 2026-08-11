@@ -19,7 +19,7 @@ WORKDIR /app/bot
 COPY package.json ./
 RUN npm install --no-audit --no-fund
 
-COPY . .
+COPY --exclude=node_modules --exclude=.env --exclude=data . .
 
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh

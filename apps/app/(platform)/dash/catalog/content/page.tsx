@@ -1060,37 +1060,95 @@ export default function ContentCatalogPage() {
   const syncRowInternal = React.useCallback(
     async (row: ContentRow): Promise<SyncOutcome> => {
       try {
-        if (row.key.startsWith('series-')) {
-          const animeId = row.key.replace('series-', '')
-          // Call backend sync to enrich data from sources
+        const isSeries = row.key.startsWith('series-')
+        const isTvShow = row.key.startsWith('tv-show-')
+        const isMovie = row.key.startsWith('movie-')
+        if (isSeries || isTvShow || isMovie) {
+          const animeId = isSeries
+            ? row.key.replace('series-', '')
+            : isTvShow
+              ? row.key.replace('tv-show-', '')
+              : row.key.replace('movie-', '')
+          // Call backend sync to enrich data from sources — for Plex-sourced
+          // tv-shows this backfills the real season/episode grid server-side.
           try {
             await animeApi.sync(animeId)
           } catch {
             // Sync may fail if sources not configured, continue with search
           }
           // Then fetch fresh data
-          let updatedSeries: SeriesItem | null = null
           try {
             const freshAnime = await animeApi.get(animeId)
-            updatedSeries = apiAnimeToSeriesItem(freshAnime)
-          } catch {
-            // Backend fetch failed
-          }
-
-          if (updatedSeries) {
-            setSeriesItems((prev) =>
-              prev.map((s) =>
-                `series-${s.id}` === row.key ? updatedSeries! : s,
+            const assetsBefore = assetCount(row.assets)
+            if (isSeries) {
+              const updatedSeries = apiAnimeToSeriesItem(freshAnime)
+              setSeriesItems((prev) =>
+                prev.map((s) =>
+                  `series-${s.id}` === row.key ? updatedSeries : s,
+                ),
+              )
+              const syncedRow: ContentRow = {
+                ...row,
+                seasons: updatedSeries.seasons,
+                assets: {
+                  poster: updatedSeries.assets.poster,
+                  banner: updatedSeries.assets.banner,
+                  backdrop: updatedSeries.assets.backdrop,
+                  thumbnail: row.assets.thumbnail,
+                  still: row.assets.still,
+                },
+              }
+              setInspecting((cur) => (cur?.key === row.key ? syncedRow : cur))
+              return {
+                status: 'ok',
+                row: syncedRow,
+                assetsGained: Math.max(
+                  0,
+                  assetCount(syncedRow.assets) - assetsBefore,
+                ),
+              }
+            }
+            if (isTvShow) {
+              const updatedShow = apiAnimeToTvShowItem(freshAnime)
+              setTvShows((prev) =>
+                prev.map((t) =>
+                  `tv-show-${t.id}` === row.key ? updatedShow : t,
+                ),
+              )
+              const syncedRow: ContentRow = {
+                ...row,
+                seasons: updatedShow.seasons,
+                assets: {
+                  poster: updatedShow.assets.poster,
+                  banner: updatedShow.assets.banner,
+                  backdrop: updatedShow.assets.backdrop,
+                  thumbnail: row.assets.thumbnail,
+                  still: row.assets.still,
+                },
+              }
+              setInspecting((cur) => (cur?.key === row.key ? syncedRow : cur))
+              return {
+                status: 'ok',
+                row: syncedRow,
+                assetsGained: Math.max(
+                  0,
+                  assetCount(syncedRow.assets) - assetsBefore,
+                ),
+              }
+            }
+            const updatedMovie = apiAnimeToMovieItem(freshAnime)
+            setMovies((prev) =>
+              prev.map((m) =>
+                `movie-${m.id}` === row.key ? updatedMovie : m,
               ),
             )
-            const assetsBefore = assetCount(row.assets)
             const syncedRow: ContentRow = {
               ...row,
-              seasons: updatedSeries.seasons,
+              seasons: row.seasons,
               assets: {
-                poster: updatedSeries.assets.poster,
-                banner: updatedSeries.assets.banner,
-                backdrop: updatedSeries.assets.backdrop,
+                poster: updatedMovie.assets.poster,
+                banner: updatedMovie.assets.banner,
+                backdrop: updatedMovie.assets.backdrop,
                 thumbnail: row.assets.thumbnail,
                 still: row.assets.still,
               },
@@ -1104,13 +1162,14 @@ export default function ContentCatalogPage() {
                 assetCount(syncedRow.assets) - assetsBefore,
               ),
             }
+          } catch {
+            // Backend fetch failed
           }
           return { status: 'empty', assetsGained: 0 }
         }
 
-        // For source rows (Plex / AniList) and non-series items, search
-        // sources and merge client-side (ephemeral rows have no backend
-        // record yet to sync against).
+        // For source rows (Plex / AniList) that have no backend record yet,
+        // search sources and merge client-side.
         const { hits } = await searchAllSources(row.title, 8)
         const hit = bestSourceHit(row.title, hits)
         if (!hit) {

@@ -1,0 +1,78 @@
+name: Kami-Sama Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*-kami"
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+  # Docker Hub Registry
+  DOCKERHUB_REGISTRY: docker.io
+  DOCKERHUB_IMAGE_NAME: skygenesisenterprise/kami-sama
+  COMPOSE_FILE: docker-compose.yml
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_TOKEN }}
+
+      - name: Extract version from tag
+        id: version
+        run: echo "version=${GITHUB_REF_NAME%-kami}" >> "$GITHUB_OUTPUT"
+
+      # server/worker/postgresql all build from the same root Dockerfile into
+      # the shared image skygenesisenterprise/kami-sama — building `server` is
+      # enough to produce the official production image.
+      - name: Build production image from docker compose
+        run: docker compose --profile production build server
+        env:
+          NODE_ENV: production
+          BUILD_STATIC: "1"
+          APP_IMAGE_TAG: ${{ steps.version.outputs.version }}
+
+      - name: Tag and push image to GHCR and Docker Hub
+        run: |
+          IMAGE="$REGISTRY/$IMAGE_NAME"
+          docker tag "skygenesisenterprise/kami-sama:$VERSION" "$IMAGE:$VERSION"
+          docker tag "skygenesisenterprise/kami-sama:$VERSION" "$IMAGE:latest"
+          docker push "$IMAGE:$VERSION"
+          docker push "$IMAGE:latest"
+
+          DH_IMAGE="$DOCKERHUB_REGISTRY/$DOCKERHUB_IMAGE_NAME"
+          docker tag "skygenesisenterprise/kami-sama:$VERSION" "$DH_IMAGE:$VERSION"
+          docker tag "skygenesisenterprise/kami-sama:$VERSION" "$DH_IMAGE:latest"
+          docker push "$DH_IMAGE:$VERSION"
+          docker push "$DH_IMAGE:latest"
+        env:
+          REGISTRY: ${{ env.REGISTRY }}
+          IMAGE_NAME: ${{ env.IMAGE_NAME }}
+          DOCKERHUB_REGISTRY: ${{ env.DOCKERHUB_REGISTRY }}
+          DOCKERHUB_IMAGE_NAME: ${{ env.DOCKERHUB_IMAGE_NAME }}
+          VERSION: ${{ steps.version.outputs.version }}
