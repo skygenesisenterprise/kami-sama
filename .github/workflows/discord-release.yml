@@ -11,7 +11,7 @@ env:
   # Docker Hub Registry
   DOCKERHUB_REGISTRY: docker.io
   DOCKERHUB_IMAGE_NAME: skygenesisenterprise/kami-bot
-  COMPOSE_FILE: packages/bot/docker-compose.yml
+  COMPOSE_FILE: docker-compose.yml
 
 permissions:
   contents: read
