@@ -395,8 +395,8 @@ importers:
         specifier: ^8.4.2
         version: 8.4.2
       '@capacitor/ios':
-        specifier: ^8.4.0
-        version: 8.4.2(@capacitor/core@8.4.2)
+        specifier: ^8.5.0
+        version: 8.5.0(@capacitor/core@8.4.2)
       '@tailwindcss/postcss':
         specifier: ^4.3.0
         version: 4.3.2
@@ -736,8 +736,8 @@ importers:
         specifier: ^8.4.0
         version: 8.4.2
       '@capacitor/ios':
-        specifier: ^8.4.0
-        version: 8.4.2(@capacitor/core@8.4.2)
+        specifier: ^8.5.0
+        version: 8.5.0(@capacitor/core@8.4.2)
       '@tailwindcss/postcss':
         specifier: ^4.3.0
         version: 4.3.2
@@ -1389,10 +1389,10 @@ packages:
   '@capacitor/core@8.4.2':
     resolution: {integrity: sha512-fQPRb3JXRaU2pnufDUvqOjhsrYxDQeFRZyaj/sHydIUxD2NxOGHKMpmKUdI+U4OOmKuGZyvRpi7TSJU+7Bjbmg==}
 
-  '@capacitor/ios@8.4.2':
-    resolution: {integrity: sha512-ClVzIjK++yRjsRPOpdEzhsZfbHfoEc0f4M6vD0v7sWh0qcoF6NkxNAeHpWTn4OPJpJfpGGoYsq+IfEHrYyBiWA==}
+  '@capacitor/ios@8.5.0':
+    resolution: {integrity: sha512-7k1TfohJu5BzRXc1F3g04Q8QQ0fyQgms6h1AvhnHb04VaNr9EdHOx03hL8O+OigEKMQnyJd1ZOjTPPNHCqL5Yw==}
     peerDependencies:
-      '@capacitor/core': ^8.4.0
+      '@capacitor/core': ^8.5.0
 
   '@changesets/apply-release-plan@7.1.1':
     resolution: {integrity: sha512-9qPCm/rLx/xoOFXIHGB229+4GOL76S4MC+7tyOuTsR6+1jYlfFDQORdvwR5hDA6y4FL2BPt3qpbcQIS+dW85LA==}
@@ -10542,7 +10542,7 @@ snapshots:
     dependencies:
       tslib: 2.8.1
 
-  '@capacitor/ios@8.4.2(@capacitor/core@8.4.2)':
+  '@capacitor/ios@8.5.0(@capacitor/core@8.4.2)':
     dependencies:
       '@capacitor/core': 8.4.2
 
