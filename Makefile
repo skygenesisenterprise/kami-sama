@@ -36,7 +36,7 @@ build-prod:
 
 dev-up:
 	APP_IMAGE_TAG=dev NODE_ENV=development WORKER_COMMAND=air BUILD_STATIC=0 \
-		docker compose --profile dev up -d --force-recreate
+		docker compose --profile dev up -d
 
 dev-down:
 	docker compose --profile dev down
@@ -47,11 +47,11 @@ dev-logs:
 dev-rebuild:
 	docker compose --profile dev down
 	APP_IMAGE_TAG=dev NODE_ENV=development WORKER_COMMAND=air BUILD_STATIC=0 \
-		docker compose --profile dev up -d --force-recreate --build
+		docker compose --profile dev up -d --build
 
 prod-up:
 	APP_IMAGE_TAG=latest NODE_ENV=production WORKER_COMMAND=worker BUILD_STATIC=1 \
-		docker compose up -d --force-recreate
+		docker compose up -d 
 
 prod-down:
 	docker compose down

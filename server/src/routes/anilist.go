@@ -26,11 +26,12 @@ func currentSeasonStr() string {
 }
 
 type AnilistHandler struct {
-	deps Dependencies
+	deps     Dependencies
+	resolver *plexClientResolver
 }
 
 func NewAnilistHandler(deps Dependencies) *AnilistHandler {
-	return &AnilistHandler{deps: deps}
+	return &AnilistHandler{deps: deps, resolver: newPlexClientResolver(deps)}
 }
 
 func (h *AnilistHandler) Search(c *gin.Context) {
@@ -200,6 +201,16 @@ func (h *AnilistHandler) ImportMedia(c *gin.Context) {
 		utils.Error(c, err)
 		return
 	}
+
+	// Route AniList-discovered titles through Plex so the provider metadata
+	// (artwork, episodes, Plex source link) is recovered. Best-effort: a Plex
+	// lookup failure must not fail the import — AniList stays the fallback.
+	if client, cerr := h.resolver.resolve(c.Request.Context()); cerr == nil {
+		if merr := services.ImportPlexMetadataForAnime(c.Request.Context(), h.deps.Database.Gorm(), client, anime); merr != nil {
+			h.deps.Logger.Warn("failed to enrich anilist import with plex metadata", "animeId", anime.ID, "title", anime.Title, "error", merr)
+		}
+	}
+
 	utils.Success(c, http.StatusOK, gin.H{
 		"anime":   anime,
 		"message": "Media imported successfully from Anilist",

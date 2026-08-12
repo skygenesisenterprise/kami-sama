@@ -902,6 +902,44 @@ func isTransientBridgeError(err error) bool {
 	return false
 }
 
+// isBridgeAuthFailure reports whether a Plex→Jellyfin bridge failure is an
+// authentication / configuration problem on the Jellyfin side (HTTP 401/403,
+// "Invalid token", "not configured", …). Jellyfin answers 401 to every
+// authenticated call when the configured API key does not exist — typically a
+// stale MEDIA_SOURCE_JELLYFIN_API_KEY / _USER_ID after the media-server was
+// reinstalled (the key lives in the Jellyfin dashboard, it can never be set
+// from env alone). In that state the legacy Plex HLS fallback is a dead end
+// on servers that don't serve HLS transcodes, so callers surface a clear
+// error instead — and must NOT latch the failure: the bridge fails fast and
+// self-heals as soon as the operator fixes the key.
+func isBridgeAuthFailure(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := strings.ToLower(err.Error())
+	for _, marker := range []string{
+		"401", "403",
+		"invalid token", "not authenticated", "unauthorized",
+		"not configured", "authentication",
+	} {
+		if strings.Contains(s, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+// mediaServerAuthError is the error surfaced when the Plex→Jellyfin bridge is
+// blocked by the media-server's authentication. The bridge cannot work until
+// the operator fixes the Jellyfin config, and the legacy Plex HLS fallback is
+// a dead end — so we return a distinct, user-facing error (the watch page
+// renders an actionable message for STREAM_MEDIA_SERVER_UNAVAILABLE) instead
+// of letting the player retry a manifest that will always answer 400.
+func mediaServerAuthError() error {
+	return utils.NewError(http.StatusServiceUnavailable, "STREAM_MEDIA_SERVER_UNAVAILABLE",
+		"The media server rejected the stream bridge: authentication failed. Check the Jellyfin API key and user id (MEDIA_SOURCE_JELLYFIN_API_KEY / MEDIA_SOURCE_JELLYFIN_USER_ID).", nil)
+}
+
 // bridgeCall captures the result of a single in-flight Plex→Jellyfin bridge
 // so concurrent callers can share it.
 type bridgeCall struct {
@@ -1102,6 +1140,16 @@ func (h *DiscoverHandler) GetStreamURL(c *gin.Context) {
 		} else {
 			jfItemID, msID, berr := h.bridgeStreamKey(ctx, cacheKey, resolver.plex, resolver.jf, item, key)
 			if berr != nil {
+				// Jellyfin rejects the configured API key / user (401/403):
+				// the whole bridge is dead and the legacy Plex HLS fallback
+				// answers 400 on servers that don't serve HLS transcodes.
+				// Surface the real cause and DON'T latch — the bridge fails
+				// fast and self-heals once the config is fixed.
+				if isBridgeAuthFailure(berr) {
+					h.deps.Logger.Warn("plex→jellyfin bridge blocked by media-server authentication", "error", berr)
+					utils.Error(c, mediaServerAuthError())
+					return
+				}
 				h.deps.Logger.Warn("plex→jellyfin bridge failed, falling back to Plex HLS", "error", berr)
 				// A canceled request (client navigated away / timed out) and
 				// TRANSIENT transport errors (a DNS hiccup, connect timeout —
@@ -1295,6 +1343,14 @@ func (h *DiscoverHandler) ProxyStream(c *gin.Context) {
 		} else {
 			jfItemID, msID, berr := h.bridgeStreamKey(ctx, cacheKey, resolver.plex, resolver.jf, item, key)
 			if berr != nil {
+				// Same as GetStreamURL: an authentication failure (401/403)
+				// means the bridge can never succeed and the Plex HLS fallback
+				// would only answer 400 — return the clear error instead.
+				if isBridgeAuthFailure(berr) {
+					h.deps.Logger.Warn("plex→jellyfin bridge blocked by media-server authentication", "error", berr)
+					utils.Error(c, mediaServerAuthError())
+					return
+				}
 				h.deps.Logger.Warn("plex→jellyfin bridge failed, falling back to Plex proxy", "error", berr)
 				// See GetStreamURL: transient transport failures (DNS hiccups
 				// on *.plex.direct, connect timeouts) and client cancellations
@@ -2124,7 +2180,10 @@ func contentFormatFromMetadata(meta map[string]any) (contentType, format string)
 		switch strings.ToLower(raw) {
 		case "movie":
 			return "movie", "movie"
-		case "series", "show":
+		// Any TV-show flavour (Plex "Series", "show", a future
+		// "tv-show"/"tvshow"…) is accepted as series content: it maps to the
+		// anime/tv payload the public page renders on the /series rails.
+		case "series", "show", "tv-show", "tvshow":
 			return "anime", "tv"
 		}
 	}

@@ -243,6 +243,21 @@ func (h *AnimeHandler) Sync(c *gin.Context) {
 			h.deps.AnilistService.EnsureSeasonsAndEpisodes(c.Request.Context(), item, nil)
 		}
 	}
+	// Rows not sourced from Plex (e.g. imported from AniList) are routed
+	// through Plex on sync so they find their Plex equivalent and inherit its
+	// metadata (artwork, rating, source link) plus the REAL season/episode
+	// grid, with Plex becoming the default source. Best-effort: a Plex lookup
+	// failure (or no match) must not fail the sync — the row keeps its current
+	// source data in that case.
+	if item.Source != "plex" {
+		if client, cerr := h.plexClient(c.Request.Context()); cerr == nil {
+			if db := h.deps.Database.Gorm(); db != nil {
+				if merr := services.ImportPlexMetadataForAnime(c.Request.Context(), db, client, item); merr != nil {
+					h.deps.Logger.Warn("failed to enrich sync with plex metadata", "animeId", item.ID, "title", item.Title, "error", merr)
+				}
+			}
+		}
+	}
 	// Plex-sourced rows carry their REAL episode grid only on the provider:
 	// refresh it from Plex (metadata.sourceId) so series imported before the
 	// episode importer existed get their episodes backfilled on sync. AniList

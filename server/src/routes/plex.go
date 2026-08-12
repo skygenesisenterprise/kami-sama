@@ -27,10 +27,8 @@ import (
 // image / transcoding decisions without ever leaking the X-Plex-Token to the
 // browser.
 type PlexHandler struct {
-	deps   Dependencies
-	client *services.PlexClient
-	dbKey  string
-	dbNone bool
+	deps     Dependencies
+	resolver *plexClientResolver
 }
 
 // NewPlexHandler seeds the handler with the env-configured client (if any)
@@ -38,11 +36,37 @@ type PlexHandler struct {
 // resolveClient is authoritative afterwards — it prefers a DB row so the UI
 // can (re)configure the server without a restart.
 func NewPlexHandler(deps Dependencies) *PlexHandler {
-	h := &PlexHandler{deps: deps}
+	return &PlexHandler{deps: deps, resolver: newPlexClientResolver(deps)}
+}
+
+// resolveClient returns the active Plex client, resolved through the shared
+// plexClientResolver (persisted source_configs row → env provider → env raw
+// config). It fails fast with PLEX_DISABLED when none is usable.
+func (h *PlexHandler) resolveClient(ctx context.Context) (*services.PlexClient, error) {
+	return h.resolver.resolve(ctx)
+}
+
+// plexClientResolver lazily resolves and caches the active Plex client. It is
+// shared by the dedicated Plex handler and the AniList import flow, which
+// routes AniList-discovered titles through Plex so the provider metadata is
+// recovered.
+type plexClientResolver struct {
+	deps   Dependencies
+	client *services.PlexClient
+	dbKey  string
+	dbNone bool
+}
+
+// newPlexClientResolver seeds the resolver with the env-configured client (if
+// any) so that requests still work when no persisted source_configs row
+// exists. resolve is authoritative afterwards — it prefers a DB row so the UI
+// can (re)configure the server without a restart.
+func newPlexClientResolver(deps Dependencies) *plexClientResolver {
+	r := &plexClientResolver{deps: deps}
 	if deps.MediaSourceService != nil && deps.MediaSourceService.Plex() != nil {
-		h.client = deps.MediaSourceService.Plex().GetClient()
+		r.client = deps.MediaSourceService.Plex().GetClient()
 	} else if deps.Config.MediaSource.Plex.URL != "" && deps.Config.MediaSource.Plex.Token != "" {
-		h.client = services.NewPlexClient(services.PlexConfig{
+		r.client = services.NewPlexClient(services.PlexConfig{
 			URL:              deps.Config.MediaSource.Plex.URL,
 			Token:            deps.Config.MediaSource.Plex.Token,
 			ClientIdentifier: deps.Config.MediaSource.Plex.ClientIdentifier,
@@ -52,10 +76,10 @@ func NewPlexHandler(deps Dependencies) *PlexHandler {
 			Timeout:          deps.Config.MediaSource.Plex.Timeout,
 		})
 	}
-	return h
+	return r
 }
 
-// resolveClient returns the active Plex client, resolving it in priority order:
+// resolve returns the active Plex client, resolving it in priority order:
 //
 //  1. A persisted source_configs row for the "plex" source type (enabled). The
 //     client is cached and rebuilt whenever the row's updatedAt changes, so
@@ -64,52 +88,52 @@ func NewPlexHandler(deps Dependencies) *PlexHandler {
 //  3. The raw env Plex configuration.
 //
 // It fails fast with PLEX_DISABLED when none of these is usable.
-func (h *PlexHandler) resolveClient(ctx context.Context) (*services.PlexClient, error) {
-	if h.deps.LibraryService != nil {
-		cfg, err := h.deps.LibraryService.GetBySourceType(ctx, "plex")
+func (r *plexClientResolver) resolve(ctx context.Context) (*services.PlexClient, error) {
+	if r.deps.LibraryService != nil {
+		cfg, err := r.deps.LibraryService.GetBySourceType(ctx, "plex")
 		if err == nil && cfg != nil && cfg.Enabled {
 			key := cfg.UpdatedAt.String()
-			if h.client == nil || h.dbKey != key {
+			if r.client == nil || r.dbKey != key {
 				client, cerr := services.PlexClientFromSourceConfig(cfg)
 				if cerr == nil && client.Enabled() {
-					h.client = client
-					h.dbKey = key
-					h.dbNone = false
+					r.client = client
+					r.dbKey = key
+					r.dbNone = false
 				} else {
 					// Present but unusable — drop any cached client so we never
 					// serve stale credentials from a previous configuration.
-					h.client = nil
-					h.dbKey = ""
+					r.client = nil
+					r.dbKey = ""
 				}
 			}
-			if h.client != nil && !h.dbNone {
-				return h.client, nil
+			if r.client != nil && !r.dbNone {
+				return r.client, nil
 			}
-		} else if h.dbNone && h.client != nil {
-			return h.client, nil
+		} else if r.dbNone && r.client != nil {
+			return r.client, nil
 		}
 	}
 
-	if h.deps.MediaSourceService != nil && h.deps.MediaSourceService.Plex() != nil {
-		h.client = h.deps.MediaSourceService.Plex().GetClient()
-		h.dbKey = ""
-		h.dbNone = true
-		return h.client, nil
+	if r.deps.MediaSourceService != nil && r.deps.MediaSourceService.Plex() != nil {
+		r.client = r.deps.MediaSourceService.Plex().GetClient()
+		r.dbKey = ""
+		r.dbNone = true
+		return r.client, nil
 	}
 
-	if h.deps.Config.MediaSource.Plex.URL != "" && h.deps.Config.MediaSource.Plex.Token != "" {
-		h.client = services.NewPlexClient(services.PlexConfig{
-			URL:              h.deps.Config.MediaSource.Plex.URL,
-			Token:            h.deps.Config.MediaSource.Plex.Token,
-			ClientIdentifier: h.deps.Config.MediaSource.Plex.ClientIdentifier,
-			Product:          h.deps.Config.MediaSource.Plex.Product,
-			Version:          h.deps.Config.MediaSource.Plex.Version,
-			Device:           h.deps.Config.MediaSource.Plex.Device,
-			Timeout:          h.deps.Config.MediaSource.Plex.Timeout,
+	if r.deps.Config.MediaSource.Plex.URL != "" && r.deps.Config.MediaSource.Plex.Token != "" {
+		r.client = services.NewPlexClient(services.PlexConfig{
+			URL:              r.deps.Config.MediaSource.Plex.URL,
+			Token:            r.deps.Config.MediaSource.Plex.Token,
+			ClientIdentifier: r.deps.Config.MediaSource.Plex.ClientIdentifier,
+			Product:          r.deps.Config.MediaSource.Plex.Product,
+			Version:          r.deps.Config.MediaSource.Plex.Version,
+			Device:           r.deps.Config.MediaSource.Plex.Device,
+			Timeout:          r.deps.Config.MediaSource.Plex.Timeout,
 		})
-		h.dbKey = ""
-		h.dbNone = true
-		return h.client, nil
+		r.dbKey = ""
+		r.dbNone = true
+		return r.client, nil
 	}
 
 	return nil, utils.NewError(http.StatusServiceUnavailable, "PLEX_DISABLED", "Plex integration is not enabled or not configured.", nil)

@@ -426,6 +426,18 @@ func SetupRoutes(router *gin.Engine, deps Dependencies) {
 		// the path so it cannot be abused as an open proxy (SSRF).
 		api.GET("/integrations/plex/image", plex.ImageProxy)
 
+		// Media-server (Jellyfin) integration: health probe + the DB → Jellyfin
+		// mirror sync. The mirror pushes every Plex-fed catalog row (movies and,
+		// for series, each real episode) into the Jellyfin library so the watch
+		// page delegates all HLS playback to the media-server container.
+		jellyfin := NewJellyfinHandler(deps)
+		jellyfinGroup := protected.Group("/integrations/jellyfin")
+		{
+			jellyfinGroup.GET("/health", jellyfin.HealthCheck)
+			jellyfinGroup.POST("/sync", jellyfin.Sync)
+			jellyfinGroup.GET("/sync/status", jellyfin.SyncStatus)
+		}
+
 		mal := NewMalHandler(deps)
 		malGroup := protected.Group("/integrations/myanimelist")
 		{

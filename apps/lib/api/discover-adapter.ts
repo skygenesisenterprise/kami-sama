@@ -41,11 +41,17 @@ export function mapApiItemToAnime(item: ApiContentItem): Anime {
     })
   }
 
+  // Content-type classification: only real movies map to /movies — every
+  // TV-show flavour (Plex "Series", AniList "TV"/"TV_SHORT", a future
+  // "tv-show" type…) is introduced on the public page as a series so Plex
+  // TV shows and anime series share the same /series/ rails and paths.
+  const isMovie =
+    item.format === 'movie' || item.type === 'movie'
+
   return {
     id: item.id,
     slug: item.slug,
-    type:
-      item.format === 'movie' || item.type === 'movie' ? 'movies' : 'series',
+    type: isMovie ? 'movies' : 'series',
     title: item.title,
     japaneseTitle: item.metadata.japaneseTitle ?? '',
     synopsis: item.metadata.synopsis ?? '',

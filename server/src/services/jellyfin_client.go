@@ -66,6 +66,33 @@ func (c *JellyfinClient) Enabled() bool {
 // upstream segment requests without leaking it into browser URLs.
 func (c *JellyfinClient) APIKey() string { return c.apiKey }
 
+// Health probes the media-server's public system endpoint and reports
+// reachability + latency. Used by the admin integration health check.
+func (c *JellyfinClient) Health(ctx context.Context) (map[string]interface{}, error) {
+	start := time.Now()
+	body, err := c.do(ctx, http.MethodGet, "/System/Info/Public", nil)
+	if err != nil {
+		return nil, err
+	}
+	var info map[string]interface{}
+	_ = json.Unmarshal(body, &info)
+	info["reachable"] = true
+	info["latencyMs"] = time.Since(start).Milliseconds()
+	return info, nil
+}
+
+// StrmFileExists reports whether the deterministic .strm file for a
+// (name, remoteURL) pair already exists in the shared directory. The mirror
+// sync uses it to tell created items apart from already-bridged ones without
+// round-tripping Jellyfin.
+func (c *JellyfinClient) StrmFileExists(name, remoteURL string) bool {
+	if c.strmDir == "" || remoteURL == "" {
+		return false
+	}
+	_, err := os.Stat(filepath.Join(c.strmDir, c.strmFileName(name, remoteURL)))
+	return err == nil
+}
+
 // hlsCodecParams force a browser-decodable transcode on the Jellyfin master
 // request. Without them Jellyfin stream-copies (remuxes) the source — for
 // bridged Plex items that is HEVC/eac3, which no Chromium-based MSE can

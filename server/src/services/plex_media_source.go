@@ -524,6 +524,189 @@ func ImportPlexItem(ctx context.Context, db *gorm.DB, client *PlexClient, rating
 	}, nil
 }
 
+// ImportPlexMetadataForAnime searches the configured Plex server for a title
+// matching an existing catalog row (e.g. one just imported from AniList) and
+// merges the matching Plex item's metadata into that row — artwork, rating,
+// year, genres, the Plex source link and, for series, the real season/episode
+// grid. The row is re-marked with source "plex" and metadata.sourceId so Plex
+// becomes its default source and later library syncs update it instead of
+// creating a duplicate. Best-effort: it returns nil (and does nothing) when
+// Plex is unavailable or no plausible match is found.
+func ImportPlexMetadataForAnime(ctx context.Context, db *gorm.DB, client *PlexClient, anime *models.Anime) error {
+	if db == nil || client == nil || !client.Enabled() || anime == nil {
+		return nil
+	}
+	title := strings.TrimSpace(anime.Title)
+	if title == "" {
+		return nil
+	}
+	results, err := client.SearchItems(ctx, title, "", 10)
+	if err != nil || len(results) == 0 {
+		return nil
+	}
+	best := bestPlexMatch(title, results)
+	if best == nil {
+		return nil
+	}
+	ratingKey := toString(best["ratingKey"])
+	if ratingKey == "" {
+		ratingKey = toString(best["key"])
+	}
+	if ratingKey == "" {
+		return nil
+	}
+	// Search results can be thin — re-fetch the full metadata block so we get
+	// artwork, genres and leaf counts before merging.
+	full, err := client.GetItemMetadata(ctx, ratingKey)
+	if err != nil {
+		full = best
+	}
+	return mergePlexMetadataIntoAnime(ctx, db, client, anime, ratingKey, full)
+}
+
+// bestPlexMatch picks the search result whose title best matches the query,
+// preferring an exact normalized match, then falls back to the first result.
+func bestPlexMatch(query string, results []map[string]interface{}) map[string]interface{} {
+	key := normalizePlexTitle(query)
+	for _, r := range results {
+		if normalizePlexTitle(toString(r["title"])) == key {
+			return r
+		}
+	}
+	return results[0]
+}
+
+// normalizePlexTitle lowercases a title and collapses punctuation and
+// whitespace so provider titles ("Fate/Zero" vs "Fate: Zero") can be compared.
+func normalizePlexTitle(value string) string {
+	lower := strings.ToLower(value)
+	var b strings.Builder
+	prevSpace := false
+	for _, r := range lower {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			if prevSpace {
+				b.WriteByte(' ')
+				prevSpace = false
+			}
+			b.WriteRune(r)
+		} else {
+			prevSpace = true
+		}
+	}
+	return strings.TrimSpace(b.String())
+}
+
+// mergePlexMetadataIntoAnime applies the mapped Plex item onto an existing
+// catalog row and records Plex as its default source.
+func mergePlexMetadataIntoAnime(ctx context.Context, db *gorm.DB, client *PlexClient, anime *models.Anime, ratingKey string, raw map[string]interface{}) error {
+	mapped := mapPlexItem(raw)
+	sourceID := getStringFromMap(mapped, "sourceId")
+	if sourceID == "" {
+		sourceID = ratingKey
+	}
+	now := time.Now().UTC()
+	// The row was not Plex-sourced before (imported from AniList, created
+	// manually, …): its seasons/episodes are placeholders stamped by that
+	// flow and will be replaced by the real Plex grid below.
+	resourcingFromOtherProvider := anime.Source != "plex"
+
+	anime.Source = "plex"
+	if img := getStringFromMap(mapped, "imageUrl"); img != "" {
+		anime.CoverImageUrl = img
+	}
+	if art := getStringFromMap(mapped, "artUrl"); art != "" {
+		anime.BannerImageUrl = art
+	}
+	if name := getStringFromMap(mapped, "name"); name != "" {
+		anime.Title = name
+	}
+	if orig := getStringFromMap(mapped, "originalTitle"); orig != "" && anime.JapaneseTitle == "" {
+		anime.JapaneseTitle = orig
+	}
+	if overview := getStringFromMap(mapped, "overview"); overview != "" {
+		anime.Synopsis = overview
+	}
+	if year := getIntFromMap(mapped, "year"); year > 0 {
+		anime.ReleaseYear = year
+	}
+	if rating := getFloat64FromMap(mapped, "rating"); rating > 0 {
+		anime.Rating = rating
+	}
+	// Plex reports the total episode count for shows on the leafCount field.
+	if v, ok := raw["leafCount"].(float64); ok && int(v) > 0 {
+		anime.TotalEpisodes = int(v)
+	}
+
+	// Merge into the JSONB metadata: keep any existing keys (anilist_id,
+	// genres, …) and add the Plex link with Plex as the first/default source.
+	var meta map[string]any
+	if len(anime.Metadata) > 0 {
+		_ = json.Unmarshal(anime.Metadata, &meta)
+	}
+	if meta == nil {
+		meta = map[string]any{}
+	}
+	meta["sourceId"] = sourceID
+	if ptype := getStringFromMap(mapped, "type"); ptype != "" {
+		meta["type"] = ptype
+	}
+	ext, _ := meta["external_ids"].(map[string]any)
+	if ext == nil {
+		ext = map[string]any{}
+	}
+	ext["plex"] = sourceID
+	meta["external_ids"] = ext
+	meta["sources"] = plexSourceList(meta, sourceID)
+
+	rawMeta, err := json.Marshal(meta)
+	if err != nil {
+		return err
+	}
+	anime.Metadata = datatypes.JSON(rawMeta)
+	anime.UpdatedAt = now
+
+	if err := db.WithContext(ctx).Save(anime).Error; err != nil {
+		return err
+	}
+
+	// Series carry their episodes only on the provider — import the real
+	// season/episode grid so the row has a playable episode list. Rows being
+	// re-sourced from another provider keep their placeholder seasons/
+	// episodes (AniList stamps Episode 1..N with random ids), so drop those
+	// first: only the real Plex grid should remain on the row.
+	if getStringFromMap(mapped, "type") == "Series" {
+		if resourcingFromOtherProvider {
+			_ = db.WithContext(ctx).Where("anime_id = ?", anime.ID).Delete(&models.Episode{}).Error
+			_ = db.WithContext(ctx).Where("anime_id = ?", anime.ID).Delete(&models.AnimeSeason{}).Error
+		}
+		_, _ = importPlexShowEpisodes(ctx, db, client, anime.ID, sourceID)
+	}
+	return nil
+}
+
+// plexSourceList returns the metadata.sources array with Plex placed first (as
+// the default source) while preserving any other linked sources (e.g. AniList).
+func plexSourceList(meta map[string]any, sourceID string) []any {
+	existing, _ := meta["sources"].([]any)
+	if existing == nil {
+		existing = []any{}
+	}
+	out := make([]any, 0, len(existing)+1)
+	out = append(out, map[string]any{
+		"provider":     "Plex",
+		"externalId":   sourceID,
+		"status":       "active",
+		"lastSyncedAt": time.Now().UTC().Format(time.RFC3339),
+	})
+	for _, s := range existing {
+		if obj, ok := s.(map[string]any); ok && obj["provider"] == "Plex" {
+			continue
+		}
+		out = append(out, s)
+	}
+	return out
+}
+
 // importPlexShowEpisodes fetches the real season + episode grid of a Plex
 // show (via /allLeaves) and upserts it under the local anime row. Without
 // this, series imported from Plex have an empty season list and the watch

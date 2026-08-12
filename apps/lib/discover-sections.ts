@@ -219,6 +219,16 @@ export const DISCOVER_SECTION_DEFS: DiscoverSectionDef[] = [
     select: (pool) => pool.filter((a) => a.type === 'movies'),
   },
   {
+    // TV shows — Plex "Series" rows land here alongside anime series: every
+    // non-movie item is introduced on the public page as a series, so this
+    // rail gives TV-show content a guaranteed, dedicated section.
+    id: 'tv-shows',
+    titleKey: 'sectionTvShows',
+    subtitleKey: 'sectionTvShowsSub',
+    compatible: ofType('series'),
+    select: (pool) => pool.filter((a) => a.type === 'series'),
+  },
+  {
     id: 'simulcast',
     titleKey: 'sectionSimulcast',
     subtitleKey: 'sectionSimulcastSub',

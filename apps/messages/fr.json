@@ -257,6 +257,8 @@
       "sectionRewatchSub": "Les moments inoubliables à revivre",
       "sectionFilms": "Films parfaits pour un moment de grand divertissement",
       "sectionFilmsSub": "Du grand spectacle au cinéma chez vous",
+      "sectionTvShows": "Séries TV à ne pas manquer",
+      "sectionTvShowsSub": "Vos séries favorites, disponibles dès maintenant",
       "sectionTimeTravel": "SF qui voyage dans le temps",
       "sectionTimeTravelSub": "Paradoxes, voyages temporels et futurisme",
       "sectionNewWeek": "Nouveautés sur Kami-Sama",
@@ -1214,7 +1216,9 @@
       "error": "Source de lecture indisponible.",
       "playbackErrorTitle": "Lecture impossible",
       "sourceUnreachableTitle": "Serveur média injoignable",
-      "sourceUnreachableDescription": "Le serveur média configuré (media-server) ne répond pas (HLS indisponible). Vérifiez qu'il est en ligne et joignable depuis votre serveur Kami-Sama, ou utilisez son adresse réseau locale."
+      "sourceUnreachableDescription": "Le serveur média configuré (media-server) ne répond pas (HLS indisponible). Vérifiez qu'il est en ligne et joignable depuis votre serveur Kami-Sama, ou utilisez son adresse réseau locale.",
+      "mediaServerAuthTitle": "Serveur média mal configuré",
+      "mediaServerAuthDescription": "Le pont de lecture vers Jellyfin est refusé par le serveur média (authentification invalide). Vérifiez la clé API et l'identifiant utilisateur Jellyfin (MEDIA_SOURCE_JELLYFIN_API_KEY / _USER_ID), puis relancez la lecture."
     },
     "preview": {
       "kicker": "À regarder",

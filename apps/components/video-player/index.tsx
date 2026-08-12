@@ -14,6 +14,30 @@ import type { Episode } from '@/types/anime'
 import { formatTime } from './format-time'
 
 /**
+ * Maps an hls.js manifest/segment HTTP status to an actionable message.
+ * Without this, a stream refused by the media server (a Jellyfin auth
+ * rejection, a Plex HLS 400, a dead transcode session…) surfaces only as a
+ * generic "CORS ou réseau" banner while the real cause stays buried in the
+ * console. Statuses are best-effort — the fallback keeps the old wording.
+ */
+function manifestStatusMessage(status: number | undefined): string {
+  switch (status) {
+    case 400:
+      return 'Le serveur média a refusé la source vidéo (HTTP 400). Vérifiez la configuration du serveur média (Jellyfin/Plex).'
+    case 401:
+    case 403:
+      return `Le serveur média a refusé l'authentification (HTTP ${status}). Clé API ou identifiant utilisateur Jellyfin invalide.`
+    case 404:
+      return 'Le flux vidéo demandé est introuvable (HTTP 404).'
+    default:
+      if (status && status >= 500) {
+        return `Le serveur média a rencontré une erreur interne (HTTP ${status}).`
+      }
+      return 'Le serveur vidéo est injoignable (CORS ou réseau).'
+  }
+}
+
+/**
  * Imperative API exposed by {@link VideoPlayer} so parents can play / pause
  * the underlying `<video>` from inside an explicit user-gesture handler.
  * Calling `play()` from a click event preserves the gesture chain even on
@@ -529,9 +553,7 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(function Vid
                 }, 1000 * attempt)
                 return
               }
-              onPlaybackError?.(
-                "Le serveur vidéo est injoignable (CORS ou réseau)."
-              )
+              onPlaybackError?.(manifestStatusMessage(data.response?.code))
               break
             case Hls.ErrorTypes.MEDIA_ERROR:
               // A single append/codec hiccup is transient — hls.js can skip

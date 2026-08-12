@@ -8,6 +8,7 @@ import {
   Check,
   ChevronRight,
   Columns3,
+  Download,
   Eye,
   LayoutGrid,
   Layers,
@@ -103,7 +104,6 @@ import {
   apiAnimeToMovieItem,
   apiAnimeToSeriesItem,
   apiAnimeToTvShowItem,
-  seriesItemToAnimeCreatePayload,
   type ApiAnime,
 } from '@/lib/api/anime'
 import {
@@ -113,6 +113,10 @@ import {
 } from '@/lib/api/anilist'
 import { myanimelistApi } from '@/lib/api/myanimelist'
 import { plexApi, type PlexLibrary, type PlexLibraryItem } from '@/lib/api/plex'
+import {
+  jellyfinApi,
+  type JellyfinMirrorStats,
+} from '@/lib/api/jellyfin'
 import { anilistItemToSourceItem, plexItemToSourceItem } from '@/lib/source-search'
 import {
   SERIES_STATUS_TONE,
@@ -469,6 +473,8 @@ export default function ContentCatalogPage() {
   const [syncing, setSyncing] = React.useState<string | null>(null)
   const [syncingAll, setSyncingAll] = React.useState(false)
   const [syncProgress, setSyncProgress] = React.useState({ done: 0, total: 0 })
+  const [importingSources, setImportingSources] = React.useState(false)
+  const [importProgress, setImportProgress] = React.useState({ done: 0, total: 0 })
   const [page, setPage] = React.useState(1)
 
   const fetchCatalog = React.useCallback(async () => {
@@ -670,6 +676,67 @@ export default function ContentCatalogPage() {
   const fetchSources = React.useCallback(async () => {
     await Promise.all([fetchPlexCatalog(), fetchAnilistCatalog()])
   }, [fetchPlexCatalog, fetchAnilistCatalog])
+
+  /**
+   * Bulk-imports content from the connected Plex libraries straight into the
+   * catalog — one click, no manual adds. Each library is synced server-side
+   * (POST /source/libraries/:libraryId/sync) so every item lands as a real
+   * catalog row with its provider metadata and, for shows, the actual
+   * season/episode grid. Runs libraries sequentially with live progress; the
+   * catalog + ephemeral source rows are refreshed afterwards.
+   */
+  const importFromSources = React.useCallback(async () => {
+    if (importingSources) return
+    setImportingSources(true)
+    let created = 0
+    let updated = 0
+    let removed = 0
+    let failed = 0
+    let libraries: PlexLibrary[] = []
+    try {
+      const res = await plexApi.libraries()
+      libraries = res.items
+    } catch {
+      // Plex not reachable — fall through with an empty list and report it.
+    }
+    setImportProgress({ done: 0, total: libraries.length })
+    for (let i = 0; i < libraries.length; i++) {
+      try {
+        const result = await plexApi.sync(libraries[i].id)
+        created += result.itemsCreated ?? 0
+        updated += result.itemsUpdated ?? 0
+        removed += result.itemsRemoved ?? 0
+      } catch {
+        failed += 1
+      }
+      setImportProgress({ done: i + 1, total: libraries.length })
+    }
+    setImportingSources(false)
+    setImportProgress({ done: 0, total: 0 })
+
+    // Reflect the freshly persisted rows (and any new ephemeral discoveries).
+    await fetchCatalog()
+    await fetchSources()
+
+    if (libraries.length === 0) {
+      toast.error('Import failed: no Plex libraries found', {
+        description: 'Connect a Plex server and enable its libraries in Sources settings.',
+      })
+      return
+    }
+    if (failed === libraries.length) {
+      toast.error('Import failed', {
+        description: `Could not sync any of the ${libraries.length} Plex librar${libraries.length === 1 ? 'y' : 'ies'}. Check the Sources settings.`,
+      })
+      return
+    }
+    const parts = [`${created} created`, `${updated} updated`]
+    if (removed > 0) parts.push(`${removed} removed`)
+    if (failed > 0) parts.push(`${failed} failed`)
+    toast.success(`Imported ${libraries.length} Plex librar${libraries.length === 1 ? 'y' : 'ies'}`, {
+      description: parts.join(' · '),
+    })
+  }, [fetchCatalog, fetchSources, importingSources])
 
   // Load the persisted catalog first so the persisted external-id refs are
   // populated before source discovery runs — otherwise already-imported
@@ -1221,8 +1288,13 @@ export default function ContentCatalogPage() {
 
   /**
    * Bulk sync: refreshes every row in the catalog (series, movies, TV shows)
-   * so missing provider data — assets, metadata, sources — is fetched. Runs in
-   * small parallel batches to stay gentle on the API, with live progress.
+   * so missing provider data — assets, metadata, sources — is fetched, then
+   * triggers the DB → Jellyfin mirror so the media-server library reflects the
+   * freshly synced catalog (the watch page delegates all HLS playback to it).
+   * Runs in small parallel batches to stay gentle on the API, with live
+   * progress. The mirror is best-effort: when Jellyfin is not configured the
+   * catalog sync still succeeds, and the toast reports the mirror outcome
+   * (running / mirrored counts / skipped).
    */
   const syncAllRows = async () => {
     if (syncingAll || rows.length === 0) return
@@ -1263,12 +1335,20 @@ export default function ContentCatalogPage() {
       setSyncingAll(false)
     }
 
-    if (synced === 0 && failed === 0) {
+    // DB → Jellyfin mirror: the catalog rows synced above (Plex-sourced) are
+    // pushed into the media-server library so the watch page delegates HLS
+    // playback to Jellyfin without an on-the-fly bridge. Best-effort — the
+    // server answers MEDIA_SERVER_DISABLED / PLEX_DISABLED when the media
+    // server or the content provider isn't configured, which we surface as
+    // "mirror skipped" instead of failing the whole Sync All.
+    const mirror = await runJellyfinMirror()
+
+    if (synced === 0 && failed === 0 && !mirror?.started) {
       toast.info('Nothing to sync')
       return
     }
     const parts = [
-      `${synced} synced`,
+      synced > 0 ? `${synced} synced` : null,
       skipped > 0 ? `${skipped} no match` : null,
       failed > 0 ? `${failed} failed` : null,
     ].filter(Boolean)
@@ -1276,10 +1356,14 @@ export default function ContentCatalogPage() {
       assetsGained > 0
         ? `${assetsGained} missing asset${assetsGained === 1 ? '' : 's'} fetched`
         : 'No missing assets found'
+    const mirrorDesc = describeMirror(mirror)
+    const description = mirrorDesc
+      ? [assetsDesc, mirrorDesc].join(' · ')
+      : assetsDesc
     if (failed === 0) {
-      toast.success(parts.join(' · '), { description: assetsDesc })
+      toast.success(parts.join(' · '), { description })
     } else {
-      toast.error(parts.join(' · '), { description: assetsDesc })
+      toast.error(parts.join(' · '), { description })
     }
   }
 
@@ -1294,7 +1378,7 @@ export default function ContentCatalogPage() {
           variant="outline"
           onClick={() => void syncAllRows()}
           disabled={syncingAll || rows.length === 0}
-          title="Sync all catalog items and fetch missing provider assets & metadata"
+          title="Sync all catalog items, fetch missing provider assets & metadata, then mirror the catalog to the Jellyfin media server"
         >
           {syncingAll ? (
             <Loader2 className="size-4 animate-spin" />
@@ -1304,6 +1388,22 @@ export default function ContentCatalogPage() {
           {syncingAll && syncProgress.total > 0
             ? `Syncing ${syncProgress.done}/${syncProgress.total}…`
             : 'Sync All'}
+        </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => void importFromSources()}
+          disabled={importingSources}
+          title="Query your connected Plex libraries and add their content to the catalog automatically"
+        >
+          {importingSources ? (
+            <Loader2 className="size-4 animate-spin" />
+          ) : (
+            <Download data-icon="inline-start" />
+          )}
+          {importingSources && importProgress.total > 0
+            ? `Importing ${importProgress.done}/${importProgress.total}…`
+            : 'Import from sources'}
         </Button>
         <Button
           size="sm"
@@ -2368,12 +2468,6 @@ type GroupedResult = {
   hits: SourceHit[]
 }
 
-const SOURCE_ICON: Record<AddSource, React.ReactNode> = {
-  Plex: <Tv className="size-3.5" />,
-  AniList: <Sparkles className="size-3.5" />,
-  MyAnimeList: <List className="size-3.5" />,
-}
-
 function normalizeTitle(value: string): string {
   return value
     .toLowerCase()
@@ -2453,11 +2547,18 @@ async function searchAllSources(
   return { hits, failed }
 }
 
-/** Best matching source hit for a title (exact normalized match preferred). */
+/** Best matching source hit for a title (exact normalized match preferred).
+ *  Plex is the default source: an exact Plex match wins, otherwise any Plex
+ *  hit, before falling back to the other sources. */
 function bestSourceHit(title: string, hits: SourceHit[]): SourceHit | null {
   if (hits.length === 0) return null
   const key = normalizeTitle(title)
-  return hits.find((h) => normalizeTitle(h.item.title) === key) ?? hits[0]
+  const exact = hits.filter((h) => normalizeTitle(h.item.title) === key)
+  const exactPlex = exact.find((h) => h.source === 'Plex')
+  if (exactPlex) return exactPlex
+  const plex = hits.find((h) => h.source === 'Plex')
+  if (plex) return plex
+  return exact[0] ?? hits[0]
 }
 
 /** Deduplicate hits by source, keeping the first hit per source. */
@@ -2479,9 +2580,15 @@ function mergeSourceIntoRow(row: ContentRow, hit: SourceHit): ContentRow {
     genres: row.genres.length > 0 ? row.genres : (item.genres ?? []),
     year: row.year ?? item.year ?? row.year,
     rating: row.rating > 0 ? row.rating : ((item.rating ?? 0) / 10),
-    sources: row.sources.includes(source)
+    // Plex is the default source: whenever the merged hit adds Plex, list it
+    // first so the item's primary source stays Plex.
+    sources: row.sources.includes('Plex')
       ? row.sources
-      : [...row.sources, source],
+      : source === 'Plex'
+        ? [source, ...row.sources]
+        : row.sources.includes(source)
+          ? row.sources
+          : [...row.sources, source],
     metadataStatus:
       row.metadataStatus === 'missing' ? 'synced' : row.metadataStatus,
     updatedAt: 'just now',
@@ -2561,24 +2668,19 @@ function AddContentDialog({
     }
   }
 
+  /** Imports a grouped result from Plex — the only importable source. Other
+   *  providers (AniList, MyAnimeList) are used for discovery only, so a title
+   *  can never be attributed to them. */
   const importFromSource = async (result: GroupedResult, source: AddSource) => {
-    const hit = result.hits.find((h) => h.source === source)
+    if (source !== 'Plex') return
+    const hit = result.hits.find((h) => h.source === 'Plex')
     if (!hit) return
-    const actionKey = `${result.key}::${source}`
+    const actionKey = `${result.key}::Plex`
     setActing(actionKey)
     try {
-      if (source === 'Plex') {
-        await plexApi.importItem(hit.item.id)
-      } else if (source === 'AniList') {
-        // Use AniList import endpoint to fetch all seasons/episodes
-        const anilistId = hit.item.id
-        await anilistApi.import(Number(anilistId))
-      } else {
-        const item = buildSeriesFromSource(hit.item, source)
-        await animeApi.create(seriesItemToAnimeCreatePayload(item))
-      }
+      await plexApi.importItem(hit.item.id)
       setDone((prev) => new Set(prev).add(actionKey))
-      toast.success(`"${hit.item.title}" added from ${source}`)
+      toast.success(`"${hit.item.title}" added from Plex`)
       onCreated(null)
     } catch (err) {
       toast.error(`Import failed: ${formatApiError(err)}`)
@@ -2595,7 +2697,7 @@ function AddContentDialog({
           <DialogDescription>
             Titles already synced from your sources appear automatically in
             the catalog. Use this only when a title isn't available yet —
-            search across Plex, AniList and MyAnimeList, then import it.
+            imports come from Plex only.
           </DialogDescription>
         </DialogHeader>
 
@@ -2687,9 +2789,11 @@ function AddContentDialog({
                       </div>
                     </div>
 
-                    {/* Source buttons — with a hint when the title is already
-                        in the catalog (non-blocking, so sequels and
-                        re-imports stay possible) */}
+                    {/* Source buttons — Plex is the only importable source: a
+                        result found on other providers but missing on Plex gets
+                        a hint instead of an import button, so no other source
+                        can be attributed. The "In catalog" badge stays
+                        non-blocking so sequels and re-imports remain possible. */}
                     <div className="flex shrink-0 items-center gap-1">
                       {isInCatalog(result) && (
                         <StatusBadge tone="success">
@@ -2697,29 +2801,36 @@ function AddContentDialog({
                           In catalog
                         </StatusBadge>
                       )}
-                      {dedupeBySource(result.hits).map((hit) => {
-                        const actionKey = `${result.key}::${hit.source}`
-                        const isActing = acting === actionKey
-                        const isDone = done.has(actionKey)
-                        return (
-                          <Button
-                            key={`${result.key}-${hit.source}`}
-                            size="sm"
-                            variant={isDone ? 'outline' : 'secondary'}
-                            className="h-8 px-2"
-                            disabled={isActing || isDone}
-                            onClick={() => void importFromSource(result, hit.source)}
-                          >
-                            {isActing ? (
-                              <Loader2 className="size-3.5 animate-spin" />
-                            ) : isDone ? (
-                              <Check className="size-3.5" />
-                            ) : (
-                              SOURCE_ICON[hit.source]
-                            )}
-                          </Button>
-                        )
-                      })}
+                      {result.hits.some((h) => h.source === 'Plex') ? (
+                        (() => {
+                          const actionKey = `${result.key}::Plex`
+                          const isActing = acting === actionKey
+                          const isDone = done.has(actionKey)
+                          return (
+                            <Button
+                              key={`${result.key}-Plex`}
+                              size="sm"
+                              variant={isDone ? 'outline' : 'default'}
+                              className="h-8 px-2"
+                              title="Add from Plex"
+                              disabled={isActing || isDone}
+                              onClick={() => void importFromSource(result, 'Plex')}
+                            >
+                              {isActing ? (
+                                <Loader2 className="size-3.5 animate-spin" />
+                              ) : isDone ? (
+                                <Check className="size-3.5" />
+                              ) : (
+                                <Tv className="size-3.5" />
+                              )}
+                            </Button>
+                          )
+                        })()
+                      ) : (
+                        <span className="max-w-28 text-right text-[10px] text-muted-foreground">
+                          Not on Plex
+                        </span>
+                      )}
                     </div>
                   </div>
                   )
@@ -2751,61 +2862,78 @@ function AddContentDialog({
   )
 }
 
-function buildSeriesFromSource(item: SourceResultItem, source: AddSource): SeriesItem {
-  return {
-    id: `source-${Date.now()}`,
-    slug: slugify(item.title),
-    title: item.title,
-    titleOriginal: item.subtitle || item.title,
-    synopsis: item.overview ?? '',
-    type: 'anime',
-    status: 'Added',
-    airingStatus: 'upcoming',
-    genres: item.genres ?? [],
-    studios: [],
-    tags: [],
-    year: item.year ?? new Date().getFullYear(),
-    rating: typeof item.rating === 'number' ? item.rating / 10 : 0,
-    seasonCount: 0,
-    totalEpisodes: 0,
-    ageRating: 'Unknown',
-    assets: {
-      poster: item.imageUrl ?? '',
-      banner: item.artUrl ?? '',
-      backdrop: item.artUrl ?? '',
-    },
-    externalIds:
-      source === 'AniList'
-        ? { anilist: item.id }
-        : source === 'MyAnimeList'
-          ? { myAnimeList: item.id }
-          : { plex: item.id },
-    sources: [
-      {
-        provider: source,
-        externalId: item.id,
-        lastSyncedAt: 'just now',
-        status: 'active',
-      },
-    ],
-    seasons: [],
-    relations: [],
-    metadataStatus: 'synced',
-    updatedAt: 'just now',
-    updatedBy: 'New content',
-  }
-}
-
-function slugify(value: string): string {
-  return value
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/(^-|-$)/g, '')
-}
-
 function formatApiError(err: unknown): string {
   if (err instanceof ApiError) {
     return err.code ? `${err.code}: ${err.message}` : err.message
   }
   return err instanceof Error ? err.message : 'Unknown error'
+}
+
+/** Outcome of the DB → Jellyfin mirror triggered by Sync All. */
+type MirrorOutcome = {
+  started: boolean
+  stats: JellyfinMirrorStats
+}
+
+/**
+ * Launches the DB → Jellyfin mirror sync and returns its immediate outcome.
+ * The POST answers fast (the mirror runs in the background) with the
+ * in-flight status; a short poll captures the final counts when the catalog
+ * is small enough to finish within the wait. Best-effort: Jellyfin or Plex
+ * not configured (MEDIA_SERVER_DISABLED / PLEX_DISABLED) is reported as a
+ * non-started mirror — Sync All must never fail because of it.
+ */
+async function runJellyfinMirror(): Promise<MirrorOutcome | null> {
+  let response: { started: boolean; status: JellyfinMirrorStats }
+  try {
+    response = await jellyfinApi.sync()
+  } catch {
+    return null // media-server or content provider not configured
+  }
+  const outcome: MirrorOutcome = {
+    started: response.started || response.status.status !== 'idle',
+    stats: response.status,
+  }
+  // Mirror runs in the background — give it time to finish so the toast
+  // shows real counts instead of only "started". Each bridged item can take
+  // a couple of seconds (Plex direct-URL fetch + Jellyfin library scan), so
+  // poll up to ~30s before falling back to the "started" summary.
+  if (outcome.stats.status === 'running') {
+    for (let i = 0; i < 60; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 500))
+      try {
+        const stats = await jellyfinApi.syncStatus()
+        outcome.stats = stats
+        if (stats.status !== 'running') break
+      } catch {
+        break
+      }
+    }
+  }
+  return outcome
+}
+
+/** Formats the mirror outcome for the Sync All toast description. */
+function describeMirror(mirror: MirrorOutcome | null): string | null {
+  if (!mirror || !mirror.started) return null
+  const s = mirror.stats
+  if (s.status === 'failed') {
+    return s.errorMessage
+      ? `Jellyfin mirror failed: ${s.errorMessage}`
+      : 'Jellyfin mirror failed'
+  }
+  if (s.status === 'running') {
+    return 'Jellyfin mirror started'
+  }
+  const parts: string[] = []
+  if (s.itemsCreated + s.episodesCreated > 0) {
+    parts.push(`${s.itemsCreated + s.episodesCreated} mirrored`)
+  }
+  if (s.itemsUpdated + s.episodesUpdated > 0) {
+    parts.push(`${s.itemsUpdated + s.episodesUpdated} refreshed`)
+  }
+  if (parts.length === 0) {
+    return 'Jellyfin mirror up to date'
+  }
+  return `Jellyfin mirror: ${parts.join(' · ')}`
 }

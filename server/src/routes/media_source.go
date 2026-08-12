@@ -1,19 +1,36 @@
 package routes
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
+	"github.com/skygenesisenterprise/kami-sama/server/src/services"
 	"github.com/skygenesisenterprise/kami-sama/server/src/utils"
 )
 
 type MediaSourceHandler struct {
-	deps Dependencies
+	deps     Dependencies
+	resolver *plexClientResolver
 }
 
 func NewMediaSourceHandler(deps Dependencies) *MediaSourceHandler {
-	return &MediaSourceHandler{deps: deps}
+	return &MediaSourceHandler{deps: deps, resolver: newPlexClientResolver(deps)}
+}
+
+// plexMediaSource returns a Plex media source backed by the shared
+// plexClientResolver (persisted source_configs row → env provider → env raw
+// config). The generic MediaSourceService is seeded from the env config only,
+// so a Plex server configured through the UI would otherwise fall back to the
+// empty local source and import nothing. Returns nil when Plex is unusable so
+// callers keep the multiplexed fallback.
+func (h *MediaSourceHandler) plexMediaSource(ctx context.Context) *services.PlexMediaSource {
+	client, err := h.resolver.resolve(ctx)
+	if err != nil || client == nil {
+		return nil
+	}
+	return services.NewPlexMediaSource(client, h.deps.Database.Gorm())
 }
 
 func (h *MediaSourceHandler) ListLibraries(c *gin.Context) {
@@ -150,7 +167,20 @@ func (h *MediaSourceHandler) SyncLibrary(c *gin.Context) {
 		utils.Error(c, utils.ErrValidationFailed)
 		return
 	}
-	result, err := h.deps.MediaSourceService.SyncLibrary(c.Request.Context(), id)
+	ctx := c.Request.Context()
+	// Prefer a resolver-backed Plex source so library sync works when Plex is
+	// configured through the UI (persisted source_configs row). The generic
+	// MediaSourceService is env-seeded only and would import nothing.
+	if plex := h.plexMediaSource(ctx); plex != nil {
+		result, err := plex.SyncLibrary(ctx, id)
+		if err != nil {
+			utils.Error(c, err)
+			return
+		}
+		utils.Success(c, http.StatusOK, result)
+		return
+	}
+	result, err := h.deps.MediaSourceService.SyncLibrary(ctx, id)
 	if err != nil {
 		utils.Error(c, err)
 		return
@@ -164,7 +194,17 @@ func (h *MediaSourceHandler) GetSyncStatus(c *gin.Context) {
 		utils.Error(c, utils.ErrValidationFailed)
 		return
 	}
-	status, err := h.deps.MediaSourceService.GetSyncStatus(c.Request.Context(), id)
+	ctx := c.Request.Context()
+	if plex := h.plexMediaSource(ctx); plex != nil {
+		status, err := plex.GetSyncStatus(ctx, id)
+		if err != nil {
+			utils.Error(c, err)
+			return
+		}
+		utils.Success(c, http.StatusOK, status)
+		return
+	}
+	status, err := h.deps.MediaSourceService.GetSyncStatus(ctx, id)
 	if err != nil {
 		utils.Error(c, err)
 		return

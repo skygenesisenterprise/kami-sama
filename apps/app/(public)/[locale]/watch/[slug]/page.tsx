@@ -376,10 +376,15 @@ export default function WatchPage({
       .catch((err) => {
         if (streamReqId.current !== id || controller.signal.aborted) return
         console.error('[Watch] Stream URL failed:', err)
+        // STREAM_MEDIA_SERVER_UNAVAILABLE: the Plex→Jellyfin bridge was
+        // blocked by the media-server's authentication (stale Jellyfin API
+        // key / user id). Rendered as a dedicated, actionable state.
         const message =
           err instanceof ApiError && err.code === 'STREAM_UNAVAILABLE'
             ? 'unavailable'
-            : getUserFacingError(err)
+            : err instanceof ApiError && err.code === 'STREAM_MEDIA_SERVER_UNAVAILABLE'
+              ? 'media-server'
+              : getUserFacingError(err)
         setStream({ url: '', loading: false, error: message })
       })
 
@@ -554,12 +559,16 @@ export default function WatchPage({
               <h2 className="text-lg font-bold text-white">
                 {stream.error === 'unavailable'
                   ? t('stream.unavailableTitle')
-                  : t('stream.error')}
+                  : stream.error === 'media-server'
+                    ? t('stream.mediaServerAuthTitle')
+                    : t('stream.error')}
               </h2>
               <p className="max-w-md text-sm text-white/50">
                 {stream.error === 'unavailable'
                   ? t('stream.unavailableDescription')
-                  : stream.error}
+                  : stream.error === 'media-server'
+                    ? t('stream.mediaServerAuthDescription')
+                    : stream.error}
               </p>
               <div className="mt-2 flex items-center gap-3">
                 <Button
