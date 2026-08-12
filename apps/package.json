@@ -88,7 +88,7 @@
     "expo-linear-gradient": "^56.0.4",
     "expo-linking": "~8.0.12",
     "expo-local-authentication": "^56.0.4",
-    "expo-maps": "^56.0.7",
+    "expo-maps": "^57.0.1",
     "expo-network": "^56.0.5",
     "expo-router": "~6.0.24",
     "expo-secure-store": "^56.0.4",
