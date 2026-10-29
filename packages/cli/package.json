@@ -31,7 +31,7 @@
   "devDependencies": {
     "@types/node": "^26",
     "eslint": "^10",
-    "tsup": "^8.4.0",
+    "tsup": "^9.0.0",
     "tsx": "^4.19.0",
     "typescript": "~5.9.3"
   }
